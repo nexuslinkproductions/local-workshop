@@ -41,6 +41,32 @@ the new session needs no access to that session's history.
 - Visual pass matches the merged direction; no left nav; reads as one integrated interface.
 - All work on `Development`, PR-based, HUD still runs (`hud-collect` + quickshell reload verified after each change).
 
+## Recon findings (from the phase-3 recon agent — full detail in the scratch brief)
+
+- **Architecture.** The dashboard is a Quickshell/QML plugin: `Hud.qml` loads `v4/HudV4.qml`; one
+  PanelWindow per output on `WlrLayer.Background`. Rust `hud-collect stream auto` feeds it at 1 Hz.
+  Three surfaces: **DP-1 = CommandHub** (reactor), **DP-2 = BoardView** topology + OPS,
+  **HDMI-A-3 = Workbench** (process/token/agent panes + APPS and DEVICES tabs).
+- **The deployed code is ahead of `~/NEXUS_AI_CENTER/nexuslink.hud`** — e.g. `CommandHub.qml` there
+  lacks the LANE-AI1 changes, and `deploy.sh` never ships `v4/`. The live plugin dir is the truth.
+- **Hover bug:** no lit→dark binding exists in the v4 AppGrid. The only literal match is the
+  medianotch transport glyphs (`Notch.qml:740`, white→cyan reads darker). AppGrid hover only adds a
+  `ruleDark` keyline, and selected rows ignore hover (`AppGrid.qml:826-828`). **One word from Marcel
+  is needed to pin which surface he means before fixing.**
+- **Dedupe map exists:** 11 rows — tokens ×3, devices ×5, processes ×4, agents ×4-5, clock ×5.
+- **Devices:** today's detection is a sysfs USB scan (1 Hz) plus a slow `pactl list sinks` lane.
+  The MKE 600 is invisible by design — it is a Scarlett Mic1 input, confirmed live via
+  `pactl list sources`. Fix: enumerate sources + a generic hotplug delegate. No udev/Python daemon.
+- **Token ledger:** `tokens/ledger.py` → `~/.local/state/nexuslink/tokens.json`. It already folds
+  the Omarchy usage snapshots: **codex is live** (~150M tok/day), **claude is wired but shows
+  "Waiting for auth"**. `~/.hermes/usage/*.json` is already being collected.
+- **There is no waybar.** The bar is `~/.config/omarchy/shell.json` Quickshell modules, and
+  `omarchy.agents` is already the provider lane. A crew-status module = clone of `plugins/agents/`,
+  or simply reuse the HUD's agents tile.
+- **Visual language ("Codex blue-glass"):** keep the 3-deck layout and no left rail; acid-and-ice
+  palette. Borrow the ring-gauge, card glow, template-store strip and the Lucide-in-well icon idiom
+  as roughly five token-level edits.
+
 ## Open items
 
 - The qwen HUD recon report (hover bug root cause with file:line, dedupe map, device-detection path, ledger data source, waybar config, visual-language brief) is being written to
