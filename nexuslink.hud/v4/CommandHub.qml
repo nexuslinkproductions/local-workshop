@@ -144,6 +144,19 @@ Item {
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "hub"].concat(argv));
     }
+    // Action spec runner shared by tile rows and the side strips:
+    // {nav: "section"} routes to Navigator, {argv: [...]} execs detached.
+    function runAct(a) {
+        if (a === null || a === undefined)
+            return;
+        if (a.nav !== undefined)
+            openNav(a.nav, a.path !== undefined ? a.path : "");
+        else if (a.argv !== undefined)
+            execArgv(a.argv);
+    }
+    readonly property string homeDir: Quickshell.env("HOME") || ""
+    readonly property var jumpWb: ({ "argv": ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] })
+    readonly property var jumpBoard: ({ "argv": ["hyprctl", "dispatch", "focusmonitor", "DP-2"] })
 
     FontLoader {
         source: "file:///home/nexuslink/.local/share/fonts/nexushud/Michroma-Regular.ttf"
@@ -173,40 +186,20 @@ Item {
     property real rxRate: -1
     property real txRate: -1
 
-    // arc fractions — Behavior animates on assignment, so motion exists only
-    // while a fresh frame says the value moved. -1 = unknown → bare track.
+    // arc fractions, quantized in applyFrame. -1 = unknown → bare track.
     property real aCpu: -1
     property real aGpu: -1
     property real aMem: -1
     property real aNet: -1
-    Behavior on aCpu {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
+    onACpuChanged: dialFill.requestPaint()
+    onAGpuChanged: dialFill.requestPaint()
+    onAMemChanged: dialFill.requestPaint()
+    onANetChanged: dialFill.requestPaint()
+    // 1 % steps: a 1 Hz frame that moves a ring by less than a pixel of arc
+    // must not cost a canvas repaint
+    function q(v) {
+        return v < 0 ? -1 : Math.round(v * 100) / 100;
     }
-    Behavior on aGpu {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    Behavior on aMem {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    Behavior on aNet {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    onACpuChanged: dialArcs.requestPaint()
-    onAGpuChanged: dialArcs.requestPaint()
-    onAMemChanged: dialArcs.requestPaint()
-    onANetChanged: dialArcs.requestPaint()
 
     onStatsChanged: {
         var idle = num(stats.cpu_idle), total = num(stats.cpu_total);
@@ -232,11 +225,10 @@ Item {
         prevTx = tx;
         lastBatchT = t;
 
-        aCpu = cpuPct >= 0 ? clamp(cpuPct / 100, 0, 1) : -1;
-        aGpu = gpuFrac;
-        aMem = memFrac;
-        aNet = (rxRate >= 0 && txRate >= 0) ? clamp((rxRate + txRate) / 60000000, 0, 1) : -1;
-        dialArcs.requestPaint();
+        aCpu = q(cpuPct >= 0 ? clamp(cpuPct / 100, 0, 1) : -1);
+        aGpu = q(gpuFrac);
+        aMem = q(memFrac);
+        aNet = q((rxRate >= 0 && txRate >= 0) ? clamp((rxRate + txRate) / 60000000, 0, 1) : -1);
         root.pollTick();          // stats frame = poll cadence driver
     }
 
@@ -309,50 +301,11 @@ Item {
     // has not been observed twice yet reads "—".
     readonly property string frameGapText: lastFrameGapMs >= 0 ? (lastFrameGapMs / 1000).toFixed(2) + " s" : Style.unknownGlyph
 
-    // ---- shared F8 pollers (media status + wpctl levels, one proc / 3 s) ------
-    property var mediaSt: ({})
-    property real volFrac: -1
-    property bool volMuted: false
-    property real micFrac: -1
-    property bool micMuted: false
-    property string powerProfile: ""
-
-    function applyAv(text) {
-        var parts = String(text).split("\n===\n");
-        if (parts[0] !== undefined) {
-            var d = null;
-            try {
-                d = JSON.parse(parts[0]);
-            } catch (e) {
-                d = null;
-            }
-            mediaSt = (d && typeof d === "object") ? d : ({});
-        }
-        var m = (parts[1] || "").match(/Volume:\s*([0-9.]+)/);
-        volFrac = m ? Math.min(1, Number(m[1])) : -1;
-        volMuted = (parts[1] || "").indexOf("MUTED") >= 0;
-        var m2 = (parts[2] || "").match(/Volume:\s*([0-9.]+)/);
-        micFrac = m2 ? Math.min(1, Number(m2[1])) : -1;
-        micMuted = (parts[2] || "").indexOf("MUTED") >= 0;
-    }
-    Process {
-        id: avPoll
-        running: false
-        command: ["bash", "-lc", 'omarchy-shell media status 2>/dev/null; echo "==="; wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null; echo "==="; wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null']
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.applyAv(text)
-        }
-    }
-    Process {
-        id: pwrPoll
-        running: false
-        command: ["powerprofilesctl", "get"]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.powerProfile = String(text).trim()
-        }
-    }
+    // ---- shared audio / media / power state ---------------------------------
+    // Owned by this deck's UtilityDock instance (one poller per datum). The
+    // old private 3 s av batch + 30 s powerprofile probe duplicated it.
+    readonly property var mediaSt: dockStrip.media
+    readonly property string powerProfile: dockStrip.powerProfile
 
     // ---- AI center key: dir resolve + entry count, one bounded probe --------
     // Prefer the btrfs-home AI center; fall back to the Kingston mount while
@@ -396,25 +349,13 @@ Item {
     // pollTick(). FALLBACK while lane H's ingest is out of tree: the existing
     // 1 s clock timer above makes the same call, so there is still exactly
     // ONE 1 Hz wall-clock tick in this file, nothing faster, nothing while
-    // hidden. Periods stay wall-clock (3 s AV / 30 s power), so overlapping
+    // hidden. Periods stay wall-clock (30 s ai probe), so overlapping
     // tick sources can never double-fire a fetch.
-    property double _avLast: -1
-    property double _pwrLast: -1
     property double _aiLast: -1
     function pollTick() {
         if (!root.shown)
             return;
         var t = Date.now();
-        if (t - _avLast >= 3000) {
-            _avLast = t;
-            if (!avPoll.running)
-                avPoll.running = true;
-        }
-        if (t - _pwrLast >= 30000) {
-            _pwrLast = t;
-            if (!pwrPoll.running)
-                pwrPoll.running = true;
-        }
         if (t - _aiLast >= 30000) {
             _aiLast = t;
             if (!aiPoll.running)
@@ -685,17 +626,17 @@ Item {
                 }
             }
         }
-        // right cluster: weather + clock + uptime  (mock .mast right of .sp)
+        // right cluster: weather + clock  (mock .mast right of .sp)
         Item {
             id: mastRight
             anchors.right: parent.right
             anchors.rightMargin: 22
             anchors.verticalCenter: parent.verticalCenter
-            width: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width + 40 + mastUp.width
+            width: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width
             height: mastClock.implicitHeight
-            // All three hang off the same bottom edge: the 22 px display face
-            // and the 10 px data lines then share one optical baseline instead
-            // of being centre-aligned into a vertical wobble.
+            // Both hang off the same bottom edge: the 22 px display face and
+            // the 10 px data line then share one optical baseline instead of
+            // being centre-aligned into a vertical wobble.
             Text {
                 id: mastWx
                 anchors.bottom: parent.bottom
@@ -715,26 +656,17 @@ Item {
                 font.pixelSize: Style.f.pxClock
                 font.letterSpacing: 2
             }
-            Text {
-                id: mastUp
-                anchors.bottom: parent.bottom
-                x: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width + 40
-                horizontalAlignment: Text.AlignRight
-                text: "UP " + root.uptimeText + "\nLOAD " + root.loadText.replace(/ · /g, " ")
-                color: Style.c.mute
-                font.family: Style.f.mono
-                font.pixelSize: Style.f.pxLabel
-                font.letterSpacing: 1.4
-                lineHeight: 1.3
-            }
         }
     }
 
     // =============================================================== tile rows --
     component FactRow: Item {
         id: frow
-        property var row: ({})          // {fl,fv,frac,tone,chart,bars,weight}
+        property var row: ({})          // {fl,fv,frac,tone,chart,bars,weight} | {act,g,fl,fh,nav|argv} | {btns:[{g,on,brand,argv|nav}]}
         property color txtCol: Style.c.txt
+        property bool hot: false        // pointer is over this row (fed by HubTile's overlay)
+        property int hoverBtn: -1
+        readonly property bool plain: row.act !== true && row.btns === undefined
 
         Column {
             anchors.verticalCenter: parent.verticalCenter
@@ -745,7 +677,7 @@ Item {
             Item {
                 width: parent.width
                 height: Math.max(fl.implicitHeight, fv.implicitHeight)
-                visible: frow.row.chart !== true
+                visible: frow.row.chart !== true && frow.plain
                 Text {
                     id: fl
                     anchors.left: parent.left
@@ -773,6 +705,77 @@ Item {
                     font.pixelSize: Style.f.pxLabel
                 }
             }
+            Item {
+                id: actItem
+                visible: frow.row.act === true
+                width: parent.width
+                height: visible ? 26 : 0
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Style.r.key
+                    color: frow.hot ? Style.c.azureWash : "transparent"
+                    border.width: 1
+                    border.color: frow.hot ? Style.tone(Style.c.accent2, 0.50) : "transparent"
+                }
+                IconWell {
+                    id: actWell
+                    x: 3
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: 20
+                    glyph: frow.row.g !== undefined ? frow.row.g : ""
+                    brand: frow.row.brand === true
+                    hovered: frow.hot
+                }
+                Text {
+                    anchors.left: actWell.right
+                    anchors.leftMargin: 9
+                    anchors.right: actHint.left
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: frow.row.fl !== undefined ? frow.row.fl : ""
+                    color: frow.hot ? Style.c.txt : Style.c.dim
+                    font.family: Theme.displayFamily
+                    font.pixelSize: Style.f.pxLabel
+                    font.letterSpacing: Style.f.lsTag
+                }
+                Tag {
+                    id: actHint
+                    anchors.right: parent.right
+                    anchors.rightMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
+                    text: frow.row.fh !== undefined ? frow.row.fh : ""
+                }
+            }
+            Item {
+                id: btnItem
+                visible: frow.row.btns !== undefined
+                width: parent.width
+                height: visible ? 30 : 0
+                Row {
+                    anchors.fill: parent
+                    Repeater {
+                        model: frow.row.btns !== undefined ? frow.row.btns : []
+                        delegate: Item {
+                            id: bd
+                            required property var modelData
+                            required property int index
+                            width: btnItem.width / Math.max(1, frow.row.btns.length)
+                            height: btnItem.height
+                            IconWell {
+                                anchors.centerIn: parent
+                                size: 26
+                                glyph: bd.modelData.g
+                                brand: bd.modelData.brand === true
+                                active: bd.modelData.on === true
+                                tint: bd.modelData.on === true ? Style.c.accent : Style.c.azure
+                                hovered: frow.hot && frow.hoverBtn === bd.index
+                            }
+                        }
+                    }
+                }
+            }
             MiniChart {
                 visible: frow.row.chart === true
                 width: parent.width
@@ -781,11 +784,10 @@ Item {
             }
             Item {
                 width: parent.width
-                // Always 4 px tall, whether or not this row has a fraction to
-                // draw. Rows that reserve the slot share one label baseline;
-                // rows that skipped it sat half a row lower than their
-                // neighbours, so the labels in a tile never lined up.
-                height: 4
+                // Always 4 px tall for value rows, whether or not this row has a
+                // fraction to draw: rows that reserve the slot share one label
+                // baseline. Action rows carry their own height instead.
+                height: frow.plain ? 4 : 0
                 Rectangle {
                     anchors.fill: parent
                     radius: 2
@@ -812,6 +814,40 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Floating launcher key for the side strips: icon well + micro label.
+    // Pure affordance (no datum); hover brightens the well and label.
+    component StripKey: Item {
+        id: sk
+        property string glyph: ""
+        property string label: ""
+        property var spec: ({})
+        width: 64
+        height: 62
+        IconWell {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            size: 40
+            glyph: sk.glyph
+            hovered: skMa.containsMouse
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            text: sk.label
+            color: skMa.containsMouse ? Style.c.txt : Style.c.mute
+            font.family: Theme.monoFamily
+            font.pixelSize: Style.f.pxMicro
+            font.letterSpacing: Style.f.lsTag
+        }
+        MouseArea {
+            id: skMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runAct(sk.spec)
         }
     }
 
@@ -895,7 +931,25 @@ Item {
         id: htile
         property string tileId: ""
         property int fkey: 0
-        property var rows: root.tileFacts(tileId)
+        // rowsLive re-evaluates with every stats frame; `rows` only swaps when
+        // the content really changed, so Repeater delegates are not rebuilt at 1 Hz
+        property var rowsLive: root.tileFacts(tileId)
+        property var rows: []
+        property string rowsSig: ""
+        onRowsLiveChanged: {
+            var sg = JSON.stringify(rowsLive);
+            if (sg !== rowsSig) {
+                rowsSig = sg;
+                rows = rowsLive;
+            }
+        }
+        Component.onCompleted: {
+            rowsSig = JSON.stringify(rowsLive);
+            rows = rowsLive;
+        }
+        property int hoverIdx: -1
+        property int hoverBtn: -1
+        hoverExternal: rowLaunchArea.containsMouse
         // mock .tile padding:12px 14px — EmbossedTile adds the 1 px face inset
         padding: 13
         keyCap: fkey > 0 ? "F" + fkey : ""
@@ -955,44 +1009,67 @@ Item {
                         width: factsCol.width
                         height: (htile.slots && htile.slots[index]) ? htile.slots[index].h : 0
                         row: modelData
+                        hot: htile.hoverIdx === index
+                        hoverBtn: htile.hoverIdx === index ? htile.hoverBtn : -1
                     }
                 }
             }
         }
 
-        // Row launch affordance (AGENTS tile): FactRow delegates live in
+        // Row action layer (all tiles): FactRow delegates live in
         // EmbossedTile's `content`, UNDER its trailing hoverArea, so a
         // MouseArea nested in the delegate would never see a click. This
         // overlay is parented to the tile root at z>0 instead and hit-tests
         // which fact row was clicked: rows carrying a `launch` desktop id go
         // to `gtk-launch` through the shared execArgv wrapper; every other
         // click re-emits the tile's own clicked() so tile activation behaves
-        // exactly as before. Disabled entirely when no row can launch, so
-        // ordinary tiles keep their single-click path.
+        // exactly as before. Hover is tracked here too (this layer sits above
+        // the tile's own hover area) and lights the row, the tile rim follows
+        // through hoverExternal.
         property var rowLaunchArea: MouseArea {
             parent: htile
             z: 4
             anchors.fill: parent
-            enabled: {
+            hoverEnabled: true
+            // rowAt: maps a tile-space point onto a fact row (+ button column)
+            function rowAt(mx, my) {
+                var gp = factsGlass.mapFromItem(htile, mx, my);
+                var colY = gp.y - htile.insetY;   // factsCol is inset inside factsGlass
+                var sl = htile.slots;
+                for (var si = 0; si < sl.length; si++)
+                    if (colY >= sl[si].y && colY < sl[si].y + sl[si].h)
+                        return si;
+                return -1;
+            }
+            function btnAt(mx, row) {
+                var n = (row && row.btns !== undefined) ? row.btns.length : 0;
+                if (n === 0)
+                    return -1;
+                var gx = factsGlass.mapFromItem(htile, mx, 0).x - htile.insetX;
+                return Math.max(0, Math.min(n - 1, Math.floor(gx / Math.max(1, factsCol.width / n))));
+            }
+            onPositionChanged: function (mouse) {
                 var rs = htile.rows;
-                for (var ri = 0; ri < rs.length; ri++)
-                    if (rs[ri] && rs[ri].launch !== undefined)
-                        return true;
-                return false;
+                var idx = rowAt(mouse.x, mouse.y);
+                var r = (idx >= 0 && idx < rs.length) ? rs[idx] : null;
+                var actionable = r !== null && (r.act === true || r.btns !== undefined || r.launch !== undefined);
+                htile.hoverIdx = actionable ? idx : -1;
+                htile.hoverBtn = actionable ? btnAt(mouse.x, r) : -1;
+            }
+            onExited: {
+                htile.hoverIdx = -1;
+                htile.hoverBtn = -1;
             }
             onClicked: function (mouse) {
                 var rs = htile.rows;
-                var gp = factsGlass.mapFromItem(htile, mouse.x, mouse.y);
-                var colY = gp.y - htile.insetY;   // factsCol is inset inside factsGlass
-                var sl = htile.slots;
-                var idx = -1;
-                for (var si = 0; si < sl.length; si++)
-                    if (colY >= sl[si].y && colY < sl[si].y + sl[si].h) {
-                        idx = si;
-                        break;
-                    }
+                var idx = rowAt(mouse.x, mouse.y);
                 var r = (idx >= 0 && idx < rs.length) ? rs[idx] : null;
-                if (r !== null && r.launch !== undefined && String(r.launch) !== "")
+                if (r !== null && r.btns !== undefined) {
+                    var bi = btnAt(mouse.x, r);
+                    root.runAct(r.btns[bi]);
+                } else if (r !== null && r.act === true)
+                    root.runAct(r);
+                else if (r !== null && r.launch !== undefined && String(r.launch) !== "")
                     root.execArgv(["gtk-launch", String(r.launch)]);
                 else
                     htile.clicked();
@@ -1066,73 +1143,27 @@ Item {
                 return b(Math.round(hotM.pct) + "%") + " " + esc(trunc(hotM.name, 14)) + " · " + mp.length + " mounts live";
             }
         case "procs":
-            if (!has("proc0_name"))
-                return Style.unknownGlyph;
-            var hot40 = 0;
-            for (var i = 0; i < 6; i++)
-                if (has("proc" + i + "_name") && num(stats["proc" + i + "_cpu"]) > 40)
-                    hot40++;
-            return b(String(stats.proc0_name)) + " " + Math.round(num(stats.proc0_cpu)) + "% of a core" + (hot40 > 1 ? " · " + hot40 + " lanes >40%" : "");
+            return i2("↗ navigator · F2");
         case "devices":
-            {
-                var n = peripheralCount();
-                var b0 = has("bat0_name") ? " · " + esc(trunc(stats.bat0_name, 12)) + (has("bat0_pct") ? " " + b(Math.round(num(stats.bat0_pct)) + "%") : "") : "";
-                return (n >= 0 ? b(String(n)) + " peripherals" : "peripherals " + Style.unknownGlyph) + b0;
-            }
+            return i2("↗ navigator · F3");
         case "agents":
-            {
-                var sess = has("devsess_count") ? num(stats.devsess_count) : -1;
-                var acp = has("ag_devin_acp") ? num(stats.ag_devin_acp) : -1;
-                var live = 0;
-                var skeys = ["devin", "opencode", "hermes", "october", "haze", "build"];
-                for (var ai = 0; ai < skeys.length; ai++)
-                    if (has("ag_" + skeys[ai] + "_procs") && num(stats["ag_" + skeys[ai] + "_procs"]) > 0)
-                        live++;
-                var lead = sess >= 0 ? b(String(sess)) + " devin sessions live" : live >= 0 ? b(String(live)) + " harnesses live" : Style.unknownGlyph;
-                return lead + (acp >= 0 ? " · " + acp + " acp" : "");
-            }
+            // Crew-status placeholder (D1): the roster read-out arrives with
+            // the crew module; no session or harness values are read here.
+            return i2("crew");
         case "repos":
-            {
-                if (!has("gh_ok"))
-                    return "gh " + Style.unknownGlyph;
-                var un = has("gh_unread") ? b(String(num(stats.gh_unread))) + " unread" : "gh reachable";
-                var last = has("ghev0_repo") ? " · " + esc(trunc(stats.ghev0_repo, 12)) + " " + esc(String(stats.ghev0_type || "").replace("Event", "")) : "";
-                return un + last;
-            }
+            return i2("↗ navigator · F5");
         case "network":
-            {
-                var eth = topoNode("net_eth");
-                var ifn = (eth && eth.extra && eth.extra.ifname) ? eth.extra.ifname : "enp15s0";
-                var st = (eth && eth.state !== undefined && topo !== null && eth.state !== topo.unknown) ? String(eth.state).toUpperCase() : linkOk ? "UP" : Style.unknownGlyph;
-                var rxT = has("net_rx") ? " · " + i2(fmtBytes(num(stats.net_rx))) + " rx since boot" : "";
-                return esc(ifn) + " <b>" + esc(st) + "</b> 2.5GbE" + rxT;
-            }
+            return i2("bar module · toggle");
         case "storage":
-            {
-                var t = -1, nm = "";
-                for (var vi = 0; vi < 4; vi++)
-                    if (has("nvme" + vi + "_temp") && num(stats["nvme" + vi + "_temp"]) > t) {
-                        t = num(stats["nvme" + vi + "_temp"]);
-                        nm = "nvme" + vi;
-                    }
-                var fsP = has("fs_root_pct") ? " · root " + b(Math.round(num(stats.fs_root_pct)) + "%") : "";
-                return (nm !== "" ? esc(nm) + " " + b(Math.round(t) + "°") : "nvme " + Style.unknownGlyph) + fsP;
-            }
+            return has("fs_root_pct") ? b(Math.round(num(stats.fs_root_pct)) + "%") + " root" : Style.unknownGlyph;
         case "media":
-            if (mediaSt.playing === true)
-                return "playing · " + esc(trunc(mediaSt.title || "—", 18));
-            if (mediaSt.hasPlayer === true)
-                return "paused · " + esc(trunc(mediaSt.title || "", 16));
-            return "no player" + (volFrac >= 0 ? " · sink " + b(Math.round(volFrac * 100) + "%") : "");
+            return i2("transport · play/pause");
         case "tokens":
-            {
-                var tot = tokToday();
-                return tot >= 0 ? "today " + b(fmtTok(tot)) + " in+out" : "ledger " + Style.unknownGlyph;
-            }
+            return i2("↗ navigator · F9");
         case "system":
             {
                 var up = has("pkg_updates") ? b(String(num(stats.pkg_updates))) + " updates pending" : "updates " + Style.unknownGlyph;
-                return up + (powerProfile !== "" ? " · " + i2(powerProfile) : "") + " · up " + uptimeText;
+                return up + (powerProfile !== "" ? " · " + i2(powerProfile) : "");
             }
         }
         return "";
@@ -1326,160 +1357,74 @@ Item {
                 break;
             }
         case "procs":
-            for (i = 0; i < 4; i++) {
-                if (!has("proc" + i + "_name"))
-                    break;
-                var pc = num(stats["proc" + i + "_cpu"]);
-                rows.push({
-                    fl: esc(stats["proc" + i + "_name"]),
-                    fv: "<b>" + Math.round(pc) + "%</b>",
-                    frac: root.clamp(pc / 200, 0, 1),
-                    tone: pc >= 90 ? 1 : i % 2 === 1 ? 2 : 0
-                });
+            {
+                // Action rows only (map row 4): values live in the Workbench PROCESS LEDGER.
+                rows.push({ act: true, g: Style.ico.layers, fl: "PROCESS LEDGER", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.term, fl: "BTOP", fh: "TUI", argv: ["omarchy-launch-tui", "btop"] });
+                rows.push({ act: true, g: Style.ico.search, fl: "NAVIGATOR", fh: "F2", nav: "proc" });
+                break;
             }
-            if (rows.length === 0)
-                rows.push({
-                    fl: "top consumers",
-                    fv: Style.unknownGlyph
-                });
-            break;
         case "devices":
             {
-                // Entry point only — the detailed device listing moved to the
-                // Workbench (lane W). Activation opens Navigator's devices
-                // section (activateTile → openNav("devices")); the peripheral
-                // count stays on the tile's insight line, low-battery still
-                // drives `hot` via tileHot().
                 rows.push({
-                    fl: "usb tree · batteries",
-                    fv: i2("↗ navigator · F3")
+                    btns: [
+                        { g: Style.icoBrand.bt, brand: true, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
+                        { g: Style.ico.display, argv: ["omarchy-audio-output-switch"] },
+                        { g: Style.ico.mic, argv: ["omarchy-audio-source-switch"] },
+                        { g: Style.ico.shot, argv: ["omarchy-capture-screenshot"] }
+                    ]
                 });
-                rows.push({
-                    fl: "device detail",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                rows.push({ act: true, g: Style.ico.hub, fl: "DEVICE BAY", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.search, fl: "NAVIGATOR", fh: "F3", nav: "devices" });
                 break;
             }
         case "agents":
             {
-                var disp = ["devin", "opencode", "october"];
+                rows.push({ act: true, g: Style.ico.robot, fl: "HERMES SESSION", fh: "TUI", argv: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] });
+                rows.push({ act: true, g: Style.ico.pulse, fl: "SESSION LEDGER", fh: "WB", argv: jumpWb.argv });
                 // Launchable harnesses: row click -> gtk-launch <desktop id>
-                // (picked up by HubTile's row hit-test overlay).
-                var launchIds = ({
-                        "devin": "devin-desktop",
-                        "october": "october"
-                    });
-                for (i = 0; i < disp.length; i++) {
-                    var aid = disp[i];
-                    var pr = has("ag_" + aid + "_procs") ? num(stats["ag_" + aid + "_procs"]) : -1;
-                    var cp = has("ag_" + aid + "_cpu") ? num(stats["ag_" + aid + "_cpu"]) : -1;
-                    var launchable = launchIds[aid] !== undefined;
-                    var arow = {
-                        fl: aid + (launchable ? " ↗" : "") + (aid === "devin" && has("ag_devin_acp") ? " · " + num(stats.ag_devin_acp) + " acp" : "") + (pr >= 0 ? " · " + pr + " procs" : ""),
-                        fv: cp >= 0 ? "<b>" + Math.round(cp) + "%</b>" : (launchable ? i2("↗ launch") : Style.unknownGlyph),
-                        frac: cp >= 0 ? root.clamp(cp / 300, 0, 1) : -1,
-                        tone: cp >= 200 ? 1 : i === 2 ? 2 : 0
-                    };
-                    if (launchable)
-                        arow.launch = launchIds[aid];
-                    rows.push(arow);
-                }
-                var lockNames = [];
-                var ns = Math.min(4, has("devsess_count") ? num(stats.devsess_count) : 0);
-                for (i = 0; i < ns; i++)
-                    if (has("devsess" + i + "_name") && num(stats["devsess" + i + "_live"]) > 0)
-                        lockNames.push(String(stats["devsess" + i + "_name"]));
-                rows.push({
-                    fl: "live locks",
-                    fv: lockNames.length > 0 ? esc(trunc(lockNames.join(" · "), 34)) : i2(ns === 0 ? "none" : ns + "")
-                });
+                rows.push({ fl: "devin", fv: i2("↗ launch"), launch: "devin-desktop" });
+                rows.push({ fl: "october", fv: i2("↗ launch"), launch: "october" });
                 break;
             }
         case "repos":
             {
-                if (!has("gh_ok"))
-                    rows.push({
-                        fl: "github feed",
-                        fv: Style.unknownGlyph
-                    });
-                else {
-                    rows.push({
-                        fl: esc(has("gh_user") ? "@" + String(stats.gh_user) : "github"),
-                        fv: num(stats.gh_ok) > 0 ? "ok" : i2("unreachable") + (has("gh_unread") ? " · <b>" + num(stats.gh_unread) + "</b> unread" : "")
-                    });
-                    var ne = Math.min(3, has("ghev_count") ? num(stats.ghev_count) : 0);
-                    for (i = 0; i < ne; i++)
-                        rows.push({
-                            fl: esc(trunc(stats["ghev" + i + "_repo"] || "?", 20)),
-                            fv: esc(String(stats["ghev" + i + "_type"] || "").replace("Event", "")) + " · " + i2(fmtAge(num(stats["ghev" + i + "_age_s"])))
-                        });
-                }
+                rows.push({ act: true, g: Style.ico.branch, fl: "GITHUB FEED", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.folder, fl: "WORKTREES", fh: "DIR", argv: ["uwsm-app", "--", "nautilus", "--new-window", homeDir + "/hud-wt"] });
+                rows.push({ act: true, g: Style.ico.search, fl: "REPOS NAV", fh: "F5", nav: "repos" });
                 break;
             }
         case "network":
             {
-                var eth = topoNode("net_eth");
-                var wif = topoNode("net_wifi");
-                var ethName = (eth && eth.extra && eth.extra.ifname) ? eth.extra.ifname : "enp15s0";
-                var ethUp = (eth && topo !== null && eth.state !== topo.unknown) ? String(eth.state) === "up" : linkOk;
-                rows.push({
-                    fl: esc(ethName) + " · RTL8125 2.5GbE",
-                    fv: ethUp ? "<b>UP</b>" : "DOWN",
-                    frac: -1
-                });
-                rows.push({
-                    fl: "rx / tx totals",
-                    fv: has("net_rx") ? i2(fmtBytes(num(stats.net_rx))) + " / " + i2(fmtBytes(num(stats.net_tx))) : Style.unknownGlyph
-                });
-                var wifState = (wif && topo !== null && wif.state !== topo.unknown) ? String(wif.state).toUpperCase() : "DOWN";
-                rows.push({
-                    fl: "wlp16s0 · MT7922",
-                    fv: i2(wifState === "UP" ? "UP" : "DOWN")
-                });
-                rows.push({
-                    fl: "throughput",
-                    fv: i2("↓" + fmtRate(rxRate)) + " " + i2("↑" + fmtRate(txRate))
-                });
+                rows.push({ act: true, g: Style.ico.wifi, fl: "NETWORK BAR", fh: "TOG", argv: ["omarchy-shell", "-q", "omarchy.network", "toggle"] });
+                rows.push({ act: true, g: Style.ico.chip, fl: "TOPOLOGY", fh: "DP-2", argv: jumpBoard.argv });
                 break;
             }
         case "storage":
             {
-                var nn = Math.min(2, has("nvme_count") ? num(stats.nvme_count) : 0);
-                for (i = 0; i < nn; i++) {
-                    var t1 = has("nvme" + i + "_temp") ? num(stats["nvme" + i + "_temp"]) : NaN;
-                    var t2 = has("nvme" + i + "_temp2") ? num(stats["nvme" + i + "_temp2"]) : NaN;
-                    var model = has("nvme" + i + "_model") ? trunc(String(stats["nvme" + i + "_model"]).split(" ").slice(0, 2).join(" "), 18) : "nvme" + i;
+                // Mount / fill % is CommandHub's own datum (D4), shown on FILES
+                // and STORAGE; drive temps (map row 9) and io rates (row 10)
+                // belong to BoardView and are not read here.
+                var mp2 = mountRows();
+                for (i = 0; i < Math.min(3, mp2.length); i++) {
+                    var sm = mp2[i];
                     rows.push({
-                        fl: "nvme" + i + " · " + esc(model),
-                        fv: isFinite(t1) ? "<b>" + Math.round(t1) + "°</b>" + (isFinite(t2) ? "/" + Math.round(t2) + "°" : "") : Style.unknownGlyph,
-                        frac: isFinite(t1) ? root.clamp(t1 / 90, 0, 1) : -1,
-                        tone: isFinite(t1) && t1 >= 65 ? 1 : 2
+                        fl: esc(sm.name) + (sm.mount !== sm.name ? " · " + esc(sm.mount) : ""),
+                        fv: "<b>" + Math.round(sm.pct) + "%</b> · " + fmtBytes(sm.free) + " free",
+                        frac: sm.pct / 100,
+                        tone: sm.pct >= 70 ? 1 : (i === 0 ? 0 : 2)
                     });
                 }
-                var usbRow = "";
-                var nbd = Math.min(8, has("blk_count") ? num(stats.blk_count) : 0);
-                for (i = 0; i < nbd; i++)
-                    if (has("blk" + i + "_type") && String(stats["blk" + i + "_type"]) === "usb") {
-                        var pm = "";
-                        var npp = Math.min(4, num(stats["blk" + i + "p_count"]));
-                        for (var pj = 0; pj < npp; pj++)
-                            if (has("blk" + i + "p" + pj + "_mount") && String(stats["blk" + i + "p" + pj + "_mount"]) !== "" && has("blk" + i + "p" + pj + "_pct"))
-                                pm = " · " + Math.round(num(stats["blk" + i + "p" + pj + "_pct"])) + "%";
-                        usbRow = String(stats["blk" + i + "_name"]) + (has("blk" + i + "_model") ? " · " + trunc(stats["blk" + i + "_model"], 22) : "") + pm;
-                        break;
-                    }
-                if (usbRow !== "")
+                if (rows.length === 0 && has("fs_root_pct"))
                     rows.push({
-                        fl: esc(usbRow),
-                        fv: i2("usb")
+                        fl: "/ root",
+                        fv: "<b>" + Math.round(num(stats.fs_root_pct)) + "%</b> · " + fmtBtoGiB(num(stats.fs_root_size) - num(stats.fs_root_used)) + "G free",
+                        frac: num(stats.fs_root_pct) / 100,
+                        tone: num(stats.fs_root_pct) >= 70 ? 1 : 0
                     });
-                rows.push({
-                    fl: "io now",
-                    fv: has("disk_read_bps") ? "rd " + i2(fmtRate(num(stats.disk_read_bps))) + " · wr " + i2(fmtRate(num(stats.disk_write_bps))) : Style.unknownGlyph
-                });
                 if (rows.length === 0)
                     rows.push({
-                        fl: "drives",
+                        fl: "mounts",
                         fv: Style.unknownGlyph
                     });
                 break;
@@ -1487,60 +1432,21 @@ Item {
         case "media":
             {
                 rows.push({
-                    fl: "player",
-                    fv: mediaSt.hasPlayer === true ? (mediaSt.playing === true ? "<b>playing</b>" : i2("paused")) : mediaSt.hasPlayer === false ? "none" : Style.unknownGlyph
+                    weight: 1.6,
+                    btns: [
+                        { g: Style.ico.prev, argv: ["omarchy-shell", "-q", "media", "previous"] },
+                        { g: Style.ico.play, argv: ["omarchy-shell", "-q", "media", "playPause"] },
+                        { g: Style.ico.next, argv: ["omarchy-shell", "-q", "media", "next"] },
+                        { g: Style.ico.stop, argv: ["omarchy-shell", "-q", "media", "pause"] }
+                    ]
                 });
-                rows.push({
-                    fl: "track",
-                    fv: mediaSt.hasPlayer === true && mediaSt.title ? esc(trunc(mediaSt.title, 26)) : Style.unknownGlyph
-                });
-                rows.push({
-                    fl: "sink volume",
-                    fv: volFrac >= 0 ? (volMuted ? "MUTED" : "<b>" + Math.round(volFrac * 100) + "%</b>") : Style.unknownGlyph,
-                    frac: volFrac,
-                    tone: volMuted ? 1 : 0
-                });
-                rows.push({
-                    fl: "mic",
-                    fv: micFrac >= 0 ? (micMuted ? "<font color='" + cssHex(Style.c.alert) + "'>MUTED</font>" : i2("LIVE") + " " + Math.round(micFrac * 100) + "%") : Style.unknownGlyph,
-                    frac: micFrac,
-                    tone: 2
-                });
+                rows.push({ act: true, g: Style.ico.display, fl: "SWITCH OUTPUT", fh: "SINK", argv: ["omarchy-audio-output-switch"] });
                 break;
             }
         case "tokens":
             {
-                rows.push({
-                    chart: true,
-                    bars: tokBars(),
-                    weight: 1.7
-                });
-                var tot = tokToday();
-                var topName = "", topV = -1;
-                var prov = (tokData && tokData.providers) ? tokData.providers : null;
-                if (prov !== null)
-                    for (var k in prov) {
-                        var p = prov[k];
-                        if (!p || !p.day)
-                            continue;
-                        var ii = Number(p.day["in"]), oo = Number(p.day.out), tt = Number(p.day.total);
-                        var vv = (isFinite(ii) || isFinite(oo)) ? (isFinite(ii) ? ii : 0) + (isFinite(oo) ? oo : 0) : tt;
-                        if (isFinite(vv) && vv > topV) {
-                            topV = vv;
-                            topName = k;
-                        }
-                    }
-                rows.push({
-                    fl: "today total",
-                    fv: tot >= 0 ? "<b>" + fmtTok(tot) + "</b>" : Style.unknownGlyph
-                });
-                var topP = (topName !== "" && prov !== null) ? prov[topName] : null;
-                var cost = (topP && topP.day && isFinite(Number(topP.day.cost))) ? " · <b>$" + Number(topP.day.cost).toFixed(2) + "</b>" : "";
-                var msgs = (topP && topP.day && isFinite(Number(topP.day.msgs))) ? " · " + i2(String(topP.day.msgs) + " msgs") : "";
-                rows.push({
-                    fl: "top provider",
-                    fv: topName !== "" ? esc(topName) + " " + i2(fmtTok(topV)) + cost + msgs : Style.unknownGlyph
-                });
+                rows.push({ act: true, g: Style.ico.layers, fl: "TOKEN LEDGER", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.search, fl: "USAGE OVERLAY", fh: "F9", nav: "usage" });
                 break;
             }
         case "system":
@@ -1558,9 +1464,19 @@ Item {
                     fl: "power profile",
                     fv: powerProfile !== "" ? i2(powerProfile) : Style.unknownGlyph
                 });
+                // theme row added per map row 23 (M3): CH is the sole home.
                 rows.push({
-                    fl: "uptime · psi io",
-                    fv: esc(uptimeText) + " · " + (has("psi_io_some") ? "<b>" + num(stats.psi_io_some).toFixed(2) + "</b>" : Style.unknownGlyph)
+                    fl: "theme",
+                    fv: has("theme_name") ? i2(esc(trunc(stats.theme_name, 12))) : Style.unknownGlyph
+                });
+                rows.push({
+                    weight: 1.3,
+                    btns: [
+                        { g: Style.ico.sync, argv: ["omarchy-shell", "-q", "omarchy.system-update", "refresh"] },
+                        { g: Style.ico.bolt, argv: ["omarchy-powerprofiles-set", "autodetect", powerProfile === "performance" ? "power-saver" : "performance"] },
+                        { g: Style.ico.moon, argv: ["omarchy-shell", "-q", "nightlight", "toggle"] },
+                        { g: Style.ico.palette, argv: ["omarchy-theme-bg-next"] }
+                    ]
                 });
                 break;
             }
@@ -1764,11 +1680,14 @@ Item {
             }
         }
 
-        // telemetry pass — four rings CPU/GPU/MEM/NET, 270° sweep, repainted
-        // only while a stats frame is fresh (arc Behaviors retrigger paint).
+        // static dial layer: ring tracks, tags, identity band. Painted on
+        // geometry / plate-text change only (the per-glyph arc text is the
+        // expensive part and used to repaint with every ring update).
         Canvas {
             id: dialArcs
             anchors.fill: parent
+            readonly property string plate: root.screenName + (root.kernelText !== "" ? " · " + root.kernelText : "")
+            onPlateChanged: requestPaint()
             onWidthChanged: requestPaint()
             onHeightChanged: requestPaint()
             function monoFam() {
@@ -1830,40 +1749,17 @@ Item {
                 var A0 = -Math.PI * 0.75, SW = Math.PI * 1.5;
                 var ringW = Math.max(3, R * 0.027);
                 var radii = [R * 0.885, R * 0.75, R * 0.615, R * 0.48];
-                var fracs = [root.aCpu, root.aGpu, root.aMem, root.aNet];
-                var cols = ["#8fd8e8", "#ffb300", "#c8f31d", "#8affd0"];
                 var tags = ["CPU", "GPU", "MEM", "NET"];
-                c.lineCap = "butt";
                 c.font = "500 " + Math.max(7, Math.round(R * 0.04)) + "px " + monoFam();
                 c.textAlign = "center";
                 c.textBaseline = "middle";
                 for (var g = 0; g < 4; g++) {
                     var rr = radii[g];
                     c.beginPath();
-                    c.strokeStyle = "rgba(190,220,245,0.14)";
+                    c.strokeStyle = "rgba(96,165,250,0.12)";
                     c.lineWidth = ringW;
                     c.arc(cx, cy, rr, A0, A0 + SW);
                     c.stroke();
-                    var f = fracs[g];
-                    if (f >= 0) {
-                        var ae = A0 + SW * Math.min(1, f);
-                        c.beginPath();
-                        c.strokeStyle = cols[g];
-                        c.globalAlpha = 0.14;
-                        c.lineWidth = ringW * 1.5;
-                        c.arc(cx, cy, rr, A0, ae);
-                        c.stroke();
-                        c.globalAlpha = 1;
-                        c.beginPath();
-                        c.strokeStyle = cols[g];
-                        c.lineWidth = ringW;
-                        c.arc(cx, cy, rr, A0, ae);
-                        c.stroke();
-                        c.fillStyle = cols[g];
-                        c.beginPath();
-                        c.arc(cx + Math.cos(ae) * rr, cy + Math.sin(ae) * rr, Math.max(1.4, ringW * 0.7), 0, Math.PI * 2);
-                        c.fill();
-                    }
                     // Tag rides its own ring in the sweep gap, rotated to the
                     // tangent. Right-aligned at the sweep start they used to
                     // stack diagonally down-right and the NET tag landed on top
@@ -1877,20 +1773,6 @@ Item {
                     c.fillText(tags[g], 0, 0);
                     c.restore();
                 }
-                // 18 segment notches punch through each ring band
-                c.strokeStyle = "rgba(6,8,10,0.9)";
-                c.lineWidth = Math.max(1.1, R * 0.006);
-                for (g = 0; g < 4; g++) {
-                    var rr2 = radii[g], half = ringW * 0.8;
-                    c.beginPath();
-                    for (var d = 0; d < 18; d++) {
-                        var da = A0 + SW * d / 18;
-                        c.moveTo(cx + Math.cos(da) * (rr2 - half), cy + Math.sin(da) * (rr2 - half));
-                        c.lineTo(cx + Math.cos(da) * (rr2 + half), cy + Math.sin(da) * (rr2 + half));
-                    }
-                    c.stroke();
-                }
-
                 // identity band (lane B3): the dial wears the machine's own
                 // roll-mark — NEXUSLINK · YURI across the top, the screen +
                 // kernel plate along the bottom. Painted on the telemetry
@@ -1913,6 +1795,70 @@ Item {
                             "t": plate,
                             "col": "rgba(143,216,232,0.42)"
                         }], cx, cy, rT, Math.PI / 2, false, Math.max(1, R * 0.007));
+            }
+        }
+
+        // live ring fills + segment notches: the only dial layer that repaints
+        // on data, and only when a ring moves by >= 1 % (values are quantized
+        // at assignment, no Behavior frames).
+        Canvas {
+            id: dialFill
+            anchors.fill: parent
+            renderStrategy: Canvas.Cooperative
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            Component.onCompleted: requestPaint()
+            onPaint: {
+                var c = getContext("2d");
+                c.clearRect(0, 0, width, height);
+                var W = width, H = height;
+                var cx = W / 2, cy = H / 2;
+                var R = Math.min(W, H) * 0.5 - 2;
+                if (R < 36)
+                    return;
+                var A0 = -Math.PI * 0.75, SW = Math.PI * 1.5;
+                var ringW = Math.max(3, R * 0.027);
+                var radii = [R * 0.885, R * 0.75, R * 0.615, R * 0.48];
+                var fracs = [root.aCpu, root.aGpu, root.aMem, root.aNet];
+                var cols = ["#8fd8e8", "#60a5fa", "#c8f31d", "#8affd0"];
+                c.lineCap = "round";
+                for (var g = 0; g < 4; g++) {
+                    var rr = radii[g];
+                    var f = fracs[g];
+                    if (f >= 0) {
+                        var ae = A0 + SW * Math.min(1, f);
+                        c.beginPath();
+                        c.strokeStyle = cols[g];
+                        c.globalAlpha = 0.14;
+                        c.lineWidth = ringW * 1.5;
+                        c.arc(cx, cy, rr, A0, ae);
+                        c.stroke();
+                        c.globalAlpha = 1;
+                        c.beginPath();
+                        c.strokeStyle = cols[g];
+                        c.lineWidth = ringW;
+                        c.arc(cx, cy, rr, A0, ae);
+                        c.stroke();
+                        c.fillStyle = cols[g];
+                        c.beginPath();
+                        c.arc(cx + Math.cos(ae) * rr, cy + Math.sin(ae) * rr, Math.max(1.4, ringW * 0.7), 0, Math.PI * 2);
+                        c.fill();
+                    }
+                }
+                // 18 segment notches punch through each ring band
+                c.strokeStyle = "rgba(6,8,10,0.9)";
+                c.lineWidth = Math.max(1.1, R * 0.006);
+                for (g = 0; g < 4; g++) {
+                    var rr2 = radii[g], half = ringW * 0.8;
+                    c.beginPath();
+                    for (var d = 0; d < 18; d++) {
+                        var da = A0 + SW * d / 18;
+                        c.moveTo(cx + Math.cos(da) * (rr2 - half), cy + Math.sin(da) * (rr2 - half));
+                        c.lineTo(cx + Math.cos(da) * (rr2 + half), cy + Math.sin(da) * (rr2 + half));
+                    }
+                    c.stroke();
+                }
+
             }
         }
 
@@ -2040,16 +1986,6 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
                     textFormat: Text.RichText
-                    text: "CPU <b>" + (root.has("cpu_temp") ? Math.round(root.num(root.stats.cpu_temp)) + "°" : Style.unknownGlyph) + "</b>" + (root.has("cpu_tccd2") ? " <font color='" + root.cssHex(Style.c.accent) + "'>TCCD2 " + Math.round(root.num(root.stats.cpu_tccd2)) + "°</font>" : "") + " · GPU " + (root.has("i_pwr_w") ? "<font color='" + root.cssHex(Style.c.accent2) + "'><b>" + Math.round(root.num(root.stats.i_pwr_w)) + " W</b></font>" : Style.unknownGlyph) + (root.has("i_temp_pkg") ? " <font color='" + root.cssHex(Style.c.accent2) + "'>B580 " + Math.round(root.num(root.stats.i_temp_pkg)) + "°</font>" : "")
-                    color: Style.c.dim
-                    font.family: Style.f.mono
-                    font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
-                }
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    textFormat: Text.RichText
                     text: "MEM <b>" + root.esc(root.memGiB) + "</b> / " + root.esc(root.memTotGiB) + "G" + (root.has("zram_ratio") ? " <font color='" + root.cssHex(Style.c.accent2) + "'>· zram " + Number(root.stats.zram_ratio) + "×</font>" : "")
                     color: Style.c.dim
                     font.family: Style.f.mono
@@ -2060,7 +1996,7 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
                     textFormat: Text.RichText
-                    text: "R <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.rxRate)) + "</b></font> · W <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.txRate)) + "</b></font> · " + (root.linkOk ? "enp15s0 up" : "link lost")
+                    text: "R <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.rxRate)) + "</b></font> · W <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.txRate)) + "</b></font>"
                     color: Style.c.dim
                     font.family: Style.f.mono
                     font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
@@ -2069,18 +2005,8 @@ Item {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
-                    text: "up " + root.uptimeText + " · " + root.clockText
+                    text: "up " + root.uptimeText
                     color: Style.c.faint
-                    font.family: Style.f.mono
-                    font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
-                }
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    visible: root.has("proc0_name")
-                    text: "• " + (root.has("proc0_name") ? String(root.stats.proc0_name) + " " + Math.round(root.num(root.stats.proc0_cpu)) + "%" : "")
-                    color: Style.c.magenta
                     font.family: Style.f.mono
                     font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
                 }
@@ -2127,6 +2053,33 @@ Item {
     // grid tile (the flanks are full). Same EmbossedTile chrome as the hub
     // tiles; click opens Navigator's files section at the AI center dir
     // (openNav's path arg → openSection("files", dir)).
+    // ---- side strips: launchers (left) and quick system actions (right) ----
+    // Fill the void between the tile flanks and the dial with affordances
+    // only; hidden when the gutter is too narrow to hold them.
+    readonly property bool stripRoom: (root.width - root.dialSize) / 2 - (root.padX + root.colW) >= 120
+    Column {
+        id: leftStrip
+        visible: root.stripRoom
+        x: root.padX + root.colW + 28
+        anchors.verticalCenter: reactor.verticalCenter
+        spacing: 14
+        StripKey { glyph: Style.ico.robot; label: "HERMES"; spec: ({ "argv": ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] }) }
+        StripKey { glyph: Style.ico.term; label: "TERM"; spec: ({ "argv": ["omarchy-launch-terminal"] }) }
+        StripKey { glyph: Style.ico.folder; label: "AI CENTER"; spec: ({ "argv": ["uwsm-app", "--", "nautilus", "--new-window", root.aiCenterDir !== "" ? root.aiCenterDir : root.homeDir + "/NEXUS_AI_CENTER"] }) }
+        StripKey { glyph: Style.ico.search; label: "NAV"; spec: ({ "nav": "files" }) }
+    }
+    Column {
+        id: rightStrip
+        visible: root.stripRoom
+        x: root.width - root.padX - root.colW - 28 - width
+        anchors.verticalCenter: reactor.verticalCenter
+        spacing: 14
+        StripKey { glyph: Style.ico.shot; label: "SHOT"; spec: ({ "argv": ["omarchy-capture-screenshot"] }) }
+        StripKey { glyph: Style.ico.pick; label: "PICK"; spec: ({ "argv": ["hyprpicker", "-a"] }) }
+        StripKey { glyph: Style.ico.palette; label: "BG"; spec: ({ "argv": ["omarchy-theme-bg-next"] }) }
+        StripKey { glyph: Style.ico.menu; label: "MENU"; spec: ({ "argv": ["omarchy-menu"] }) }
+    }
+
     EmbossedTile {
         id: aiKey
         anchors.horizontalCenter: parent.horizontalCenter

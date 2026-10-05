@@ -13,8 +13,10 @@ mod devices;
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1424,8 +1426,67 @@ fn misc_poll(map: &SlowMap) {
     }
 }
 
+// One long-lived `pactl subscribe` child on its own thread. PipeWire events
+// only set a flag; the slow-lane loop picks it up on its next 500 ms tick, so
+// the extra `pactl list` runs are debounced and never concurrent. Client
+// events are dropped: they are constant churn and carry nothing the lane
+// emits. Everything here is an accelerator: if the child dies the 3 s poll
+// still refreshes the lane, and the child is respawned with backoff.
+fn subscribe_events(dirty: &AtomicBool) -> io::Result<()> {
+    let mut cmd = std::process::Command::new("pactl");
+    cmd.arg("subscribe")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    // Rust ignores SIGPIPE and children inherit that, so a child left behind by
+    // a dead collector would keep running on the broken pipe forever. Ask the
+    // kernel to take it down with us instead.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
+    if let Some(stdout) = child.stdout.take() {
+        for line in io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            // "Event 'change' on sink #97": exact object match, so sink-input
+            // (every playing stream) does not trigger a refresh.
+            let Some((_, rest)) = line.trim().split_once(" on ") else {
+                continue;
+            };
+            match rest.split(' ').next().unwrap_or("") {
+                "sink" | "source" | "card" => dirty.store(true, Ordering::Relaxed),
+                _ => {}
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Ok(())
+}
+
+fn spawn_audio_events(dirty: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut wait = Duration::from_millis(500);
+        loop {
+            let started = Instant::now();
+            let _ = subscribe_events(&dirty);
+            // A child that ran for a while earned a clean respawn; one that
+            // dies instantly backs off, so a missing pactl cannot fork-storm.
+            if started.elapsed() >= Duration::from_secs(5) {
+                wait = Duration::from_millis(500);
+            }
+            std::thread::sleep(wait);
+            wait = std::cmp::min(wait * 2, Duration::from_secs(10));
+        }
+    });
+}
+
 fn start_slow_lane() -> SlowMap {
     let map: SlowMap = Arc::new(Mutex::new(BTreeMap::new()));
+    let dirty = Arc::new(AtomicBool::new(false));
+    spawn_audio_events(Arc::clone(&dirty));
     let m2 = Arc::clone(&map);
     std::thread::spawn(move || {
         let mut gh_t = Instant::now() - Duration::from_secs(120);
@@ -1450,7 +1511,8 @@ fn start_slow_lane() -> SlowMap {
                 misc_t = Instant::now();
                 misc_poll(&m2);
             }
-            if abt_t.elapsed().as_secs() >= 3 {
+            let nudged = dirty.swap(false, Ordering::Relaxed);
+            if nudged || abt_t.elapsed().as_secs() >= 3 {
                 abt_t = Instant::now();
                 devices::audio_bt_poll(&m2);
             }
