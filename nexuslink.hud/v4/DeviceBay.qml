@@ -617,7 +617,7 @@ Item {
     property string selDev: ""
     // Rebuilt on selection change and once per Topology refresh while open —
     // statsRev is the binding tick; node objects stay live across frames.
-    readonly property var popRows: buildPopRows(Topology.statsRev)
+    readonly property var popRows: selDev === "" ? [] : buildPopRows(Topology.statsRev)
     function buildPopRows(dep) {
         var out = [];
         var d = devById(selDev);
@@ -719,7 +719,7 @@ Item {
                     // an odd tail card spans the row so the grid has no hole
                     width: (card.index === root.cards.length - 1 && root.cards.length % 2 === 1) ? cardFlow.width : Math.floor((cardFlow.width - cardFlow.spacing) / 2)
                     height: root.cardH
-                    radius: 8
+                    radius: Style.r.emboss
                     clip: true
                     color: cardMa.containsMouse ? Qt.rgba(0.56, 0.85, 0.91, 0.07) : pal.ink
                     border.color: card.sel ? pal.accent : (cardMa.containsMouse ? pal.accent2 : pal.edge)

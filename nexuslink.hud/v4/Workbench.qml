@@ -3,7 +3,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Widgets
 
 // Workbench.qml — HDMI-A-3 "WORKBENCH + APPS NAV" (lane D3).
 // Visual spec: candidates/mock2/B/hdmi.html. Left column is the operations
@@ -96,7 +95,7 @@ Item {
         // tracking for the display type, named so the masthead and the pane
         // chassis can never drift apart
         readonly property real lsHead: 3
-        readonly property real lsMast: 4
+        readonly property real lsMast: Style.f.lsMast
         readonly property real lsTag: 2
         // hover wash + lit line, one value for every card in this screen
         readonly property color wash: Qt.rgba(0.56, 0.85, 0.91, 0.07)
@@ -429,11 +428,34 @@ Item {
         });
         return a;
     }
+    // Row models: the *Live builders re-run with every stats frame, but the
+    // published model only swaps when its content changed, so the Repeaters
+    // keep their delegates instead of tearing the ledger down at 1 Hz.
+    function syncModel(nm) {
+        var live = root[nm + "Live"];
+        var sg = JSON.stringify(live);
+        if (sg !== root[nm + "Sig"]) {
+            root[nm + "Sig"] = sg;
+            root[nm] = live;
+        }
+    }
+    Component.onCompleted: {
+        syncModel("winAll");
+        syncModel("wsAll");
+        syncModel("procAll");
+        syncModel("ghevAll");
+    }
     // Memoised row models — one evaluation per stats delta feeds the fit
     // math, the pane foot and the Repeater alike, instead of each of them
     // calling the builder independently.
-    readonly property var winAll: winList()
-    readonly property var wsAll: wsList()
+    readonly property var winAllLive: winList()
+    property var winAll: []
+    property string winAllSig: ""
+    onWinAllLiveChanged: syncModel("winAll")
+    readonly property var wsAllLive: wsList()
+    property var wsAll: []
+    property string wsAllSig: ""
+    onWsAllLiveChanged: syncModel("wsAll")
 
     // ------------------------------------------------------ agent lane
     readonly property var harnessIds: ["devin", "opencode", "haze"]
@@ -481,7 +503,7 @@ Item {
         }
         return m;
     }
-    readonly property var procAll: {
+    readonly property var procAllLive: {
         var a = [];
         for (var i = 0; i < procCount; i++)
             a.push({
@@ -490,6 +512,9 @@ Item {
             });
         return a;
     }
+    property var procAll: []
+    property string procAllSig: ""
+    onProcAllLiveChanged: syncModel("procAll")
     function procName(i) {
         return has("proc" + i + "_name") ? String(stats["proc" + i + "_name"]) : "";
     }
@@ -502,7 +527,10 @@ Item {
     readonly property bool ghOk: num(stats.gh_ok) > 0
     readonly property int ghUnread: has("gh_unread") ? Math.max(0, num(stats.gh_unread)) : -1
     readonly property int ghEvCount: has("ghev_count") ? Math.min(6, Math.max(0, num(stats.ghev_count))) : -1
-    readonly property var ghevAll: ghevList()
+    readonly property var ghevAllLive: ghevList()
+    property var ghevAll: []
+    property string ghevAllSig: ""
+    onGhevAllLiveChanged: syncModel("ghevAll")
     // "PULLRE" is not a label — substr(0,6) on "PullRequestEvent" produced
     // it. Map GitHub's event names onto a short tag that fits the ledger's
     // type column at its natural width and still reads as a word.
@@ -835,12 +863,37 @@ Item {
     // this pane hold" is always answered in the same place, and slack in a
     // pane reads as deliberate air above a status bar instead of a list
     // that was cut off.
+    // Mast quick key: tinted icon well that fires one argv. Hover brightens.
+    component QuickKey: Item {
+        id: qk
+        property string glyph: ""
+        property var argv: []
+        width: 28
+        height: 28
+        IconWell {
+            anchors.fill: parent
+            size: 28
+            glyph: qk.glyph
+            tint: Style.c.azure
+            hovered: qkMa.containsMouse
+        }
+        MouseArea {
+            id: qkMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.execArgv(qk.argv)
+        }
+    }
+
     component PaneFoot: Item {
         id: pf
         property string note: ""
         property string meta: ""
         property color noteTone: pal.t40
         property color metaTone: pal.t40
+        property string act: ""             // optional action pill label
+        signal acted
         width: parent ? parent.width : 0
         height: met.footH
         Rectangle {
@@ -855,13 +908,42 @@ Item {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.topMargin: 4
-            anchors.right: pfM.left
-            anchors.rightMargin: pf.meta === "" ? 0 : 10
+            anchors.right: pfAct.visible ? pfAct.left : pfM.left
+            anchors.rightMargin: pf.meta === "" && !pfAct.visible ? 0 : 10
             font.family: pal.fMono
             font.pixelSize: root.fs("pxMicro", 8)
             color: pf.noteTone
             elide: Text.ElideRight
             text: pf.note
+        }
+        Rectangle {
+            id: pfAct
+            visible: pf.act !== ""
+            anchors.right: pfM.left
+            anchors.rightMargin: 10
+            anchors.verticalCenter: pfM.verticalCenter
+            width: actTxt.implicitWidth + 12
+            height: 11
+            radius: Style.r.disc
+            color: actMa.containsMouse ? Style.c.azureWash : "transparent"
+            border.width: 1
+            border.color: actMa.containsMouse ? Style.tone(Style.c.accent2, 0.55) : Style.c.azureDim
+            Text {
+                id: actTxt
+                anchors.centerIn: parent
+                text: pf.act
+                color: actMa.containsMouse ? pal.txt : pal.t55
+                font.family: pal.fMono
+                font.pixelSize: root.fs("pxMicro", 8)
+                font.letterSpacing: 1
+            }
+            MouseArea {
+                id: actMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: pf.acted()
+            }
         }
         Text {
             id: pfM
@@ -1065,6 +1147,10 @@ Item {
                         color: pal.accent2
                     }
                     GradientStop {
+                        position: 0.30
+                        color: Style.c.azure
+                    }
+                    GradientStop {
                         position: 0.42
                         color: "#ff7ad9"
                     }
@@ -1101,7 +1187,7 @@ Item {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 12
-                    width: Math.min(implicitWidth, Math.max(120, mastRow.width - mastStats.width - 24))
+                    width: Math.min(implicitWidth, Math.max(120, mastRow.width - mastStats.width - mastQuick.width - 48))
 
                     Text {
                         id: mastTitle
@@ -1128,6 +1214,24 @@ Item {
                         elide: Text.ElideRight
                         text: root.screenName + " · " + Math.round(root.width) + "×" + Math.round(root.height) + " · OPERATIONS LEDGER"
                     }
+                }
+
+                // one-tap launchers and capture tools, using the existing omarchy
+                // commands (no data, pure utility)
+                Row {
+                    id: mastQuick
+                    anchors.right: mastStats.left
+                    anchors.rightMargin: 24
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    QuickKey { glyph: Style.ico.term; argv: ["omarchy-launch-terminal"] }
+                    QuickKey { glyph: Style.ico.robot; argv: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] }
+                    QuickKey { glyph: Style.ico.folder; argv: ["omarchy-launch-nautilus"] }
+                    QuickKey { glyph: Style.ico.rocket; argv: ["omarchy-launch-browser"] }
+                    QuickKey { glyph: Style.ico.shot; argv: ["omarchy-capture-screenshot"] }
+                    QuickKey { glyph: Style.ico.pick; argv: ["hyprpicker", "-a"] }
+                    QuickKey { glyph: Style.ico.palette; argv: ["omarchy-theme-bg-next"] }
+                    QuickKey { glyph: Style.ico.menu; argv: ["omarchy-menu"] }
                 }
 
                 Row {
@@ -1373,28 +1477,13 @@ Item {
                                             // resolved from win{i}_class; ▢ glyph
                                             // when the theme and the desktop
                                             // entries both miss.
-                                            Rectangle {
-                                                width: 24
-                                                height: 24
-                                                radius: 6
+                                            IconWell {
+                                                size: 24
                                                 anchors.verticalCenter: wcardRow.verticalCenter
-                                                color: pal.well
-                                                border.color: pal.edge
-                                                border.width: 1
-                                                IconImage {
-                                                    anchors.centerIn: parent
-                                                    implicitSize: 17
-                                                    source: wcard.modelData.icon
-                                                    visible: source.toString() !== ""
-                                                }
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    visible: wcard.modelData.icon === ""
-                                                    text: "▢"
-                                                    color: pal.t40
-                                                    font.family: pal.fMono
-                                                    font.pixelSize: root.fs("pxBody", 13)
-                                                }
+                                                tint: Style.c.accent2
+                                                hovered: wma.containsMouse
+                                                source: wcard.modelData.icon
+                                                glyph: wcard.modelData.icon === "" ? Style.ico.layers : ""
                                             }
                                             Column {
                                                 anchors.verticalCenter: wcardRow.verticalCenter
@@ -1459,6 +1548,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "EXPOSE"
+                            onActed: root.execArgv(["qs", "ipc", "-p", "/usr/share/omarchy/shell", "-t", "expose", "call", "toggle", ""])
                             note: winPanel.fit < winPanel.rows.length || root.winCount > winPanel.rows.length ? "showing " + winPanel.rows.length + " of " + root.cnt(root.winCount) + " windows" : root.cnt(root.winCount) + " windows"
                             meta: root.wsCount < 0 ? root.unk + " ws" : root.wsAll.length + "/" + root.wsCount + " ws"
                         }
@@ -1595,6 +1686,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "HERMES"
+                            onActed: root.execArgv(["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"])
                             note: agPanel.fit < root.harnessIds.length ? "showing " + agPanel.rows.length + " of " + root.harnessIds.length : root.harnessIds.length + " harnesses"
                             meta: root.agLiveProcs > 0 ? root.agLiveProcs + " live proc" + (root.agLiveProcs === 1 ? "" : "s") : "no live proc"
                         }
@@ -1729,6 +1822,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "BTOP"
+                            onActed: root.execArgv(["omarchy-launch-tui", "btop"])
                             note: procPanel.fit < root.procCount ? "showing " + procPanel.rows.length + " of " + root.procSlots + " slots" : root.procCount + " of " + root.procSlots + " slots"
                             meta: root.procPeak < 0 ? "peak " + root.unk : "peak " + Math.round(root.procPeak) + "%"
                         }
@@ -1849,6 +1944,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "GITHUB"
+                            onActed: root.execArgv(["xdg-open", "https://github.com/notifications"])
                             note: repoPanel.fit < root.ghevAll.length ? "showing " + repoPanel.rows.length + " of " + root.cnt(root.ghEvCount) + " events" : root.cnt(root.ghEvCount) + " events"
                             meta: root.ghUnread < 0 ? root.unk + " unread" : (root.ghUnread > 0 ? root.ghUnread + " unread" : "0 unread")
                             // only the unread figure earns the warn tone — the

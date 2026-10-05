@@ -5,7 +5,6 @@ import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Widgets
 
 // AppGrid.qml — APPS NAVIGATOR pane (lane D3, replaces the HDMI-A-3 patch
 // bay). An integrated launcher the operator can actually use:
@@ -854,32 +853,15 @@ Item {
                             anchors { fill: parent; leftMargin: pal.g3; rightMargin: pal.g3 }
                             // themed icon in a recessed well, or the fallback
                             // mark — never a fake image
-                            Rectangle {
+                            IconWell {
                                 id: iconWell
                                 anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-                                width: pal.iconWell
-                                height: pal.iconWell
-                                radius: pal.rKey
-                                color: rowMouse.containsMouse ? Qt.lighter(pal.well, 1.7) : pal.well
-                                border.width: 1
-                                border.color: rowMouse.containsMouse
-                                    ? pal.accent2Dim
-                                    : pal.ruleDark
-                                IconImage {
-                                    anchors.centerIn: parent
-                                    implicitSize: 18
-                                    source: root.iconSrc(appRow.modelData.icon)
-                                    asynchronous: true
-                                    visible: source.toString() !== ""
-                                }
-                                Text {
-                                    anchors.centerIn: parent
-                                    visible: root.iconSrc(appRow.modelData.icon) === ""
-                                    text: "▢"
-                                    color: pal.t40
-                                    font.family: pal.fMono
-                                    font.pixelSize: 11
-                                }
+                                size: pal.iconWell
+                                tint: Style.c.accent2
+                                active: appRow.active
+                                hovered: rowMouse.containsMouse
+                                source: root.iconSrc(appRow.modelData.icon)
+                                glyph: root.iconSrc(appRow.modelData.icon) === "" ? Style.ico.grid : ""
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
