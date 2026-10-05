@@ -1821,6 +1821,53 @@ Item {
                 }
             }
 
+            // WORKFLOWS: one-tap launchers centred in the otherwise empty
+            // middle of the page bar (the schematic grid itself is full, so the
+            // corner overlay used for this collided with the CPU package node)
+            Row {
+                id: wfStrip
+                anchors.centerIn: tabBar
+                spacing: 8
+                visible: tabBar.width > 900
+                Text {
+                    anchors.verticalCenter: wfStrip.verticalCenter
+                    font.family: root.fMono
+                    font.pixelSize: 8
+                    font.letterSpacing: Style.f.lsEngraved
+                    color: root.cMute
+                    text: "WORKFLOWS"
+                }
+                Repeater {
+                    model: [
+                        { g: Style.ico.folder, a: ["uwsm-app", "--", "nautilus", "--new-window", Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
+                        { g: Style.ico.robot, a: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] },
+                        { g: Style.ico.layers, a: ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] },
+                        { g: Style.ico.hub, a: ["hyprctl", "dispatch", "focusmonitor", "DP-1"] },
+                        { g: Style.ico.shot, a: ["omarchy-capture-screenshot"] },
+                        { g: Style.ico.pick, a: ["hyprpicker", "-a"] }
+                    ]
+                    delegate: Item {
+                        id: wfKey
+                        required property var modelData
+                        width: 26
+                        height: 26
+                        IconWell {
+                            anchors.fill: parent
+                            size: 26
+                            glyph: wfKey.modelData.g
+                            hovered: wfMa.containsMouse
+                        }
+                        MouseArea {
+                            id: wfMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "board"].concat(wfKey.modelData.a))
+                        }
+                    }
+                }
+            }
+
             Row {
                 id: tabRow
                 anchors.left: tabBar.left
@@ -2157,56 +2204,6 @@ Item {
             }
 
             // ---------------------- detail tray -----------------------------
-            // WORKFLOWS: launcher cluster in the empty top-left corner of the
-            // schematic grid (no node or wire reaches x<300, y<240 in design
-            // space). Pure actions, no datum.
-            GlassPane {
-                id: wfPane
-                x: root.sx(24)
-                y: root.sy(24)
-                width: Math.max(300, root.sx(340))
-                height: 20 + wfGrid.height + 2 * padding
-                padding: 10
-                holo: true
-                Column {
-                    anchors.fill: parent
-                    spacing: 6
-                    Text {
-                        font.family: root.fDisp
-                        font.pixelSize: 9
-                        font.letterSpacing: Style.f.lsEngraved
-                        color: root.cMute
-                        text: "WORKFLOWS"
-                    }
-                    Grid {
-                        id: wfGrid
-                        columns: 2
-                        columnSpacing: 6
-                        rowSpacing: 4
-                        readonly property real cw: (wfPane.width - 2 * wfPane.padding - columnSpacing) / 2
-                        Repeater {
-                            model: [
-                                { g: Style.ico.folder, l: "AI CENTER", a: ["uwsm-app", "--", "nautilus", "--new-window", Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
-                                { g: Style.ico.robot, l: "HERMES", a: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] },
-                                { g: Style.ico.layers, l: "BENCH", a: ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] },
-                                { g: Style.ico.hub, l: "HUB", a: ["hyprctl", "dispatch", "focusmonitor", "DP-1"] },
-                                { g: Style.ico.shot, l: "SHOT", a: ["omarchy-capture-screenshot"] },
-                                { g: Style.ico.pick, l: "PICK", a: ["hyprpicker", "-a"] }
-                            ]
-                            delegate: ActionRow {
-                                id: wfRow
-                                required property var modelData
-                                width: wfGrid.cw
-                                rowHeight: 28
-                                glyph: wfRow.modelData.g
-                                label: wfRow.modelData.l
-                                onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "board"].concat(wfRow.modelData.a))
-                            }
-                        }
-                    }
-                }
-            }
-
             GlassPane {
                 id: tray
                 anchors.left: board.left
