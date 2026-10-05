@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQml.Models
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // OpsView.qml — DP-2 second view "OPS" (lane B4): a live system feed.
@@ -441,9 +442,9 @@ Item {
         return [
             { "id": "qs", "label": "QUICKSHELL", "match": ["quickshell"], "what": "this shell" },
             { "id": "hc", "label": "HUD-COLLECT", "match": null, "what": "frame feed" },
-            { "id": "pw", "label": "PIPEWIRE", "match": ["pipewire", "wireplumber", "pipewire-pulse"], "what": "audio" },
-            { "id": "nm", "label": "NETMGR", "match": ["NetworkManager"], "what": "net" },
-            { "id": "bt", "label": "BLUETOOTHD", "match": ["bluetoothd"], "what": "hci" }
+            { "id": "pw", "label": "PIPEWIRE", "match": ["pipewire", "wireplumber", "pipewire-pulse"], "what": "audio", "act": ["omarchy-restart-audio"] },
+            { "id": "nm", "label": "NETMGR", "match": ["NetworkManager"], "what": "net", "act": ["omarchy-restart-wifi"] },
+            { "id": "bt", "label": "BLUETOOTHD", "match": ["bluetoothd"], "what": "hci", "act": ["omarchy-restart-bluetooth"] }
         ];
     }
     function applySvc() {
@@ -479,7 +480,8 @@ Item {
                     "label": d.label,
                     "state": state,
                     "ev": ev,
-                    "what": d.what
+                    "what": d.what,
+                    "act": d.act !== undefined ? d.act : []
                 });
         }
         svcRows = rows;
@@ -691,6 +693,23 @@ Item {
                                         color: root.cRecess
                                     }
                                 }
+                                // hover lights the rim; click restarts the service
+                                // through its omarchy-restart-* helper (none for hud-collect)
+                                Rectangle {
+                                    anchors.fill: svc
+                                    radius: Style.r.emboss
+                                    color: svcMa.containsMouse && svc.md.act.length > 0 ? Style.c.azureWash : "transparent"
+                                    border.width: 1
+                                    border.color: svcMa.containsMouse && svc.md.act.length > 0 ? Style.tone(Style.c.accent2, 0.50) : "transparent"
+                                }
+                                MouseArea {
+                                    id: svcMa
+                                    anchors.fill: svc
+                                    hoverEnabled: true
+                                    enabled: svc.md.act.length > 0
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops"].concat(svc.md.act))
+                                }
                                 Column {
                                     anchors.fill: svc
                                     anchors.leftMargin: 7
@@ -723,6 +742,47 @@ Item {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    Text {
+                        topPadding: 10
+                        font.family: root.fMono
+                        font.pixelSize: 8
+                        font.letterSpacing: 1.7
+                        color: root.cMute
+                        text: "QUICK ACTIONS"
+                    }
+                    Column {
+                        width: svcPane.width - 24
+                        spacing: 4
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.broom
+                            label: "CLEAR FEED"
+                            hint: "LOCAL"
+                            onTriggered: feedModel.clear()
+                        }
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.term
+                            label: "JOURNAL FOLLOW"
+                            hint: "TUI"
+                            onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops", "omarchy-launch-tui", "journalctl", "--user", "-f"])
+                        }
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.chip
+                            label: "SYSTEM MONITOR"
+                            hint: "BTOP"
+                            onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops", "omarchy-launch-tui", "btop"])
+                        }
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.layers
+                            label: "WORKBENCH"
+                            hint: "HDMI"
+                            onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"])
                         }
                     }
                 }

@@ -901,8 +901,19 @@ QtObject {
         // mem flow: no per-DIMM counter exists in the contract -> stays unknown
         fr.mem = { a: "mem", b: "machine", rate: unknown, unit: "kB/s",
                    rx: unknown, tx: unknown, active: false };
-        flows = fl;
-        flowRates = fr;
+        // reassign only on change: every property write here wakes every
+        // binding that reads it (BoardView wires, FlowBus, DeviceBay)
+        var frSig = "";
+        try {
+            frSig = JSON.stringify([fl, fr]);
+        } catch (e) {
+            frSig = "";
+        }
+        if (frSig === "" || frSig !== _frSig) {
+            _frSig = frSig;
+            flows = fl;
+            flowRates = fr;
+        }
 
         // ---- edge state/bw update ----
         for (var ei = 0; ei < _edgeLive.length; ei++) {
@@ -928,9 +939,30 @@ QtObject {
             }
         }
 
-        _publish(pChanged);
-        statsRev++;
+        // publish only when something observable moved; an idle frame (same
+        // temps, loads, rates) no longer rebinds the whole board at 1 Hz
+        var nSig = "";
+        try {
+            // uptime ticks every frame and the clocks jitter by a few MHz;
+            // neither is worth a rebind, so they are excluded / bucketed
+            nSig = JSON.stringify(nd, function (k, v) {
+                if (k === "uptime_s")
+                    return undefined;
+                if ((k === "mhz_avg" || k === "mhz_max") && typeof v === "number")
+                    return Math.round(v / 100);
+                return v;
+            });
+        } catch (e2) {
+            nSig = "";
+        }
+        if (pChanged || nSig === "" || nSig !== _nodeSig) {
+            _nodeSig = nSig;
+            _publish(pChanged);
+            statsRev++;
+        }
     }
+    property string _frSig: ""
+    property string _nodeSig: ""
 
     function _countKeys(o) {
         var c = 0;

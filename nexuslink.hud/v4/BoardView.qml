@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQml
 import QtQuick
+import Quickshell
 
 // BoardView.qml — DP-2 "BOARD SCHEMATIC" (lane D2, glyphs lane W3).
 // A real traced wiring diagram, not card stacks: PCIe root complex ->
@@ -1740,13 +1741,28 @@ Item {
                         text: "COOL → HOT"
                     }
                 }
-                Text {
+                Row {
                     id: hotTxt
                     anchors.verticalCenter: mastRow.verticalCenter
-                    font.family: root.fMono
-                    font.pixelSize: 9
-                    color: root.cMute
-                    text: FlowBus.hotCount + " HOT LINKS"
+                    spacing: 8
+                    // ratio of live links to known links; the count stays in the label
+                    readonly property int total: {
+                        var e = FlowBus.epoch;
+                        return Object.keys(FlowBus.rates).length;
+                    }
+                    RingGauge {
+                        anchors.verticalCenter: parent.verticalCenter
+                        size: 26
+                        strokeWidth: 3
+                        value: hotTxt.total > 0 ? FlowBus.hotCount / hotTxt.total : -1
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        font.family: root.fMono
+                        font.pixelSize: 9
+                        color: root.cMute
+                        text: FlowBus.hotCount + " HOT LINKS"
+                    }
                 }
                 // LENS toggle — two embossed keys, pressed one goes acid
                 Row {
@@ -1768,54 +1784,12 @@ Item {
                         color: root.cMute
                         text: "LENS"
                     }
-                    Repeater {
-                        model: [
-                            {
-                                k: "link",
-                                t: "LINK"
-                            },
-                            {
-                                k: "heat",
-                                t: "HEAT"
-                            }
-                        ]
-                        delegate: Rectangle {
-                            id: lkey
-                            required property var modelData
-                            readonly property bool on: root.lens === lkey.modelData.k
-                            readonly property bool hov: lkMa.containsMouse
-                            width: lkTxt.implicitWidth + 26
-                            height: 24
-                            radius: Style.r.chip
-                            border.width: 1
-                            border.color: lkey.on ? Style.tone(root.cAcc, 0.4) : (lkey.hov ? Style.tone(root.cIce, 0.35) : Qt.rgba(0, 0, 0, 0.5))
-                            gradient: Gradient {
-                                GradientStop {
-                                    position: 0.0
-                                    color: lkey.on ? "#0a0c0f" : root.cInk2
-                                }
-                                GradientStop {
-                                    position: 1.0
-                                    color: lkey.on ? "#101318" : root.cInk
-                                }
-                            }
-                            Text {
-                                id: lkTxt
-                                anchors.centerIn: lkey
-                                font.family: root.fDisp
-                                font.pixelSize: 9
-                                font.letterSpacing: 2.1
-                                color: lkey.on ? root.cAcc : (lkey.hov ? root.cTxt : root.cDim)
-                                text: lkey.modelData.t
-                            }
-                            MouseArea {
-                                id: lkMa
-                                anchors.fill: lkey
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.lens = lkey.modelData.k
-                            }
-                        }
+                    ActionToggle {
+                        anchors.verticalCenter: lensRow.verticalCenter
+                        label: "HEAT"
+                        tone: "acid"
+                        on: root.lens === "heat"
+                        onToggled: root.lens = root.lens === "heat" ? "link" : "heat"
                     }
                 }
             }
@@ -2183,6 +2157,56 @@ Item {
             }
 
             // ---------------------- detail tray -----------------------------
+            // WORKFLOWS: launcher cluster in the empty top-left corner of the
+            // schematic grid (no node or wire reaches x<300, y<240 in design
+            // space). Pure actions, no datum.
+            GlassPane {
+                id: wfPane
+                x: root.sx(24)
+                y: root.sy(24)
+                width: Math.max(250, root.sx(290))
+                height: 20 + wfGrid.height + 2 * padding
+                padding: 10
+                holo: true
+                Column {
+                    anchors.fill: parent
+                    spacing: 6
+                    Text {
+                        font.family: root.fDisp
+                        font.pixelSize: 9
+                        font.letterSpacing: Style.f.lsEngraved
+                        color: root.cMute
+                        text: "WORKFLOWS"
+                    }
+                    Grid {
+                        id: wfGrid
+                        columns: 2
+                        columnSpacing: 6
+                        rowSpacing: 4
+                        readonly property real cw: (wfPane.width - 2 * wfPane.padding - columnSpacing) / 2
+                        Repeater {
+                            model: [
+                                { g: Style.ico.folder, l: "AI CENTER", a: ["uwsm-app", "--", "nautilus", "--new-window", Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
+                                { g: Style.ico.robot, l: "HERMES", a: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] },
+                                { g: Style.ico.layers, l: "WORKBENCH", a: ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] },
+                                { g: Style.ico.hub, l: "COMMAND", a: ["hyprctl", "dispatch", "focusmonitor", "DP-1"] },
+                                { g: Style.ico.shot, l: "SHOT", a: ["omarchy-capture-screenshot"] },
+                                { g: Style.ico.pick, l: "PICK", a: ["hyprpicker", "-a"] }
+                            ]
+                            delegate: ActionRow {
+                                id: wfRow
+                                required property var modelData
+                                width: wfGrid.cw
+                                rowHeight: 28
+                                glyph: wfRow.modelData.g
+                                label: wfRow.modelData.l
+                                onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "board"].concat(wfRow.modelData.a))
+                            }
+                        }
+                    }
+                }
+            }
+
             GlassPane {
                 id: tray
                 anchors.left: board.left
@@ -2362,7 +2386,7 @@ Item {
                         },
                         {
                             k: "FLOWS",
-                            v: FlowBus.hotCount + " hot links · usb " + root.usbLiveCount() + " devices live"
+                            v: "usb " + root.usbLiveCount() + " devices live"
                         }
                     ]
                     delegate: Rectangle {
@@ -2404,6 +2428,18 @@ Item {
                                 elide: Text.ElideRight
                                 text: sl.modelData.v
                             }
+                        }
+                        // flows panel carries the particle pause switch
+                        ActionToggle {
+                            visible: sl.modelData.k === "FLOWS"
+                            anchors.right: sl.right
+                            anchors.rightMargin: 12
+                            anchors.bottom: sl.bottom
+                            anchors.bottomMargin: 8
+                            label: "PAUSE"
+                            tone: "ice"
+                            on: root.flowsPaused
+                            onToggled: root.flowsPaused = !root.flowsPaused
                         }
                     }
                 }
@@ -3577,24 +3613,11 @@ Item {
         readonly property var spec: modelData
         readonly property var geo: root.wireEnds(spec)
         readonly property var fl: root.wireFlow(spec)
-        property real _tIn: 0
-        property real _tOut: 0
+        // phase from the shared coarse flow clock (root.flowMs): the old pair of
+        // Animation.Infinite per wire ran every wire at the display rate
+        readonly property real _tIn: (root.flowMs / Math.max(600, wd.fl.inDur)) % 1
+        readonly property real _tOut: (root.flowMs / Math.max(600, wd.fl.outDur)) % 1
         visible: fl.on && geo !== null && root.boardActive
-
-        NumberAnimation on _tIn {
-            running: wd.fl.inOn && root.boardActive && wd.geo !== null
-            from: 0
-            to: 1
-            duration: Math.max(600, wd.fl.inDur)
-            loops: Animation.Infinite
-        }
-        NumberAnimation on _tOut {
-            running: wd.fl.outOn && root.boardActive && wd.geo !== null
-            from: 0
-            to: 1
-            duration: Math.max(600, wd.fl.outDur)
-            loops: Animation.Infinite
-        }
 
         // inbound (leaf -> machine): t runs toward the `up` end
         Repeater {
@@ -3641,6 +3664,17 @@ Item {
                 y: pt.y
             }
         }
+    }
+
+    // Shared particle clock: one ~11 fps counter for every wire instead of two
+    // 60 fps animations per active wire. Stops entirely off the board tab.
+    property double flowMs: 0
+    property bool flowsPaused: false
+    Timer {
+        interval: 90
+        repeat: true
+        running: root.boardActive && !root.flowsPaused
+        onTriggered: root.flowMs += 90
     }
 
     Component.onCompleted: {
