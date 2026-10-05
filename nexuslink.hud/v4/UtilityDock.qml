@@ -13,7 +13,7 @@ import Quickshell
 // stripped; every activate action and the mute/heat state survive.
 //
 // `compact: true` (Workbench/HDMI-A-3, lane G2) renders only the curated
-// compactIds set: MEDIA expanded with an album-art MediaCell, then VOLUME,
+// compactIds set: MEDIA (album-art icon well), VOLUME,
 // MIC, NOTIFICATIONS, WORKSPACES, POWER, weighted wider so the strip
 // breathes, and each hidden cell's poller is gated off entirely.
 //
@@ -37,7 +37,7 @@ GlassPane {
     // ---- profile -----------------------------------------------------------
     // "full" (default) = all 15 cells, unchanged DP-1 CommandHub dock.
     // "compact" (HDMI-A-3 Workbench) = curated subset below — media cell is
-    // weighted wider and carries a MediaCell album-art thumb.
+    // weighted wider and shows the album art in its icon well.
     property bool compact: false
     readonly property var compactIds: DockState.compactIds
 

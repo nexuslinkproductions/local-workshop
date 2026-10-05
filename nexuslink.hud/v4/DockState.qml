@@ -25,7 +25,7 @@ QtObject {
     property var media: ({})            // omarchy-shell media status JSON
     // mpris:artUrl already rides in the mediaPoll JSON (verified live:
     // `omarchy-shell media status` emits artUrl) — no extra fetch needed.
-    // MediaCell's Image re-decodes only when this string changes.
+    // The icon well's Image re-decodes only when this string changes.
     readonly property string mediaArtUrl: (typeof media.artUrl === "string") ? String(media.artUrl) : ""
     property int notifCount: -1
     property string notifDnd: ""
