@@ -2164,7 +2164,7 @@ Item {
                 id: wfPane
                 x: root.sx(24)
                 y: root.sy(24)
-                width: Math.max(250, root.sx(290))
+                width: Math.max(300, root.sx(340))
                 height: 20 + wfGrid.height + 2 * padding
                 padding: 10
                 holo: true
@@ -2188,8 +2188,8 @@ Item {
                             model: [
                                 { g: Style.ico.folder, l: "AI CENTER", a: ["uwsm-app", "--", "nautilus", "--new-window", Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
                                 { g: Style.ico.robot, l: "HERMES", a: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] },
-                                { g: Style.ico.layers, l: "WORKBENCH", a: ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] },
-                                { g: Style.ico.hub, l: "COMMAND", a: ["hyprctl", "dispatch", "focusmonitor", "DP-1"] },
+                                { g: Style.ico.layers, l: "BENCH", a: ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] },
+                                { g: Style.ico.hub, l: "HUB", a: ["hyprctl", "dispatch", "focusmonitor", "DP-1"] },
                                 { g: Style.ico.shot, l: "SHOT", a: ["omarchy-capture-screenshot"] },
                                 { g: Style.ico.pick, l: "PICK", a: ["hyprpicker", "-a"] }
                             ]

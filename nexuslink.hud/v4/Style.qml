@@ -91,7 +91,7 @@ QtObject {
     // Brands face is only for bluetooth.
     readonly property string iconFont: "Font Awesome 7 Free Solid"
     readonly property string brandFont: "Font Awesome 7 Brands"
-    // Brands-face glyphs (use IconWell.brand): bluetooth \uf293, usb \uf287.
+    readonly property var icoBrand: ({ "bt": "\uf293", "usb": "\uf287" })   // IconWell.brand: true
     readonly property var ico: ({
             "play": "\uf04b", "pause": "\uf04c", "next": "\uf051", "prev": "\uf048",
             "vol": "\uf028", "mute": "\uf6a9", "mic": "\uf130", "power": "\uf011",

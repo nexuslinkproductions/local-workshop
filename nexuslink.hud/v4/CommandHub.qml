@@ -1371,7 +1371,7 @@ Item {
             {
                 rows.push({
                     btns: [
-                        { g: Style.ico.bt, brand: true, on: btOn, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
+                        { g: Style.icoBrand.bt, brand: true, on: btOn, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
                         { g: volMuted ? Style.ico.mute : Style.ico.vol, on: volMuted, argv: ["omarchy-audio-output-volume", "mute-toggle"] },
                         { g: Style.ico.mic, on: micMuted, argv: ["omarchy-audio-input-mute"] },
                         { g: Style.ico.display, argv: ["omarchy-audio-output-switch"] }
