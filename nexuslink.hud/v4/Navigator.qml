@@ -88,6 +88,7 @@ Scope {
         readonly property color accent:  root._sc("accent",  "#c8f31d")
         readonly property color accentDim: root._sc("accentDim", Qt.rgba(200 / 255, 243 / 255, 29 / 255, 0.55))
         readonly property color ice:     root._sc("accent2", "#8fd8e8")
+        readonly property color accent2Dim: root._sc("accent2Dim", Qt.rgba(0.56, 0.85, 0.91, 0.55))
         readonly property color warn:    root._sc("warn",    "#ffb300")
         readonly property color alert:   root._sc("alert",   "#ff4a3d")
         readonly property color unknown: root._sc("unknown", "#5a646c")
@@ -126,6 +127,8 @@ Scope {
         // reads as an aliased crack on this chassis
         readonly property color ruleLit: Qt.rgba(235 / 255, 245 / 255, 252 / 255, 0.09)
         readonly property color ruleDark: Qt.rgba(0, 0, 0, 0.62)
+        // hover wash: the met.wash step from the Workbench ledger rows
+        readonly property color wash: Qt.rgba(0.56, 0.85, 0.91, 0.07)
         // recessed well chrome (Tag.qml / EmbossedTile.qml idiom)
         readonly property color wellTop: root._sc("recessTop", "#0a0c0f")
         readonly property color wellBot: root._sc("recess", "#0d0f13")
@@ -1740,10 +1743,12 @@ Scope {
                                         // constant 1px keeps the inner Row from
                                         // shifting a pixel when state changes
                                         border.width: 1
-                                        border.color: secBtn.active ? th.accentDim
-                                            : (secMouse.containsMouse ? th.ruleDark : "transparent")
-                                        color: secBtn.active ? Qt.rgba(255, 255, 255, 0.045)
-                                            : (secMouse.containsMouse ? Qt.rgba(255, 255, 255, 0.022) : "transparent")
+                                        border.color: secMouse.containsMouse
+                                            ? (secBtn.active ? th.accent : th.accent2Dim)
+                                            : (secBtn.active ? th.accentDim : "transparent")
+                                        color: secMouse.containsMouse
+                                            ? th.wash
+                                            : (secBtn.active ? Qt.rgba(255, 255, 255, 0.045) : "transparent")
                                         Behavior on color {
                                             NumberAnimation {
                                                 duration: Style.dur.snap
@@ -1776,7 +1781,7 @@ Scope {
                                                     width: Math.max(0, parent.width - cap.width - parent.spacing)
                                                     elide: Text.ElideRight
                                                     text: root.sectionNames[secBtn.index]
-                                                    color: secBtn.active ? th.accent : th.t70
+                                                    color: secBtn.active ? th.accent : (secMouse.containsMouse ? th.txt : th.t70)
                                                     font.family: th.fDisp
                                                     font.pixelSize: th.pxTitle
                                                     font.letterSpacing: 1.6
@@ -1883,10 +1888,12 @@ Scope {
                                         height: 36
                                         radius: th.rRow
                                         border.width: 1
-                                        border.color: mntBtn.active ? th.accentDim
-                                            : (mntMouse.containsMouse ? th.ruleDark : "transparent")
-                                        color: mntBtn.active ? Qt.rgba(255, 255, 255, 0.045)
-                                            : (mntMouse.containsMouse ? Qt.rgba(255, 255, 255, 0.022) : "transparent")
+                                        border.color: mntMouse.containsMouse
+                                            ? (mntBtn.active ? th.accent : th.accent2Dim)
+                                            : (mntBtn.active ? th.accentDim : "transparent")
+                                        color: mntMouse.containsMouse
+                                            ? th.wash
+                                            : (mntBtn.active ? Qt.rgba(255, 255, 255, 0.045) : "transparent")
                                         Behavior on color {
                                             NumberAnimation {
                                                 duration: Style.dur.snap
@@ -1934,7 +1941,7 @@ Scope {
                                                     width: parent.width
                                                     elide: Text.ElideRight
                                                     text: mntBtn.modelData.label
-                                                    color: mntBtn.active ? th.accent : th.t70
+                                                    color: mntBtn.active ? th.accent : (mntMouse.containsMouse ? th.txt : th.t70)
                                                     font.family: th.fMono
                                                     font.pixelSize: th.pxRow - 1
                                                 }
@@ -2021,10 +2028,12 @@ Scope {
                                         height: 28
                                         radius: th.rRow
                                         border.width: 1
-                                        border.color: jmpBtn.active ? th.accentDim
-                                            : (jmpMouse.containsMouse ? th.ruleDark : "transparent")
-                                        color: jmpBtn.active ? Qt.rgba(255, 255, 255, 0.045)
-                                            : (jmpMouse.containsMouse ? Qt.rgba(255, 255, 255, 0.022) : "transparent")
+                                        border.color: jmpMouse.containsMouse
+                                            ? (jmpBtn.active ? th.accent : th.accent2Dim)
+                                            : (jmpBtn.active ? th.accentDim : "transparent")
+                                        color: jmpMouse.containsMouse
+                                            ? th.wash
+                                            : (jmpBtn.active ? Qt.rgba(255, 255, 255, 0.045) : "transparent")
                                         Behavior on color {
                                             NumberAnimation {
                                                 duration: Style.dur.snap
@@ -2059,7 +2068,8 @@ Scope {
                                             elide: Text.ElideMiddle
                                             text: jmpBtn.modelData.label
                                             color: jmpBtn.active ? th.accent
-                                                 : (jmpBtn.modelData.recent ? th.t55 : th.t70)
+                                                 : (jmpMouse.containsMouse ? th.txt
+                                                     : (jmpBtn.modelData.recent ? th.t55 : th.t70))
                                             font.family: th.fMono
                                             font.pixelSize: th.pxRow - 1
                                         }
@@ -2288,10 +2298,12 @@ Scope {
                                     // constant 1px: a 0/1 border switch shifted the
                                     // whole row 1px on every selection change
                                     border.width: 1
-                                    border.color: rowRect.active ? th.accentDim
-                                        : (rowMouse.containsMouse ? th.ruleDark : "transparent")
-                                    color: rowRect.active ? Qt.rgba(255, 255, 255, 0.05)
-                                        : (rowMouse.containsMouse ? Qt.rgba(255, 255, 255, 0.022) : "transparent")
+                                    border.color: rowMouse.containsMouse
+                                        ? (rowRect.active ? th.accent : th.accent2Dim)
+                                        : (rowRect.active ? th.accentDim : "transparent")
+                                    color: rowMouse.containsMouse
+                                        ? th.wash
+                                        : (rowRect.active ? Qt.rgba(255, 255, 255, 0.05) : "transparent")
                                     Behavior on color {
                                         NumberAnimation {
                                             duration: Style.dur.snap
@@ -2379,7 +2391,7 @@ Scope {
                                             elide: Text.ElideRight
                                             textFormat: Text.RichText
                                             text: root.highlightName(rowRect.modelData.name)
-                                            color: rowRect.active ? th.txt : th.t70
+                                            color: (rowRect.active || rowMouse.containsMouse) ? th.txt : th.t70
                                             font.family: th.fMono
                                             font.pixelSize: th.pxRow
                                         }

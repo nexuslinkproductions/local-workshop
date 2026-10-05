@@ -66,6 +66,7 @@ Item {
         readonly property color accent: root.col("accent", "#c8f31d")
         readonly property color accentDim: root.col("accentDim", Qt.rgba(0.78, 0.95, 0.11, 0.55))
         readonly property color accent2: root.col("accent2", "#8fd8e8")
+        readonly property color accent2Dim: root.col("accent2Dim", Qt.rgba(0.56, 0.85, 0.91, 0.55))
         readonly property color unknown: root.col("unknown", "#5a646c")
         readonly property color txt: root.col("txt", "#d9e2ea")
         readonly property color t55: root.col("dim", "#8b959e")
@@ -93,9 +94,9 @@ Item {
         readonly property int wCount: 34
         readonly property int wMeta: 200
         // selection / hover washes — a selected row is lifted and barred, not
-        // outlined in full acid; hover is a separate, weaker step
+        // outlined in full acid; hover is the sibling met.wash step (cyan 7%)
         readonly property color selFill: Qt.rgba(255, 255, 255, 0.05)
-        readonly property color hovFill: Qt.rgba(255, 255, 255, 0.022)
+        readonly property color hovFill: Qt.rgba(0.56, 0.85, 0.91, 0.07)
     }
 
     // ============================================================ model
@@ -822,10 +823,12 @@ Item {
                         // constant 1px so the row's contents never shift when
                         // the selection state changes
                         border.width: 1
-                        border.color: appRow.active ? pal.accentDim
-                            : (rowMouse.containsMouse ? pal.ruleDark : "transparent")
-                        color: appRow.active ? pal.selFill
-                            : (rowMouse.containsMouse ? pal.hovFill : "transparent")
+                        border.color: rowMouse.containsMouse
+                            ? (appRow.active ? pal.accent : pal.accent2Dim)
+                            : (appRow.active ? pal.accentDim : "transparent")
+                        color: rowMouse.containsMouse
+                            ? pal.hovFill
+                            : (appRow.active ? pal.selFill : "transparent")
                         Behavior on color {
                             NumberAnimation {
                                 duration: 180
@@ -857,9 +860,11 @@ Item {
                                 width: pal.iconWell
                                 height: pal.iconWell
                                 radius: pal.rKey
-                                color: pal.well
+                                color: rowMouse.containsMouse ? Qt.lighter(pal.well, 1.7) : pal.well
                                 border.width: 1
-                                border.color: pal.ruleDark
+                                border.color: rowMouse.containsMouse
+                                    ? pal.accent2Dim
+                                    : pal.ruleDark
                                 IconImage {
                                     anchors.centerIn: parent
                                     implicitSize: 18
@@ -906,7 +911,7 @@ Item {
                                 }
                                 elide: Text.ElideRight
                                 text: appRow.modelData.name
-                                color: appRow.active ? pal.txt : pal.t55
+                                color: (appRow.active || rowMouse.containsMouse) ? pal.txt : pal.t55
                                 font.family: pal.fMono
                                 font.pixelSize: 12
                             }
