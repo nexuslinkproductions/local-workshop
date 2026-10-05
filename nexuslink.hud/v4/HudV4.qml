@@ -11,11 +11,13 @@ import Quickshell.Wayland
 // ExclusionMode.Auto and no keyboard focus (the chrome-cybercore HUD is a
 // read-only desktop surface; the Navigator overlay owns focus when open).
 //
-// Role map (BRIEF-V4-BUILD §2):
-//   DP-1      command  -> CommandHub  (reactor + knot dead-centre)
-//   DP-2      hardware -> BoardView   (live topology schematic)
-//   HDMI-A-3  ops      -> Workbench   (ledger / patch bay)
+// Role map (M1 kit — docs/m1):
+//   DP-1      command  -> DeckCommand (crew + launch, SwimLane hero)
+//   DP-2      hardware -> DeckTokens  (token flux, concentric limit rings)
+//   HDMI-A-3  ops      -> DeckSystem  (device topology + system ledger)
 //   unknown   -> command fallback so no output ever renders empty
+// (the v4 screens CommandHub/BoardView/Workbench stay in the tree and in
+// qmldir for reference; they are no longer instantiated)
 //
 // MOVABLE DECKS: the v4 screens are monolithic surfaces, so the movable unit
 // is the screen deck itself — a floating slab on a free canvas per monitor.
@@ -50,8 +52,12 @@ Item {
         decodeURIComponent(String(Qt.resolvedUrl("../collect.sh")).replace(/^file:\/\//, ""))
     readonly property string ledgerScript:
         decodeURIComponent(String(Qt.resolvedUrl("../tokens/ledger.py")).replace(/^file:\/\//, ""))
+    readonly property string crewScript:
+        decodeURIComponent(String(Qt.resolvedUrl("../tokens/crew.py")).replace(/^file:\/\//, ""))
     readonly property string tokStatePath:
         Quickshell.env("HOME") + "/.local/state/nexuslink/tokens.json"
+    readonly property string crewStatePath:
+        Quickshell.env("HOME") + "/.local/state/nexuslink/crew.json"
     // v4 state is deliberately a different file — no v3 layout migrates.
     readonly property string stateDir:
         Quickshell.env("HOME") + "/.config/omarchy/nexuslink/"
@@ -85,6 +91,7 @@ Item {
 
     property var tokData: ({})
     property bool tokLoaded: false
+    property var crew: ({})
 
     property var persistScreens: ({})
     property bool persistLoaded: false
@@ -331,13 +338,32 @@ Item {
         running: false
         onExited: tokFile.reload()
     }
+    // crew feed — same 60 s ledger cadence; crew.py writes crew.json
+    FileView {
+        id: crewFile
+        path: hud.crewStatePath
+        watchChanges: false
+        atomicWrites: true
+        printErrors: false
+        onLoaded: hud.loadCrew(text())
+        onLoadFailed: hud.loadCrew("")
+    }
+    Process {
+        id: crewProc
+        command: ["python3", hud.crewScript]
+        running: false
+        onRunningChanged: if (!running) crewFile.reload()
+    }
     Timer {
         id: ledgerTimer
         interval: 60000
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!ledgerProc.running) ledgerProc.running = true
+        onTriggered: {
+            if (!ledgerProc.running) ledgerProc.running = true
+            if (!crewProc.running) crewProc.running = true
+        }
     }
     function loadTokens(raw) {
         var data = null
@@ -345,6 +371,12 @@ Item {
         if (data === null || typeof data !== "object") data = ({})
         tokData = data
         tokLoaded = true
+    }
+    function loadCrew(raw) {
+        var data = null
+        try { data = JSON.parse(String(raw || "")) } catch (e) { data = null }
+        if (data === null || typeof data !== "object") data = ({})
+        crew = data
     }
 
     // say() TTL — the reactor face draws the payload while sayFlash is hot
@@ -392,6 +424,7 @@ Item {
         add("devin",        s.devsess_count !== undefined)
         add("media-mounts", s.media_count !== undefined)
         add("tokens",       tokProviderCount > 0)
+        add("crew",         crew.bots !== undefined && crew.bots.length > 0)
         add("topology",     Topology.ready === true)
         return list
     }
@@ -1061,30 +1094,37 @@ Item {
                     }
 
                     // ------- role screen (exactly one is visible per window)
-                    CommandHub {
+                    // M1 kit: the three new decks share one input contract —
+                    // stats/tokData/crew/screenName/shown (+navigator/say on DP-1).
+                    DeckCommand {
                         anchors.fill: parent
                         visible: win.isCommand
                         stats: hud.stats
                         tokData: hud.tokData
+                        crew: hud.crew
                         screenName: win.screenName
                         navigator: nav
                         sayText: hud.sayText
                         sayFlash: hud.sayFlash
                         shown: win.isCommand && deck.shown
                     }
-                    BoardView {
+                    DeckTokens {
                         anchors.fill: parent
                         visible: win.isHardware
                         stats: hud.stats
+                        tokData: hud.tokData
+                        crew: hud.crew
                         screenName: win.screenName
-                        running: win.isHardware && deck.shown
+                        shown: win.isHardware && deck.shown
                     }
-                    Workbench {
+                    DeckSystem {
                         anchors.fill: parent
                         visible: win.role === "ops"
                         stats: hud.stats
                         tokData: hud.tokData
+                        crew: hud.crew
                         screenName: win.screenName
+                        shown: win.role === "ops" && deck.shown
                     }
 
                     // machined slab edge — the deck's chrome frame
