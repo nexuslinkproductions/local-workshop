@@ -163,11 +163,6 @@ Item {
             return dash;
         return p.state === "present" ? "LIVE" : String(p.state);
     }
-    function battOf(n) {
-        if (!n || !n.extra || isU(n.extra.batt_pct))
-            return dash;
-        return Math.round(Number(n.extra.batt_pct)) + "%";
-    }
     // Largest recorded partition on a block device ("nvme0n1p3 · NTFS 71%").
     function partOf(ownerId) {
         var best = null;
@@ -1271,7 +1266,7 @@ Item {
             };
         case "mem":
             return {
-                nv: "avail " + vB(kbToG(x.avail_kb)) + " · zram " + ss("zram_ratio") + "×",
+                nv: "avail " + vB(kbToG(x.avail_kb)),
                 ns: "2× SPD5118 on i2c-20"
             };
         case "dimm0":
@@ -1384,7 +1379,7 @@ Item {
                 var st = ne ? stOf(ne) : dash;
                 return {
                     nv: "enp15s0 " + (st === "up" ? vB("UP") : vI(st)) + " · 34:5a:60:dd:f5:a8",
-                    ns: "rx " + (ne && !isU(ne.extra.rx_bps) ? Topology.fmtB(ne.extra.rx_bps) : dash) + "/s · tx " + (ne && !isU(ne.extra.tx_bps) ? Topology.fmtB(ne.extra.tx_bps) : dash) + "/s"
+                    ns: ""
                 };
             }
         case "nic_wifi":
@@ -1459,7 +1454,7 @@ Item {
             };
         case "rcvr_logi":
             return {
-                nv: "batt " + vB(battOf(n)),
+                nv: "",
                 ns: "046d:c547 · " + stOf(n)
             };
         case "kbd_asus":
