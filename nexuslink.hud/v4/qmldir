@@ -30,3 +30,18 @@ AppGrid 1.0 AppGrid.qml
 DeviceBay 1.0 DeviceBay.qml
 UtilityDock 1.0 UtilityDock.qml
 # LANE-D/N-END
+# M1 kit — FUI instrument primitives (docs/m1; decks: DeckCommand/DeckTokens/DeckSystem)
+singleton FuiTokens 1.0 fui/FuiTokens.qml
+FuiFrame 1.0 fui/FuiFrame.qml
+TickRing 1.0 fui/TickRing.qml
+ConcentricRings 1.0 fui/ConcentricRings.qml
+HairBar 1.0 fui/HairBar.qml
+Sparkline 1.0 fui/Sparkline.qml
+SwimLane 1.0 fui/SwimLane.qml
+LeaderLine 1.0 fui/LeaderLine.qml
+HexWell 1.0 fui/HexWell.qml
+Ruler 1.0 fui/Ruler.qml
+EngravedButton 1.0 fui/EngravedButton.qml
+DeckCommand 1.0 DeckCommand.qml
+DeckTokens 1.0 DeckTokens.qml
+DeckSystem 1.0 DeckSystem.qml
