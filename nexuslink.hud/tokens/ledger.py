@@ -461,6 +461,15 @@ def collect_hermes(led):
                 continue
             mark = float(marks.get(str(db)) or 0)
             hi = mark
+            # Register the store under both ids when it holds ANY mapped
+            # provider row, so tokens.json `sources` stays stable across warm
+            # cursor passes (a delta of zero must not erase the declared feed).
+            if con.execute("SELECT 1 FROM session_model_usage WHERE"
+                           " billing_provider IN (%s) LIMIT 1"
+                           % ",".join("?" * len(HERMES_PROVIDER_MAP)),
+                           tuple(HERMES_PROVIDER_MAP)).fetchone():
+                for led_id in set(HERMES_PROVIDER_MAP.values()):
+                    led.src(led_id, db)
             # No index on last_seen, but the table is ~5k rows (the 3 GB of the
             # db lives in messages/FTS), so the filtered scan is milliseconds.
             q = ("SELECT session_id, model, billing_provider, billing_base_url,"
@@ -610,9 +619,11 @@ def main():
             led.seen[p] = dict(list(seen.items())[-SEEN_CAP // 2:])
     try:
         atomic_write(OUT, out)
-        atomic_write(CURSOR, {"version": 1,
-                              "saved": now.isoformat(timespec="seconds"),
-                              **led.cur})
+        # led.cur is the dict LOADED from the cursor, so it carries the stale
+        # version/saved keys; spread first, then overwrite them, else `saved`
+        # freezes at whatever the first-ever run wrote.
+        atomic_write(CURSOR, {"version": 1, **led.cur,
+                              "saved": now.isoformat(timespec="seconds")})
     except OSError as e:
         print("error: %s" % e, file=sys.stderr)
         return 1
