@@ -685,17 +685,17 @@ Item {
                 }
             }
         }
-        // right cluster: weather + clock + uptime  (mock .mast right of .sp)
+        // right cluster: weather + clock  (mock .mast right of .sp)
         Item {
             id: mastRight
             anchors.right: parent.right
             anchors.rightMargin: 22
             anchors.verticalCenter: parent.verticalCenter
-            width: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width + 40 + mastUp.width
+            width: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width
             height: mastClock.implicitHeight
-            // All three hang off the same bottom edge: the 22 px display face
-            // and the 10 px data lines then share one optical baseline instead
-            // of being centre-aligned into a vertical wobble.
+            // Both hang off the same bottom edge: the 22 px display face and
+            // the 10 px data line then share one optical baseline instead of
+            // being centre-aligned into a vertical wobble.
             Text {
                 id: mastWx
                 anchors.bottom: parent.bottom
@@ -714,18 +714,6 @@ Item {
                 font.family: Style.f.display
                 font.pixelSize: Style.f.pxClock
                 font.letterSpacing: 2
-            }
-            Text {
-                id: mastUp
-                anchors.bottom: parent.bottom
-                x: (root.has("weather") ? mastWx.width + 26 : 0) + mastClock.width + 40
-                horizontalAlignment: Text.AlignRight
-                text: "UP " + root.uptimeText + "\nLOAD " + root.loadText.replace(/ · /g, " ")
-                color: Style.c.mute
-                font.family: Style.f.mono
-                font.pixelSize: Style.f.pxLabel
-                font.letterSpacing: 1.4
-                lineHeight: 1.3
             }
         }
     }
@@ -1066,73 +1054,27 @@ Item {
                 return b(Math.round(hotM.pct) + "%") + " " + esc(trunc(hotM.name, 14)) + " · " + mp.length + " mounts live";
             }
         case "procs":
-            if (!has("proc0_name"))
-                return Style.unknownGlyph;
-            var hot40 = 0;
-            for (var i = 0; i < 6; i++)
-                if (has("proc" + i + "_name") && num(stats["proc" + i + "_cpu"]) > 40)
-                    hot40++;
-            return b(String(stats.proc0_name)) + " " + Math.round(num(stats.proc0_cpu)) + "% of a core" + (hot40 > 1 ? " · " + hot40 + " lanes >40%" : "");
+            return i2("↗ navigator · F2");
         case "devices":
-            {
-                var n = peripheralCount();
-                var b0 = has("bat0_name") ? " · " + esc(trunc(stats.bat0_name, 12)) + (has("bat0_pct") ? " " + b(Math.round(num(stats.bat0_pct)) + "%") : "") : "";
-                return (n >= 0 ? b(String(n)) + " peripherals" : "peripherals " + Style.unknownGlyph) + b0;
-            }
+            return i2("↗ navigator · F3");
         case "agents":
-            {
-                var sess = has("devsess_count") ? num(stats.devsess_count) : -1;
-                var acp = has("ag_devin_acp") ? num(stats.ag_devin_acp) : -1;
-                var live = 0;
-                var skeys = ["devin", "opencode", "hermes", "october", "haze", "build"];
-                for (var ai = 0; ai < skeys.length; ai++)
-                    if (has("ag_" + skeys[ai] + "_procs") && num(stats["ag_" + skeys[ai] + "_procs"]) > 0)
-                        live++;
-                var lead = sess >= 0 ? b(String(sess)) + " devin sessions live" : live >= 0 ? b(String(live)) + " harnesses live" : Style.unknownGlyph;
-                return lead + (acp >= 0 ? " · " + acp + " acp" : "");
-            }
+            // Crew-status placeholder (D1): the roster read-out arrives with
+            // the crew module; no session or harness values are read here.
+            return i2("crew");
         case "repos":
-            {
-                if (!has("gh_ok"))
-                    return "gh " + Style.unknownGlyph;
-                var un = has("gh_unread") ? b(String(num(stats.gh_unread))) + " unread" : "gh reachable";
-                var last = has("ghev0_repo") ? " · " + esc(trunc(stats.ghev0_repo, 12)) + " " + esc(String(stats.ghev0_type || "").replace("Event", "")) : "";
-                return un + last;
-            }
+            return i2("↗ navigator · F5");
         case "network":
-            {
-                var eth = topoNode("net_eth");
-                var ifn = (eth && eth.extra && eth.extra.ifname) ? eth.extra.ifname : "enp15s0";
-                var st = (eth && eth.state !== undefined && topo !== null && eth.state !== topo.unknown) ? String(eth.state).toUpperCase() : linkOk ? "UP" : Style.unknownGlyph;
-                var rxT = has("net_rx") ? " · " + i2(fmtBytes(num(stats.net_rx))) + " rx since boot" : "";
-                return esc(ifn) + " <b>" + esc(st) + "</b> 2.5GbE" + rxT;
-            }
+            return i2("bar module · toggle");
         case "storage":
-            {
-                var t = -1, nm = "";
-                for (var vi = 0; vi < 4; vi++)
-                    if (has("nvme" + vi + "_temp") && num(stats["nvme" + vi + "_temp"]) > t) {
-                        t = num(stats["nvme" + vi + "_temp"]);
-                        nm = "nvme" + vi;
-                    }
-                var fsP = has("fs_root_pct") ? " · root " + b(Math.round(num(stats.fs_root_pct)) + "%") : "";
-                return (nm !== "" ? esc(nm) + " " + b(Math.round(t) + "°") : "nvme " + Style.unknownGlyph) + fsP;
-            }
+            return has("fs_root_pct") ? b(Math.round(num(stats.fs_root_pct)) + "%") + " root" : Style.unknownGlyph;
         case "media":
-            if (mediaSt.playing === true)
-                return "playing · " + esc(trunc(mediaSt.title || "—", 18));
-            if (mediaSt.hasPlayer === true)
-                return "paused · " + esc(trunc(mediaSt.title || "", 16));
-            return "no player" + (volFrac >= 0 ? " · sink " + b(Math.round(volFrac * 100) + "%") : "");
+            return i2("transport · play/pause");
         case "tokens":
-            {
-                var tot = tokToday();
-                return tot >= 0 ? "today " + b(fmtTok(tot)) + " in+out" : "ledger " + Style.unknownGlyph;
-            }
+            return i2("↗ navigator · F9");
         case "system":
             {
                 var up = has("pkg_updates") ? b(String(num(stats.pkg_updates))) + " updates pending" : "updates " + Style.unknownGlyph;
-                return up + (powerProfile !== "" ? " · " + i2(powerProfile) : "") + " · up " + uptimeText;
+                return up + (powerProfile !== "" ? " · " + i2(powerProfile) : "");
             }
         }
         return "";
@@ -1326,30 +1268,27 @@ Item {
                 break;
             }
         case "procs":
-            for (i = 0; i < 4; i++) {
-                if (!has("proc" + i + "_name"))
-                    break;
-                var pc = num(stats["proc" + i + "_cpu"]);
-                rows.push({
-                    fl: esc(stats["proc" + i + "_name"]),
-                    fv: "<b>" + Math.round(pc) + "%</b>",
-                    frac: root.clamp(pc / 200, 0, 1),
-                    tone: pc >= 90 ? 1 : i % 2 === 1 ? 2 : 0
-                });
-            }
-            if (rows.length === 0)
+            {
+                // Entry point only (map row 4): the top-CPU table and the
+                // per-proc detail live in the Workbench PROCESS LEDGER and
+                // Navigator; no proc values are read here.
                 rows.push({
                     fl: "top consumers",
-                    fv: Style.unknownGlyph
+                    fv: i2("↗ navigator · F2")
                 });
-            break;
+                rows.push({
+                    fl: "process ledger",
+                    fv: i2("workbench · hdmi-a-3")
+                });
+                break;
+            }
         case "devices":
             {
-                // Entry point only — the detailed device listing moved to the
-                // Workbench (lane W). Activation opens Navigator's devices
-                // section (activateTile → openNav("devices")); the peripheral
-                // count stays on the tile's insight line, low-battery still
-                // drives `hot` via tileHot().
+                // Entry point only (map row 2): peripheral state lives in the
+                // Workbench DEVICES pane, topology in BoardView. Activation
+                // opens Navigator's devices section (activateTile →
+                // openNav("devices")); low-battery still drives `hot` via
+                // tileHot().
                 rows.push({
                     fl: "usb tree · batteries",
                     fv: i2("↗ navigator · F3")
@@ -1362,184 +1301,117 @@ Item {
             }
         case "agents":
             {
-                var disp = ["devin", "opencode", "october"];
+                // Crew-status placeholder (D1): entry + launch rows only; the
+                // roster read-out arrives with the crew module. Harness session
+                // detail stays in the Workbench AGENT SESSIONS pane, so no
+                // devsess/ag_* values are read here.
+                rows.push({
+                    fl: "crew",
+                    fv: i2("↗ navigator · F4")
+                });
+                rows.push({
+                    fl: "harness sessions",
+                    fv: i2("workbench · hdmi-a-3")
+                });
                 // Launchable harnesses: row click -> gtk-launch <desktop id>
                 // (picked up by HubTile's row hit-test overlay).
-                var launchIds = ({
-                        "devin": "devin-desktop",
-                        "october": "october"
-                    });
-                for (i = 0; i < disp.length; i++) {
-                    var aid = disp[i];
-                    var pr = has("ag_" + aid + "_procs") ? num(stats["ag_" + aid + "_procs"]) : -1;
-                    var cp = has("ag_" + aid + "_cpu") ? num(stats["ag_" + aid + "_cpu"]) : -1;
-                    var launchable = launchIds[aid] !== undefined;
-                    var arow = {
-                        fl: aid + (launchable ? " ↗" : "") + (aid === "devin" && has("ag_devin_acp") ? " · " + num(stats.ag_devin_acp) + " acp" : "") + (pr >= 0 ? " · " + pr + " procs" : ""),
-                        fv: cp >= 0 ? "<b>" + Math.round(cp) + "%</b>" : (launchable ? i2("↗ launch") : Style.unknownGlyph),
-                        frac: cp >= 0 ? root.clamp(cp / 300, 0, 1) : -1,
-                        tone: cp >= 200 ? 1 : i === 2 ? 2 : 0
-                    };
-                    if (launchable)
-                        arow.launch = launchIds[aid];
-                    rows.push(arow);
-                }
-                var lockNames = [];
-                var ns = Math.min(4, has("devsess_count") ? num(stats.devsess_count) : 0);
-                for (i = 0; i < ns; i++)
-                    if (has("devsess" + i + "_name") && num(stats["devsess" + i + "_live"]) > 0)
-                        lockNames.push(String(stats["devsess" + i + "_name"]));
                 rows.push({
-                    fl: "live locks",
-                    fv: lockNames.length > 0 ? esc(trunc(lockNames.join(" · "), 34)) : i2(ns === 0 ? "none" : ns + "")
+                    fl: "devin",
+                    fv: i2("↗ launch"),
+                    launch: "devin-desktop"
+                });
+                rows.push({
+                    fl: "october",
+                    fv: i2("↗ launch"),
+                    launch: "october"
                 });
                 break;
             }
         case "repos":
             {
-                if (!has("gh_ok"))
-                    rows.push({
-                        fl: "github feed",
-                        fv: Style.unknownGlyph
-                    });
-                else {
-                    rows.push({
-                        fl: esc(has("gh_user") ? "@" + String(stats.gh_user) : "github"),
-                        fv: num(stats.gh_ok) > 0 ? "ok" : i2("unreachable") + (has("gh_unread") ? " · <b>" + num(stats.gh_unread) + "</b> unread" : "")
-                    });
-                    var ne = Math.min(3, has("ghev_count") ? num(stats.ghev_count) : 0);
-                    for (i = 0; i < ne; i++)
-                        rows.push({
-                            fl: esc(trunc(stats["ghev" + i + "_repo"] || "?", 20)),
-                            fv: esc(String(stats["ghev" + i + "_type"] || "").replace("Event", "")) + " · " + i2(fmtAge(num(stats["ghev" + i + "_age_s"])))
-                        });
-                }
+                // Entry point only (map row 13): GitHub activity lives in the
+                // Workbench pane; Navigator carries the repo overlay.
+                rows.push({
+                    fl: "github feed",
+                    fv: i2("↗ navigator · F5")
+                });
+                rows.push({
+                    fl: "activity detail",
+                    fv: i2("workbench · hdmi-a-3")
+                });
                 break;
             }
         case "network":
             {
-                var eth = topoNode("net_eth");
-                var wif = topoNode("net_wifi");
-                var ethName = (eth && eth.extra && eth.extra.ifname) ? eth.extra.ifname : "enp15s0";
-                var ethUp = (eth && topo !== null && eth.state !== topo.unknown) ? String(eth.state) === "up" : linkOk;
+                // Entry point only (map rows 6/7): aggregate rates live on the
+                // dial; link state and speed live in BoardView. No net values
+                // are read here.
                 rows.push({
-                    fl: esc(ethName) + " · RTL8125 2.5GbE",
-                    fv: ethUp ? "<b>UP</b>" : "DOWN",
-                    frac: -1
+                    fl: "live rates",
+                    fv: i2("dial · reactor")
                 });
                 rows.push({
-                    fl: "rx / tx totals",
-                    fv: has("net_rx") ? i2(fmtBytes(num(stats.net_rx))) + " / " + i2(fmtBytes(num(stats.net_tx))) : Style.unknownGlyph
-                });
-                var wifState = (wif && topo !== null && wif.state !== topo.unknown) ? String(wif.state).toUpperCase() : "DOWN";
-                rows.push({
-                    fl: "wlp16s0 · MT7922",
-                    fv: i2(wifState === "UP" ? "UP" : "DOWN")
-                });
-                rows.push({
-                    fl: "throughput",
-                    fv: i2("↓" + fmtRate(rxRate)) + " " + i2("↑" + fmtRate(txRate))
+                    fl: "link state · speed",
+                    fv: i2("boardview · dp-2")
                 });
                 break;
             }
         case "storage":
             {
-                var nn = Math.min(2, has("nvme_count") ? num(stats.nvme_count) : 0);
-                for (i = 0; i < nn; i++) {
-                    var t1 = has("nvme" + i + "_temp") ? num(stats["nvme" + i + "_temp"]) : NaN;
-                    var t2 = has("nvme" + i + "_temp2") ? num(stats["nvme" + i + "_temp2"]) : NaN;
-                    var model = has("nvme" + i + "_model") ? trunc(String(stats["nvme" + i + "_model"]).split(" ").slice(0, 2).join(" "), 18) : "nvme" + i;
+                // Mount / fill % is CommandHub's own datum (D4), shown on FILES
+                // and STORAGE; drive temps (map row 9) and io rates (row 10)
+                // belong to BoardView and are not read here.
+                var mp2 = mountRows();
+                for (i = 0; i < Math.min(3, mp2.length); i++) {
+                    var sm = mp2[i];
                     rows.push({
-                        fl: "nvme" + i + " · " + esc(model),
-                        fv: isFinite(t1) ? "<b>" + Math.round(t1) + "°</b>" + (isFinite(t2) ? "/" + Math.round(t2) + "°" : "") : Style.unknownGlyph,
-                        frac: isFinite(t1) ? root.clamp(t1 / 90, 0, 1) : -1,
-                        tone: isFinite(t1) && t1 >= 65 ? 1 : 2
+                        fl: esc(sm.name) + (sm.mount !== sm.name ? " · " + esc(sm.mount) : ""),
+                        fv: "<b>" + Math.round(sm.pct) + "%</b> · " + fmtBytes(sm.free) + " free",
+                        frac: sm.pct / 100,
+                        tone: sm.pct >= 70 ? 1 : (i === 0 ? 0 : 2)
                     });
                 }
-                var usbRow = "";
-                var nbd = Math.min(8, has("blk_count") ? num(stats.blk_count) : 0);
-                for (i = 0; i < nbd; i++)
-                    if (has("blk" + i + "_type") && String(stats["blk" + i + "_type"]) === "usb") {
-                        var pm = "";
-                        var npp = Math.min(4, num(stats["blk" + i + "p_count"]));
-                        for (var pj = 0; pj < npp; pj++)
-                            if (has("blk" + i + "p" + pj + "_mount") && String(stats["blk" + i + "p" + pj + "_mount"]) !== "" && has("blk" + i + "p" + pj + "_pct"))
-                                pm = " · " + Math.round(num(stats["blk" + i + "p" + pj + "_pct"])) + "%";
-                        usbRow = String(stats["blk" + i + "_name"]) + (has("blk" + i + "_model") ? " · " + trunc(stats["blk" + i + "_model"], 22) : "") + pm;
-                        break;
-                    }
-                if (usbRow !== "")
+                if (rows.length === 0 && has("fs_root_pct"))
                     rows.push({
-                        fl: esc(usbRow),
-                        fv: i2("usb")
+                        fl: "/ root",
+                        fv: "<b>" + Math.round(num(stats.fs_root_pct)) + "%</b> · " + fmtBtoGiB(num(stats.fs_root_size) - num(stats.fs_root_used)) + "G free",
+                        frac: num(stats.fs_root_pct) / 100,
+                        tone: num(stats.fs_root_pct) >= 70 ? 1 : 0
                     });
-                rows.push({
-                    fl: "io now",
-                    fv: has("disk_read_bps") ? "rd " + i2(fmtRate(num(stats.disk_read_bps))) + " · wr " + i2(fmtRate(num(stats.disk_write_bps))) : Style.unknownGlyph
-                });
                 if (rows.length === 0)
                     rows.push({
-                        fl: "drives",
+                        fl: "mounts",
                         fv: Style.unknownGlyph
                     });
                 break;
             }
         case "media":
             {
+                // Action-only (map row 16): now-playing moved to the notch and
+                // sink/mic levels (row 25) moved out; the tile's own click is
+                // the transport control (playPause).
                 rows.push({
-                    fl: "player",
-                    fv: mediaSt.hasPlayer === true ? (mediaSt.playing === true ? "<b>playing</b>" : i2("paused")) : mediaSt.hasPlayer === false ? "none" : Style.unknownGlyph
+                    fl: "transport",
+                    fv: i2("play / pause")
                 });
                 rows.push({
-                    fl: "track",
-                    fv: mediaSt.hasPlayer === true && mediaSt.title ? esc(trunc(mediaSt.title, 26)) : Style.unknownGlyph
-                });
-                rows.push({
-                    fl: "sink volume",
-                    fv: volFrac >= 0 ? (volMuted ? "MUTED" : "<b>" + Math.round(volFrac * 100) + "%</b>") : Style.unknownGlyph,
-                    frac: volFrac,
-                    tone: volMuted ? 1 : 0
-                });
-                rows.push({
-                    fl: "mic",
-                    fv: micFrac >= 0 ? (micMuted ? "<font color='" + cssHex(Style.c.alert) + "'>MUTED</font>" : i2("LIVE") + " " + Math.round(micFrac * 100) + "%") : Style.unknownGlyph,
-                    frac: micFrac,
-                    tone: 2
+                    fl: "now playing",
+                    fv: i2("↗ notch")
                 });
                 break;
             }
         case "tokens":
             {
+                // Entry point only (map row 1): the ledger lives in the
+                // Workbench TOKEN LEDGER pane; no per-provider values are
+                // read here.
                 rows.push({
-                    chart: true,
-                    bars: tokBars(),
-                    weight: 1.7
+                    fl: "usage overlay",
+                    fv: i2("↗ navigator · F9")
                 });
-                var tot = tokToday();
-                var topName = "", topV = -1;
-                var prov = (tokData && tokData.providers) ? tokData.providers : null;
-                if (prov !== null)
-                    for (var k in prov) {
-                        var p = prov[k];
-                        if (!p || !p.day)
-                            continue;
-                        var ii = Number(p.day["in"]), oo = Number(p.day.out), tt = Number(p.day.total);
-                        var vv = (isFinite(ii) || isFinite(oo)) ? (isFinite(ii) ? ii : 0) + (isFinite(oo) ? oo : 0) : tt;
-                        if (isFinite(vv) && vv > topV) {
-                            topV = vv;
-                            topName = k;
-                        }
-                    }
                 rows.push({
-                    fl: "today total",
-                    fv: tot >= 0 ? "<b>" + fmtTok(tot) + "</b>" : Style.unknownGlyph
-                });
-                var topP = (topName !== "" && prov !== null) ? prov[topName] : null;
-                var cost = (topP && topP.day && isFinite(Number(topP.day.cost))) ? " · <b>$" + Number(topP.day.cost).toFixed(2) + "</b>" : "";
-                var msgs = (topP && topP.day && isFinite(Number(topP.day.msgs))) ? " · " + i2(String(topP.day.msgs) + " msgs") : "";
-                rows.push({
-                    fl: "top provider",
-                    fv: topName !== "" ? esc(topName) + " " + i2(fmtTok(topV)) + cost + msgs : Style.unknownGlyph
+                    fl: "token ledger",
+                    fv: i2("workbench · hdmi-a-3")
                 });
                 break;
             }
@@ -1558,9 +1430,10 @@ Item {
                     fl: "power profile",
                     fv: powerProfile !== "" ? i2(powerProfile) : Style.unknownGlyph
                 });
+                // theme row added per map row 23 (M3): CH is the sole home.
                 rows.push({
-                    fl: "uptime · psi io",
-                    fv: esc(uptimeText) + " · " + (has("psi_io_some") ? "<b>" + num(stats.psi_io_some).toFixed(2) + "</b>" : Style.unknownGlyph)
+                    fl: "theme",
+                    fv: has("theme_name") ? i2(esc(trunc(stats.theme_name, 12))) : Style.unknownGlyph
                 });
                 break;
             }
@@ -2040,16 +1913,6 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
                     textFormat: Text.RichText
-                    text: "CPU <b>" + (root.has("cpu_temp") ? Math.round(root.num(root.stats.cpu_temp)) + "°" : Style.unknownGlyph) + "</b>" + (root.has("cpu_tccd2") ? " <font color='" + root.cssHex(Style.c.accent) + "'>TCCD2 " + Math.round(root.num(root.stats.cpu_tccd2)) + "°</font>" : "") + " · GPU " + (root.has("i_pwr_w") ? "<font color='" + root.cssHex(Style.c.accent2) + "'><b>" + Math.round(root.num(root.stats.i_pwr_w)) + " W</b></font>" : Style.unknownGlyph) + (root.has("i_temp_pkg") ? " <font color='" + root.cssHex(Style.c.accent2) + "'>B580 " + Math.round(root.num(root.stats.i_temp_pkg)) + "°</font>" : "")
-                    color: Style.c.dim
-                    font.family: Style.f.mono
-                    font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
-                }
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    textFormat: Text.RichText
                     text: "MEM <b>" + root.esc(root.memGiB) + "</b> / " + root.esc(root.memTotGiB) + "G" + (root.has("zram_ratio") ? " <font color='" + root.cssHex(Style.c.accent2) + "'>· zram " + Number(root.stats.zram_ratio) + "×</font>" : "")
                     color: Style.c.dim
                     font.family: Style.f.mono
@@ -2060,7 +1923,7 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
                     textFormat: Text.RichText
-                    text: "R <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.rxRate)) + "</b></font> · W <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.txRate)) + "</b></font> · " + (root.linkOk ? "enp15s0 up" : "link lost")
+                    text: "R <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.rxRate)) + "</b></font> · W <font color='" + root.cssHex(Style.c.accent2) + "'><b>" + root.esc(root.fmtRate(root.txRate)) + "</b></font>"
                     color: Style.c.dim
                     font.family: Style.f.mono
                     font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
@@ -2069,18 +1932,8 @@ Item {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
-                    text: "up " + root.uptimeText + " · " + root.clockText
+                    text: "up " + root.uptimeText
                     color: Style.c.faint
-                    font.family: Style.f.mono
-                    font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
-                }
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    visible: root.has("proc0_name")
-                    text: "• " + (root.has("proc0_name") ? String(root.stats.proc0_name) + " " + Math.round(root.num(root.stats.proc0_cpu)) + "%" : "")
-                    color: Style.c.magenta
                     font.family: Style.f.mono
                     font.pixelSize: Math.max(10, Math.round(reactor.width * 0.019))
                 }
