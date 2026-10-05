@@ -28,6 +28,8 @@ OUT = STATE_HOME / "nexuslink" / "tokens.json"
 CURSOR = STATE_HOME / "nexuslink" / "ledger-cursor.json"
 HISTORY_DAYS = 90
 SEEN_CAP = 20000
+SESS_WINDOW_DAYS = 14
+SESS_TOP = 10
 DENY = ("credentials", "auth.json", "mcp_config", "service.json", "cookie",
         ".vscdb", "mcp-tokens", ".lock", "bus-principals", "secret")
 KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
@@ -98,6 +100,7 @@ class Ledger:
         self.meta = {}    # prov -> dict (rebuilt fresh each run)
         self.models = {}  # prov -> model -> {in,out}
         self.sources = {} # prov -> set(str)
+        self.top_sessions = []  # session rows, rebuilt fresh each run
 
     def src(self, prov, path):
         self.sources.setdefault(prov, set()).add(str(path))
@@ -501,6 +504,58 @@ def collect_hermes(led):
             con.close()
 
 
+def collect_sessions(led):
+    """Hermes `sessions` table -> led.top_sessions (top-N by tokens, 14 days).
+
+    The DP-2 SES-05 table's source: one row per session with bot, provider,
+    model, title, in/out tokens, api calls and last-seen. Unlike
+    collect_hermes this reads `sessions` (per-session rollup), not
+    `session_model_usage`, keeps EVERY billing_provider (opencode-go and
+    nous included — attribution, not ledger folding) and is rebuilt fresh
+    each run: a top-10 ranking needs no cursor.
+    """
+    cutoff = datetime.now(timezone.utc).timestamp() - SESS_WINDOW_DAYS * 86400
+    stores = [(HOME / ".hermes/state.db", "default")]
+    pdir = HOME / ".hermes/profiles"
+    stores += [(p, p.parent.name)
+               for p in sorted(pdir.glob("*/state.db"))] if pdir.is_dir() else []
+    for db, profile in stores:
+        con = _ro_db(db)
+        if not con:
+            continue
+        try:
+            if "sessions" not in _tables(con):
+                continue
+            cols = {r[1] for r in con.execute("PRAGMA table_info(sessions)")}
+            if not {"id", "model", "billing_provider", "started_at",
+                    "ended_at", "last_activity_at", "title", "api_call_count",
+                    "input_tokens", "output_tokens", "cache_read_tokens",
+                    "cache_write_tokens", "archived", "hidden"} <= cols:
+                continue
+            q = ("SELECT id, model, billing_provider, started_at,"
+                 " COALESCE(last_activity_at, ended_at, started_at), title,"
+                 " api_call_count,"
+                 " input_tokens + cache_read_tokens + cache_write_tokens,"
+                 " output_tokens FROM sessions"
+                 " WHERE archived = 0 AND hidden = 0"
+                 " AND COALESCE(last_activity_at, ended_at, started_at) >= ?")
+            for (sid, model, prov, start, last, title, calls, tin, tout) \
+                    in con.execute(q, (cutoff,)):
+                if not (tin or tout):
+                    continue
+                led.top_sessions.append({
+                    "id": sid, "bot": profile, "provider": prov,
+                    "model": model, "title": title,
+                    "in": int(tin or 0), "out": int(tout or 0),
+                    "tokens": int((tin or 0) + (tout or 0)),
+                    "calls": int(calls or 0),
+                    "start": float(start or 0), "last": float(last or 0)})
+        except sqlite3.Error:
+            pass               # one bad store must not sink the pass
+        finally:
+            con.close()
+
+
 # ---------- output ------------------------------------------------------------
 
 def _bucket(rows, lo, hi):
@@ -571,9 +626,12 @@ def build(led, now):
         hist[p] = rows[-HISTORY_DAYS:]
         if led.sources.get(p):
             srcs[p] = sorted(led.sources[p])
+    sess = sorted(led.top_sessions,
+                  key=lambda s: -s["tokens"])[:SESS_TOP]
     return {"updated": now.isoformat(timespec="seconds"),
             "generator": "token-ledger/1",
-            "providers": out_p, "history": hist, "sources": srcs}
+            "providers": out_p, "history": hist, "sources": srcs,
+            "sessions": sess}
 
 
 def atomic_write(path, obj):
@@ -607,7 +665,8 @@ def main():
             cur = {}
     led = Ledger(cur if isinstance(cur, dict) else {})
     for fn in (collect_omarchy, collect_opencode, collect_devin,
-               collect_claude, collect_haze, collect_hermes):
+               collect_claude, collect_haze, collect_hermes,
+               collect_sessions):
         try:
             fn(led)
         except Exception as e:  # a bad source must not sink the pass
