@@ -305,9 +305,6 @@ Item {
     // Owned by this deck's UtilityDock instance (one poller per datum). The
     // old private 3 s av batch + 30 s powerprofile probe duplicated it.
     readonly property var mediaSt: dockStrip.media
-    readonly property bool volMuted: dockStrip.volMuted
-    readonly property bool micMuted: dockStrip.micMuted
-    readonly property bool btOn: dockStrip.btPowered
     readonly property string powerProfile: dockStrip.powerProfile
 
     // ---- AI center key: dir resolve + entry count, one bounded probe --------
@@ -1371,10 +1368,10 @@ Item {
             {
                 rows.push({
                     btns: [
-                        { g: Style.icoBrand.bt, brand: true, on: btOn, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
-                        { g: volMuted ? Style.ico.mute : Style.ico.vol, on: volMuted, argv: ["omarchy-audio-output-volume", "mute-toggle"] },
-                        { g: Style.ico.mic, on: micMuted, argv: ["omarchy-audio-input-mute"] },
-                        { g: Style.ico.display, argv: ["omarchy-audio-output-switch"] }
+                        { g: Style.icoBrand.bt, brand: true, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
+                        { g: Style.ico.display, argv: ["omarchy-audio-output-switch"] },
+                        { g: Style.ico.mic, argv: ["omarchy-audio-source-switch"] },
+                        { g: Style.ico.shot, argv: ["omarchy-capture-screenshot"] }
                     ]
                 });
                 rows.push({ act: true, g: Style.ico.hub, fl: "DEVICE BAY", fh: "WB", argv: jumpWb.argv });
@@ -1438,9 +1435,9 @@ Item {
                     weight: 1.6,
                     btns: [
                         { g: Style.ico.prev, argv: ["omarchy-shell", "-q", "media", "previous"] },
-                        { g: mediaSt.playing === true ? Style.ico.pause : Style.ico.play, on: mediaSt.playing === true, argv: ["omarchy-shell", "-q", "media", "playPause"] },
+                        { g: Style.ico.play, argv: ["omarchy-shell", "-q", "media", "playPause"] },
                         { g: Style.ico.next, argv: ["omarchy-shell", "-q", "media", "next"] },
-                        { g: volMuted ? Style.ico.mute : Style.ico.vol, on: volMuted, argv: ["omarchy-audio-output-volume", "mute-toggle"] }
+                        { g: Style.ico.stop, argv: ["omarchy-shell", "-q", "media", "pause"] }
                     ]
                 });
                 rows.push({ act: true, g: Style.ico.display, fl: "SWITCH OUTPUT", fh: "SINK", argv: ["omarchy-audio-output-switch"] });
@@ -1476,7 +1473,7 @@ Item {
                     weight: 1.3,
                     btns: [
                         { g: Style.ico.sync, argv: ["omarchy-shell", "-q", "omarchy.system-update", "refresh"] },
-                        { g: Style.ico.bolt, on: powerProfile === "performance", argv: ["omarchy-powerprofiles-set", "autodetect", powerProfile === "performance" ? "power-saver" : "performance"] },
+                        { g: Style.ico.bolt, argv: ["omarchy-powerprofiles-set", "autodetect", powerProfile === "performance" ? "power-saver" : "performance"] },
                         { g: Style.ico.moon, argv: ["omarchy-shell", "-q", "nightlight", "toggle"] },
                         { g: Style.ico.palette, argv: ["omarchy-theme-bg-next"] }
                     ]
