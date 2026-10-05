@@ -144,6 +144,19 @@ Item {
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "hub"].concat(argv));
     }
+    // Action spec runner shared by tile rows and the side strips:
+    // {nav: "section"} routes to Navigator, {argv: [...]} execs detached.
+    function runAct(a) {
+        if (a === null || a === undefined)
+            return;
+        if (a.nav !== undefined)
+            openNav(a.nav, a.path !== undefined ? a.path : "");
+        else if (a.argv !== undefined)
+            execArgv(a.argv);
+    }
+    readonly property string homeDir: Quickshell.env("HOME") || ""
+    readonly property var jumpWb: ({ "argv": ["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"] })
+    readonly property var jumpBoard: ({ "argv": ["hyprctl", "dispatch", "focusmonitor", "DP-2"] })
 
     FontLoader {
         source: "file:///home/nexuslink/.local/share/fonts/nexushud/Michroma-Regular.ttf"
@@ -173,40 +186,20 @@ Item {
     property real rxRate: -1
     property real txRate: -1
 
-    // arc fractions — Behavior animates on assignment, so motion exists only
-    // while a fresh frame says the value moved. -1 = unknown → bare track.
+    // arc fractions, quantized in applyFrame. -1 = unknown → bare track.
     property real aCpu: -1
     property real aGpu: -1
     property real aMem: -1
     property real aNet: -1
-    Behavior on aCpu {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
+    onACpuChanged: dialFill.requestPaint()
+    onAGpuChanged: dialFill.requestPaint()
+    onAMemChanged: dialFill.requestPaint()
+    onANetChanged: dialFill.requestPaint()
+    // 1 % steps: a 1 Hz frame that moves a ring by less than a pixel of arc
+    // must not cost a canvas repaint
+    function q(v) {
+        return v < 0 ? -1 : Math.round(v * 100) / 100;
     }
-    Behavior on aGpu {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    Behavior on aMem {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    Behavior on aNet {
-        NumberAnimation {
-            duration: Style.dur.settle
-            easing.type: Easing.OutCubic
-        }
-    }
-    onACpuChanged: dialArcs.requestPaint()
-    onAGpuChanged: dialArcs.requestPaint()
-    onAMemChanged: dialArcs.requestPaint()
-    onANetChanged: dialArcs.requestPaint()
 
     onStatsChanged: {
         var idle = num(stats.cpu_idle), total = num(stats.cpu_total);
@@ -232,11 +225,10 @@ Item {
         prevTx = tx;
         lastBatchT = t;
 
-        aCpu = cpuPct >= 0 ? clamp(cpuPct / 100, 0, 1) : -1;
-        aGpu = gpuFrac;
-        aMem = memFrac;
-        aNet = (rxRate >= 0 && txRate >= 0) ? clamp((rxRate + txRate) / 60000000, 0, 1) : -1;
-        dialArcs.requestPaint();
+        aCpu = q(cpuPct >= 0 ? clamp(cpuPct / 100, 0, 1) : -1);
+        aGpu = q(gpuFrac);
+        aMem = q(memFrac);
+        aNet = q((rxRate >= 0 && txRate >= 0) ? clamp((rxRate + txRate) / 60000000, 0, 1) : -1);
         root.pollTick();          // stats frame = poll cadence driver
     }
 
@@ -309,50 +301,14 @@ Item {
     // has not been observed twice yet reads "—".
     readonly property string frameGapText: lastFrameGapMs >= 0 ? (lastFrameGapMs / 1000).toFixed(2) + " s" : Style.unknownGlyph
 
-    // ---- shared F8 pollers (media status + wpctl levels, one proc / 3 s) ------
-    property var mediaSt: ({})
-    property real volFrac: -1
-    property bool volMuted: false
-    property real micFrac: -1
-    property bool micMuted: false
-    property string powerProfile: ""
-
-    function applyAv(text) {
-        var parts = String(text).split("\n===\n");
-        if (parts[0] !== undefined) {
-            var d = null;
-            try {
-                d = JSON.parse(parts[0]);
-            } catch (e) {
-                d = null;
-            }
-            mediaSt = (d && typeof d === "object") ? d : ({});
-        }
-        var m = (parts[1] || "").match(/Volume:\s*([0-9.]+)/);
-        volFrac = m ? Math.min(1, Number(m[1])) : -1;
-        volMuted = (parts[1] || "").indexOf("MUTED") >= 0;
-        var m2 = (parts[2] || "").match(/Volume:\s*([0-9.]+)/);
-        micFrac = m2 ? Math.min(1, Number(m2[1])) : -1;
-        micMuted = (parts[2] || "").indexOf("MUTED") >= 0;
-    }
-    Process {
-        id: avPoll
-        running: false
-        command: ["bash", "-lc", 'omarchy-shell media status 2>/dev/null; echo "==="; wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null; echo "==="; wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null']
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.applyAv(text)
-        }
-    }
-    Process {
-        id: pwrPoll
-        running: false
-        command: ["powerprofilesctl", "get"]
-        stdout: StdioCollector {
-            waitForEnd: true
-            onStreamFinished: root.powerProfile = String(text).trim()
-        }
-    }
+    // ---- shared audio / media / power state ---------------------------------
+    // Owned by this deck's UtilityDock instance (one poller per datum). The
+    // old private 3 s av batch + 30 s powerprofile probe duplicated it.
+    readonly property var mediaSt: dockStrip.media
+    readonly property bool volMuted: dockStrip.volMuted
+    readonly property bool micMuted: dockStrip.micMuted
+    readonly property bool btOn: dockStrip.btPowered
+    readonly property string powerProfile: dockStrip.powerProfile
 
     // ---- AI center key: dir resolve + entry count, one bounded probe --------
     // Prefer the btrfs-home AI center; fall back to the Kingston mount while
@@ -396,25 +352,13 @@ Item {
     // pollTick(). FALLBACK while lane H's ingest is out of tree: the existing
     // 1 s clock timer above makes the same call, so there is still exactly
     // ONE 1 Hz wall-clock tick in this file, nothing faster, nothing while
-    // hidden. Periods stay wall-clock (3 s AV / 30 s power), so overlapping
+    // hidden. Periods stay wall-clock (30 s ai probe), so overlapping
     // tick sources can never double-fire a fetch.
-    property double _avLast: -1
-    property double _pwrLast: -1
     property double _aiLast: -1
     function pollTick() {
         if (!root.shown)
             return;
         var t = Date.now();
-        if (t - _avLast >= 3000) {
-            _avLast = t;
-            if (!avPoll.running)
-                avPoll.running = true;
-        }
-        if (t - _pwrLast >= 30000) {
-            _pwrLast = t;
-            if (!pwrPoll.running)
-                pwrPoll.running = true;
-        }
         if (t - _aiLast >= 30000) {
             _aiLast = t;
             if (!aiPoll.running)
@@ -721,8 +665,11 @@ Item {
     // =============================================================== tile rows --
     component FactRow: Item {
         id: frow
-        property var row: ({})          // {fl,fv,frac,tone,chart,bars,weight}
+        property var row: ({})          // {fl,fv,frac,tone,chart,bars,weight} | {act,g,fl,fh,nav|argv} | {btns:[{g,on,brand,argv|nav}]}
         property color txtCol: Style.c.txt
+        property bool hot: false        // pointer is over this row (fed by HubTile's overlay)
+        property int hoverBtn: -1
+        readonly property bool plain: row.act !== true && row.btns === undefined
 
         Column {
             anchors.verticalCenter: parent.verticalCenter
@@ -733,7 +680,7 @@ Item {
             Item {
                 width: parent.width
                 height: Math.max(fl.implicitHeight, fv.implicitHeight)
-                visible: frow.row.chart !== true
+                visible: frow.row.chart !== true && frow.plain
                 Text {
                     id: fl
                     anchors.left: parent.left
@@ -761,6 +708,77 @@ Item {
                     font.pixelSize: Style.f.pxLabel
                 }
             }
+            Item {
+                id: actItem
+                visible: frow.row.act === true
+                width: parent.width
+                height: visible ? 26 : 0
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Style.r.key
+                    color: frow.hot ? Style.c.azureWash : "transparent"
+                    border.width: 1
+                    border.color: frow.hot ? Style.tone(Style.c.accent2, 0.50) : "transparent"
+                }
+                IconWell {
+                    id: actWell
+                    x: 3
+                    anchors.verticalCenter: parent.verticalCenter
+                    size: 20
+                    glyph: frow.row.g !== undefined ? frow.row.g : ""
+                    brand: frow.row.brand === true
+                    hovered: frow.hot
+                }
+                Text {
+                    anchors.left: actWell.right
+                    anchors.leftMargin: 9
+                    anchors.right: actHint.left
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: frow.row.fl !== undefined ? frow.row.fl : ""
+                    color: frow.hot ? Style.c.txt : Style.c.dim
+                    font.family: Theme.displayFamily
+                    font.pixelSize: Style.f.pxLabel
+                    font.letterSpacing: Style.f.lsTag
+                }
+                Tag {
+                    id: actHint
+                    anchors.right: parent.right
+                    anchors.rightMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
+                    text: frow.row.fh !== undefined ? frow.row.fh : ""
+                }
+            }
+            Item {
+                id: btnItem
+                visible: frow.row.btns !== undefined
+                width: parent.width
+                height: visible ? 30 : 0
+                Row {
+                    anchors.fill: parent
+                    Repeater {
+                        model: frow.row.btns !== undefined ? frow.row.btns : []
+                        delegate: Item {
+                            id: bd
+                            required property var modelData
+                            required property int index
+                            width: btnItem.width / Math.max(1, frow.row.btns.length)
+                            height: btnItem.height
+                            IconWell {
+                                anchors.centerIn: parent
+                                size: 26
+                                glyph: bd.modelData.g
+                                brand: bd.modelData.brand === true
+                                active: bd.modelData.on === true
+                                tint: bd.modelData.on === true ? Style.c.accent : Style.c.azure
+                                hovered: frow.hot && frow.hoverBtn === bd.index
+                            }
+                        }
+                    }
+                }
+            }
             MiniChart {
                 visible: frow.row.chart === true
                 width: parent.width
@@ -769,11 +787,10 @@ Item {
             }
             Item {
                 width: parent.width
-                // Always 4 px tall, whether or not this row has a fraction to
-                // draw. Rows that reserve the slot share one label baseline;
-                // rows that skipped it sat half a row lower than their
-                // neighbours, so the labels in a tile never lined up.
-                height: 4
+                // Always 4 px tall for value rows, whether or not this row has a
+                // fraction to draw: rows that reserve the slot share one label
+                // baseline. Action rows carry their own height instead.
+                height: frow.plain ? 4 : 0
                 Rectangle {
                     anchors.fill: parent
                     radius: 2
@@ -800,6 +817,40 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Floating launcher key for the side strips: icon well + micro label.
+    // Pure affordance (no datum); hover brightens the well and label.
+    component StripKey: Item {
+        id: sk
+        property string glyph: ""
+        property string label: ""
+        property var spec: ({})
+        width: 64
+        height: 62
+        IconWell {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            size: 40
+            glyph: sk.glyph
+            hovered: skMa.containsMouse
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            text: sk.label
+            color: skMa.containsMouse ? Style.c.txt : Style.c.mute
+            font.family: Theme.monoFamily
+            font.pixelSize: Style.f.pxMicro
+            font.letterSpacing: Style.f.lsTag
+        }
+        MouseArea {
+            id: skMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.runAct(sk.spec)
         }
     }
 
@@ -883,7 +934,25 @@ Item {
         id: htile
         property string tileId: ""
         property int fkey: 0
-        property var rows: root.tileFacts(tileId)
+        // rowsLive re-evaluates with every stats frame; `rows` only swaps when
+        // the content really changed, so Repeater delegates are not rebuilt at 1 Hz
+        property var rowsLive: root.tileFacts(tileId)
+        property var rows: []
+        property string rowsSig: ""
+        onRowsLiveChanged: {
+            var sg = JSON.stringify(rowsLive);
+            if (sg !== rowsSig) {
+                rowsSig = sg;
+                rows = rowsLive;
+            }
+        }
+        Component.onCompleted: {
+            rowsSig = JSON.stringify(rowsLive);
+            rows = rowsLive;
+        }
+        property int hoverIdx: -1
+        property int hoverBtn: -1
+        hoverExternal: rowLaunchArea.containsMouse
         // mock .tile padding:12px 14px — EmbossedTile adds the 1 px face inset
         padding: 13
         keyCap: fkey > 0 ? "F" + fkey : ""
@@ -943,44 +1012,67 @@ Item {
                         width: factsCol.width
                         height: (htile.slots && htile.slots[index]) ? htile.slots[index].h : 0
                         row: modelData
+                        hot: htile.hoverIdx === index
+                        hoverBtn: htile.hoverIdx === index ? htile.hoverBtn : -1
                     }
                 }
             }
         }
 
-        // Row launch affordance (AGENTS tile): FactRow delegates live in
+        // Row action layer (all tiles): FactRow delegates live in
         // EmbossedTile's `content`, UNDER its trailing hoverArea, so a
         // MouseArea nested in the delegate would never see a click. This
         // overlay is parented to the tile root at z>0 instead and hit-tests
         // which fact row was clicked: rows carrying a `launch` desktop id go
         // to `gtk-launch` through the shared execArgv wrapper; every other
         // click re-emits the tile's own clicked() so tile activation behaves
-        // exactly as before. Disabled entirely when no row can launch, so
-        // ordinary tiles keep their single-click path.
+        // exactly as before. Hover is tracked here too (this layer sits above
+        // the tile's own hover area) and lights the row, the tile rim follows
+        // through hoverExternal.
         property var rowLaunchArea: MouseArea {
             parent: htile
             z: 4
             anchors.fill: parent
-            enabled: {
+            hoverEnabled: true
+            // rowAt: maps a tile-space point onto a fact row (+ button column)
+            function rowAt(mx, my) {
+                var gp = factsGlass.mapFromItem(htile, mx, my);
+                var colY = gp.y - htile.insetY;   // factsCol is inset inside factsGlass
+                var sl = htile.slots;
+                for (var si = 0; si < sl.length; si++)
+                    if (colY >= sl[si].y && colY < sl[si].y + sl[si].h)
+                        return si;
+                return -1;
+            }
+            function btnAt(mx, row) {
+                var n = (row && row.btns !== undefined) ? row.btns.length : 0;
+                if (n === 0)
+                    return -1;
+                var gx = factsGlass.mapFromItem(htile, mx, 0).x - htile.insetX;
+                return Math.max(0, Math.min(n - 1, Math.floor(gx / Math.max(1, factsCol.width / n))));
+            }
+            onPositionChanged: function (mouse) {
                 var rs = htile.rows;
-                for (var ri = 0; ri < rs.length; ri++)
-                    if (rs[ri] && rs[ri].launch !== undefined)
-                        return true;
-                return false;
+                var idx = rowAt(mouse.x, mouse.y);
+                var r = (idx >= 0 && idx < rs.length) ? rs[idx] : null;
+                var actionable = r !== null && (r.act === true || r.btns !== undefined || r.launch !== undefined);
+                htile.hoverIdx = actionable ? idx : -1;
+                htile.hoverBtn = actionable ? btnAt(mouse.x, r) : -1;
+            }
+            onExited: {
+                htile.hoverIdx = -1;
+                htile.hoverBtn = -1;
             }
             onClicked: function (mouse) {
                 var rs = htile.rows;
-                var gp = factsGlass.mapFromItem(htile, mouse.x, mouse.y);
-                var colY = gp.y - htile.insetY;   // factsCol is inset inside factsGlass
-                var sl = htile.slots;
-                var idx = -1;
-                for (var si = 0; si < sl.length; si++)
-                    if (colY >= sl[si].y && colY < sl[si].y + sl[si].h) {
-                        idx = si;
-                        break;
-                    }
+                var idx = rowAt(mouse.x, mouse.y);
                 var r = (idx >= 0 && idx < rs.length) ? rs[idx] : null;
-                if (r !== null && r.launch !== undefined && String(r.launch) !== "")
+                if (r !== null && r.btns !== undefined) {
+                    var bi = btnAt(mouse.x, r);
+                    root.runAct(r.btns[bi]);
+                } else if (r !== null && r.act === true)
+                    root.runAct(r);
+                else if (r !== null && r.launch !== undefined && String(r.launch) !== "")
                     root.execArgv(["gtk-launch", String(r.launch)]);
                 else
                     htile.clicked();
@@ -1269,91 +1361,46 @@ Item {
             }
         case "procs":
             {
-                // Entry point only (map row 4): the top-CPU table and the
-                // per-proc detail live in the Workbench PROCESS LEDGER and
-                // Navigator; no proc values are read here.
-                rows.push({
-                    fl: "top consumers",
-                    fv: i2("↗ navigator · F2")
-                });
-                rows.push({
-                    fl: "process ledger",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                // Action rows only (map row 4): values live in the Workbench PROCESS LEDGER.
+                rows.push({ act: true, g: Style.ico.layers, fl: "PROCESS LEDGER", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.term, fl: "BTOP", fh: "TUI", argv: ["omarchy-launch-tui", "btop"] });
+                rows.push({ act: true, g: Style.ico.search, fl: "NAVIGATOR", fh: "F2", nav: "proc" });
                 break;
             }
         case "devices":
             {
-                // Entry point only (map row 2): peripheral state lives in the
-                // Workbench DEVICES pane, topology in BoardView. Activation
-                // opens Navigator's devices section (activateTile →
-                // openNav("devices")); low-battery still drives `hot` via
-                // tileHot().
                 rows.push({
-                    fl: "usb tree · batteries",
-                    fv: i2("↗ navigator · F3")
+                    btns: [
+                        { g: Style.ico.bt, brand: true, on: btOn, argv: ["omarchy-shell", "-q", "omarchy.bluetooth", "toggle"] },
+                        { g: volMuted ? Style.ico.mute : Style.ico.vol, on: volMuted, argv: ["omarchy-audio-output-volume", "mute-toggle"] },
+                        { g: Style.ico.mic, on: micMuted, argv: ["omarchy-audio-input-mute"] },
+                        { g: Style.ico.display, argv: ["omarchy-audio-output-switch"] }
+                    ]
                 });
-                rows.push({
-                    fl: "device detail",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                rows.push({ act: true, g: Style.ico.hub, fl: "DEVICE BAY", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.search, fl: "NAVIGATOR", fh: "F3", nav: "devices" });
                 break;
             }
         case "agents":
             {
-                // Crew-status placeholder (D1): entry + launch rows only; the
-                // roster read-out arrives with the crew module. Harness session
-                // detail stays in the Workbench AGENT SESSIONS pane, so no
-                // devsess/ag_* values are read here.
-                rows.push({
-                    fl: "crew",
-                    fv: i2("↗ navigator · F4")
-                });
-                rows.push({
-                    fl: "harness sessions",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                rows.push({ act: true, g: Style.ico.robot, fl: "HERMES SESSION", fh: "TUI", argv: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] });
+                rows.push({ act: true, g: Style.ico.pulse, fl: "SESSION LEDGER", fh: "WB", argv: jumpWb.argv });
                 // Launchable harnesses: row click -> gtk-launch <desktop id>
-                // (picked up by HubTile's row hit-test overlay).
-                rows.push({
-                    fl: "devin",
-                    fv: i2("↗ launch"),
-                    launch: "devin-desktop"
-                });
-                rows.push({
-                    fl: "october",
-                    fv: i2("↗ launch"),
-                    launch: "october"
-                });
+                rows.push({ fl: "devin", fv: i2("↗ launch"), launch: "devin-desktop" });
+                rows.push({ fl: "october", fv: i2("↗ launch"), launch: "october" });
                 break;
             }
         case "repos":
             {
-                // Entry point only (map row 13): GitHub activity lives in the
-                // Workbench pane; Navigator carries the repo overlay.
-                rows.push({
-                    fl: "github feed",
-                    fv: i2("↗ navigator · F5")
-                });
-                rows.push({
-                    fl: "activity detail",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                rows.push({ act: true, g: Style.ico.branch, fl: "GITHUB FEED", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.folder, fl: "WORKTREES", fh: "DIR", argv: ["uwsm-app", "--", "nautilus", "--new-window", homeDir + "/hud-wt"] });
+                rows.push({ act: true, g: Style.ico.search, fl: "REPOS NAV", fh: "F5", nav: "repos" });
                 break;
             }
         case "network":
             {
-                // Entry point only (map rows 6/7): aggregate rates live on the
-                // dial; link state and speed live in BoardView. No net values
-                // are read here.
-                rows.push({
-                    fl: "live rates",
-                    fv: i2("dial · reactor")
-                });
-                rows.push({
-                    fl: "link state · speed",
-                    fv: i2("boardview · dp-2")
-                });
+                rows.push({ act: true, g: Style.ico.wifi, fl: "NETWORK BAR", fh: "TOG", argv: ["omarchy-shell", "-q", "omarchy.network", "toggle"] });
+                rows.push({ act: true, g: Style.ico.chip, fl: "TOPOLOGY", fh: "DP-2", argv: jumpBoard.argv });
                 break;
             }
         case "storage":
@@ -1387,32 +1434,22 @@ Item {
             }
         case "media":
             {
-                // Action-only (map row 16): now-playing moved to the notch and
-                // sink/mic levels (row 25) moved out; the tile's own click is
-                // the transport control (playPause).
                 rows.push({
-                    fl: "transport",
-                    fv: i2("play / pause")
+                    weight: 1.6,
+                    btns: [
+                        { g: Style.ico.prev, argv: ["omarchy-shell", "-q", "media", "previous"] },
+                        { g: mediaSt.playing === true ? Style.ico.pause : Style.ico.play, on: mediaSt.playing === true, argv: ["omarchy-shell", "-q", "media", "playPause"] },
+                        { g: Style.ico.next, argv: ["omarchy-shell", "-q", "media", "next"] },
+                        { g: volMuted ? Style.ico.mute : Style.ico.vol, on: volMuted, argv: ["omarchy-audio-output-volume", "mute-toggle"] }
+                    ]
                 });
-                rows.push({
-                    fl: "now playing",
-                    fv: i2("↗ notch")
-                });
+                rows.push({ act: true, g: Style.ico.display, fl: "SWITCH OUTPUT", fh: "SINK", argv: ["omarchy-audio-output-switch"] });
                 break;
             }
         case "tokens":
             {
-                // Entry point only (map row 1): the ledger lives in the
-                // Workbench TOKEN LEDGER pane; no per-provider values are
-                // read here.
-                rows.push({
-                    fl: "usage overlay",
-                    fv: i2("↗ navigator · F9")
-                });
-                rows.push({
-                    fl: "token ledger",
-                    fv: i2("workbench · hdmi-a-3")
-                });
+                rows.push({ act: true, g: Style.ico.layers, fl: "TOKEN LEDGER", fh: "WB", argv: jumpWb.argv });
+                rows.push({ act: true, g: Style.ico.search, fl: "USAGE OVERLAY", fh: "F9", nav: "usage" });
                 break;
             }
         case "system":
@@ -1434,6 +1471,15 @@ Item {
                 rows.push({
                     fl: "theme",
                     fv: has("theme_name") ? i2(esc(trunc(stats.theme_name, 12))) : Style.unknownGlyph
+                });
+                rows.push({
+                    weight: 1.3,
+                    btns: [
+                        { g: Style.ico.sync, argv: ["omarchy-shell", "-q", "omarchy.system-update", "refresh"] },
+                        { g: Style.ico.bolt, on: powerProfile === "performance", argv: ["omarchy-powerprofiles-set", "autodetect", powerProfile === "performance" ? "power-saver" : "performance"] },
+                        { g: Style.ico.moon, argv: ["omarchy-shell", "-q", "nightlight", "toggle"] },
+                        { g: Style.ico.palette, argv: ["omarchy-theme-bg-next"] }
+                    ]
                 });
                 break;
             }
@@ -1637,11 +1683,14 @@ Item {
             }
         }
 
-        // telemetry pass — four rings CPU/GPU/MEM/NET, 270° sweep, repainted
-        // only while a stats frame is fresh (arc Behaviors retrigger paint).
+        // static dial layer: ring tracks, tags, identity band. Painted on
+        // geometry / plate-text change only (the per-glyph arc text is the
+        // expensive part and used to repaint with every ring update).
         Canvas {
             id: dialArcs
             anchors.fill: parent
+            readonly property string plate: root.screenName + (root.kernelText !== "" ? " · " + root.kernelText : "")
+            onPlateChanged: requestPaint()
             onWidthChanged: requestPaint()
             onHeightChanged: requestPaint()
             function monoFam() {
@@ -1703,40 +1752,17 @@ Item {
                 var A0 = -Math.PI * 0.75, SW = Math.PI * 1.5;
                 var ringW = Math.max(3, R * 0.027);
                 var radii = [R * 0.885, R * 0.75, R * 0.615, R * 0.48];
-                var fracs = [root.aCpu, root.aGpu, root.aMem, root.aNet];
-                var cols = ["#8fd8e8", "#ffb300", "#c8f31d", "#8affd0"];
                 var tags = ["CPU", "GPU", "MEM", "NET"];
-                c.lineCap = "butt";
                 c.font = "500 " + Math.max(7, Math.round(R * 0.04)) + "px " + monoFam();
                 c.textAlign = "center";
                 c.textBaseline = "middle";
                 for (var g = 0; g < 4; g++) {
                     var rr = radii[g];
                     c.beginPath();
-                    c.strokeStyle = "rgba(190,220,245,0.14)";
+                    c.strokeStyle = "rgba(96,165,250,0.12)";
                     c.lineWidth = ringW;
                     c.arc(cx, cy, rr, A0, A0 + SW);
                     c.stroke();
-                    var f = fracs[g];
-                    if (f >= 0) {
-                        var ae = A0 + SW * Math.min(1, f);
-                        c.beginPath();
-                        c.strokeStyle = cols[g];
-                        c.globalAlpha = 0.14;
-                        c.lineWidth = ringW * 1.5;
-                        c.arc(cx, cy, rr, A0, ae);
-                        c.stroke();
-                        c.globalAlpha = 1;
-                        c.beginPath();
-                        c.strokeStyle = cols[g];
-                        c.lineWidth = ringW;
-                        c.arc(cx, cy, rr, A0, ae);
-                        c.stroke();
-                        c.fillStyle = cols[g];
-                        c.beginPath();
-                        c.arc(cx + Math.cos(ae) * rr, cy + Math.sin(ae) * rr, Math.max(1.4, ringW * 0.7), 0, Math.PI * 2);
-                        c.fill();
-                    }
                     // Tag rides its own ring in the sweep gap, rotated to the
                     // tangent. Right-aligned at the sweep start they used to
                     // stack diagonally down-right and the NET tag landed on top
@@ -1750,20 +1776,6 @@ Item {
                     c.fillText(tags[g], 0, 0);
                     c.restore();
                 }
-                // 18 segment notches punch through each ring band
-                c.strokeStyle = "rgba(6,8,10,0.9)";
-                c.lineWidth = Math.max(1.1, R * 0.006);
-                for (g = 0; g < 4; g++) {
-                    var rr2 = radii[g], half = ringW * 0.8;
-                    c.beginPath();
-                    for (var d = 0; d < 18; d++) {
-                        var da = A0 + SW * d / 18;
-                        c.moveTo(cx + Math.cos(da) * (rr2 - half), cy + Math.sin(da) * (rr2 - half));
-                        c.lineTo(cx + Math.cos(da) * (rr2 + half), cy + Math.sin(da) * (rr2 + half));
-                    }
-                    c.stroke();
-                }
-
                 // identity band (lane B3): the dial wears the machine's own
                 // roll-mark — NEXUSLINK · YURI across the top, the screen +
                 // kernel plate along the bottom. Painted on the telemetry
@@ -1786,6 +1798,70 @@ Item {
                             "t": plate,
                             "col": "rgba(143,216,232,0.42)"
                         }], cx, cy, rT, Math.PI / 2, false, Math.max(1, R * 0.007));
+            }
+        }
+
+        // live ring fills + segment notches: the only dial layer that repaints
+        // on data, and only when a ring moves by >= 1 % (values are quantized
+        // at assignment, no Behavior frames).
+        Canvas {
+            id: dialFill
+            anchors.fill: parent
+            renderStrategy: Canvas.Cooperative
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            Component.onCompleted: requestPaint()
+            onPaint: {
+                var c = getContext("2d");
+                c.clearRect(0, 0, width, height);
+                var W = width, H = height;
+                var cx = W / 2, cy = H / 2;
+                var R = Math.min(W, H) * 0.5 - 2;
+                if (R < 36)
+                    return;
+                var A0 = -Math.PI * 0.75, SW = Math.PI * 1.5;
+                var ringW = Math.max(3, R * 0.027);
+                var radii = [R * 0.885, R * 0.75, R * 0.615, R * 0.48];
+                var fracs = [root.aCpu, root.aGpu, root.aMem, root.aNet];
+                var cols = ["#8fd8e8", "#60a5fa", "#c8f31d", "#8affd0"];
+                c.lineCap = "round";
+                for (var g = 0; g < 4; g++) {
+                    var rr = radii[g];
+                    var f = fracs[g];
+                    if (f >= 0) {
+                        var ae = A0 + SW * Math.min(1, f);
+                        c.beginPath();
+                        c.strokeStyle = cols[g];
+                        c.globalAlpha = 0.14;
+                        c.lineWidth = ringW * 1.5;
+                        c.arc(cx, cy, rr, A0, ae);
+                        c.stroke();
+                        c.globalAlpha = 1;
+                        c.beginPath();
+                        c.strokeStyle = cols[g];
+                        c.lineWidth = ringW;
+                        c.arc(cx, cy, rr, A0, ae);
+                        c.stroke();
+                        c.fillStyle = cols[g];
+                        c.beginPath();
+                        c.arc(cx + Math.cos(ae) * rr, cy + Math.sin(ae) * rr, Math.max(1.4, ringW * 0.7), 0, Math.PI * 2);
+                        c.fill();
+                    }
+                }
+                // 18 segment notches punch through each ring band
+                c.strokeStyle = "rgba(6,8,10,0.9)";
+                c.lineWidth = Math.max(1.1, R * 0.006);
+                for (g = 0; g < 4; g++) {
+                    var rr2 = radii[g], half = ringW * 0.8;
+                    c.beginPath();
+                    for (var d = 0; d < 18; d++) {
+                        var da = A0 + SW * d / 18;
+                        c.moveTo(cx + Math.cos(da) * (rr2 - half), cy + Math.sin(da) * (rr2 - half));
+                        c.lineTo(cx + Math.cos(da) * (rr2 + half), cy + Math.sin(da) * (rr2 + half));
+                    }
+                    c.stroke();
+                }
+
             }
         }
 
@@ -1980,6 +2056,33 @@ Item {
     // grid tile (the flanks are full). Same EmbossedTile chrome as the hub
     // tiles; click opens Navigator's files section at the AI center dir
     // (openNav's path arg → openSection("files", dir)).
+    // ---- side strips: launchers (left) and quick system actions (right) ----
+    // Fill the void between the tile flanks and the dial with affordances
+    // only; hidden when the gutter is too narrow to hold them.
+    readonly property bool stripRoom: (root.width - root.dialSize) / 2 - (root.padX + root.colW) >= 120
+    Column {
+        id: leftStrip
+        visible: root.stripRoom
+        x: root.padX + root.colW + 28
+        anchors.verticalCenter: reactor.verticalCenter
+        spacing: 14
+        StripKey { glyph: Style.ico.robot; label: "HERMES"; spec: ({ "argv": ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] }) }
+        StripKey { glyph: Style.ico.term; label: "TERM"; spec: ({ "argv": ["omarchy-launch-terminal"] }) }
+        StripKey { glyph: Style.ico.folder; label: "AI CENTER"; spec: ({ "argv": ["uwsm-app", "--", "nautilus", "--new-window", root.aiCenterDir !== "" ? root.aiCenterDir : root.homeDir + "/NEXUS_AI_CENTER"] }) }
+        StripKey { glyph: Style.ico.search; label: "NAV"; spec: ({ "nav": "files" }) }
+    }
+    Column {
+        id: rightStrip
+        visible: root.stripRoom
+        x: root.width - root.padX - root.colW - 28 - width
+        anchors.verticalCenter: reactor.verticalCenter
+        spacing: 14
+        StripKey { glyph: Style.ico.shot; label: "SHOT"; spec: ({ "argv": ["omarchy-capture-screenshot"] }) }
+        StripKey { glyph: Style.ico.pick; label: "PICK"; spec: ({ "argv": ["hyprpicker", "-a"] }) }
+        StripKey { glyph: Style.ico.palette; label: "BG"; spec: ({ "argv": ["omarchy-theme-bg-next"] }) }
+        StripKey { glyph: Style.ico.menu; label: "MENU"; spec: ({ "argv": ["omarchy-menu"] }) }
+    }
+
     EmbossedTile {
         id: aiKey
         anchors.horizontalCenter: parent.horizontalCenter

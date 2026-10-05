@@ -9,6 +9,8 @@ Item {
     property string glyph: ""
     property bool brand: false
     property string label: ""
+    property string value: ""               // rich text; only for cells that own their datum
+    property string iconSource: ""          // honest bitmap (album art), else the glyph
     property bool hot: false
     property bool busy: false
     property string kind: "button"          // button | toggle | link
@@ -42,6 +44,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             size: Math.max(20, Math.min(30, cell.height - 28))
             glyph: cell.glyph
+            source: cell.iconSource
             brand: cell.brand
             tint: cell.tint
             active: cell.hot
@@ -58,6 +61,18 @@ Item {
             font.family: Theme.monoFamily
             font.pixelSize: Style.f.pxMicro
             font.letterSpacing: Style.f.lsTag
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(implicitWidth, cell.width - 8)
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+            visible: cell.value !== ""
+            textFormat: Text.RichText
+            text: cell.value
+            color: Style.c.dim
+            font.family: Theme.monoFamily
+            font.pixelSize: Style.f.pxTag
         }
     }
 

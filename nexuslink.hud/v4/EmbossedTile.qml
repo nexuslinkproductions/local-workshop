@@ -18,7 +18,10 @@ Item {
     property color ledColor: hot ? Style.c.accent : Style.c.accent2
     property bool holo: false
     property bool dropShadow: true
-    property alias hovered: hoverArea.containsMouse
+    // hoverExternal lets an overlay MouseArea (which sits above hoverArea and
+    // therefore steals hover) keep the rim lit
+    property bool hoverExternal: false
+    readonly property bool hovered: hoverArea.containsMouse || hoverExternal
 
     signal clicked
 
