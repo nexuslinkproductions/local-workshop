@@ -25,6 +25,6 @@ Deliverables, in this order:
 5. **Visual pass** — merge the reference style with the current one. More widgets, buttons and icons so it reads as a usable app interface integrated with the desktop. **No left-side navigation** — keep the current systematic layout.
 6. **Hermes integration** — surface what Hermes and the crew are doing on the background; reuse the existing agents tile rather than adding a second surface.
 
-One answer I owe you before the hover fix starts: **which surface is the bug on** — the Workbench APPS panel, or the medianotch bar's transport glyphs? Tell me and I'll pin the fix to that code path.
+The hover bug is in the **Workbench APPS tab** (confirmed) — fix it there, in the AppGrid/Workbench hover path, not the medianotch glyphs.
 
 Report back with: what each bot did, what landed on `Development`, and anything you could not verify.

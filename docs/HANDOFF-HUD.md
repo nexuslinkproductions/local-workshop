@@ -51,8 +51,9 @@ the new session needs no access to that session's history.
   lacks the LANE-AI1 changes, and `deploy.sh` never ships `v4/`. The live plugin dir is the truth.
 - **Hover bug:** no lit→dark binding exists in the v4 AppGrid. The only literal match is the
   medianotch transport glyphs (`Notch.qml:740`, white→cyan reads darker). AppGrid hover only adds a
-  `ruleDark` keyline, and selected rows ignore hover (`AppGrid.qml:826-828`). **One word from Marcel
-  is needed to pin which surface he means before fixing.**
+  `ruleDark` keyline, and selected rows ignore hover (`AppGrid.qml:826-828`). **Surface CONFIRMED by Marcel
+  (2026-10-05): the Workbench APPS tab.** So the fault is in the Workbench/AppGrid hover path
+  (v4/AppGrid.qml plus the Workbench APPS wiring), not the medianotch glyphs.
 - **Dedupe map exists:** 11 rows — tokens ×3, devices ×5, processes ×4, agents ×4-5, clock ×5.
 - **Devices:** today's detection is a sysfs USB scan (1 Hz) plus a slow `pactl list sinks` lane.
   The MKE 600 is invisible by design — it is a Scarlett Mic1 input, confirmed live via
