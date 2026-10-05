@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHROME CYBERCORE · NEXUS HUD v4 · direction B</title>
+<link rel="stylesheet" href="core.css">
+<style>
+body{overflow:auto;min-height:100%}
+.wrap{position:relative;max-width:1560px;margin:0 auto;padding:26px 48px 28px}
+.mast{display:flex;align-items:center;gap:22px;padding:14px 26px}
+.mast .logo{width:34px;height:34px;position:relative;flex:none}
+.mast .logo i{position:absolute;inset:0;border:2px solid var(--ice);transform:rotate(45deg);box-shadow:0 0 12px var(--ice-dim)}
+.mast .logo i+i{inset:8px;border-color:var(--acid);box-shadow:0 0 9px var(--acid-dim)}
+.mast h1{font-size:17px;letter-spacing:.4em}
+.mast h1 b{font-weight:400;color:var(--acid)}
+.mast .sp{flex:1}
+.mast .tag{font-size:10px;letter-spacing:.22em;color:var(--t55)}
+.hero{margin-top:16px;padding:24px 48px;position:relative;overflow:hidden}
+.hero .eyebrow{font-family:var(--disp);font-size:10px;letter-spacing:.44em;color:var(--acid)}
+.hero h2{font-family:var(--disp);font-size:clamp(30px,4vw,50px);line-height:1.08;margin:14px 0 12px;letter-spacing:.02em}
+.hero h2 .ice{color:var(--ice)}
+.hero p{font-size:14.5px;line-height:1.7;color:var(--t70);max-width:760px}
+.hero .specs{display:flex;gap:34px;margin-top:20px;flex-wrap:wrap}
+.spec{font-size:10.5px;color:var(--t55);letter-spacing:.14em}
+.spec b{display:block;font-family:var(--disp);font-size:11px;color:var(--txt);letter-spacing:.2em;margin-bottom:5px;font-weight:400}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.card{display:block;padding:16px 30px 14px;position:relative;overflow:hidden;transition:box-shadow .18s}
+.card:hover{box-shadow:inset 0 1px 0 rgba(235,245,252,.3),inset 0 -1px 0 rgba(0,0,0,.65),0 18px 44px rgba(0,0,0,.65),0 0 0 1px rgba(200,255,0,.3)}
+.card .ck{font-size:9.5px;letter-spacing:.26em;color:var(--ice)}
+.card h3{font-family:var(--disp);font-size:19px;letter-spacing:.06em;margin:12px 0 10px;font-weight:400}
+.card p{font-size:12px;line-height:1.65;color:var(--t70)}
+.card .bot{display:flex;justify-content:space-between;align-items:center;margin-top:14px}
+.card .res{font-size:10px;color:var(--t40);letter-spacing:.14em}
+.card .go{font-family:var(--disp);font-size:10px;letter-spacing:.24em;color:var(--acid)}
+/* mini art strips */
+.art{height:96px;margin-top:14px;position:relative;overflow:hidden}
+.art .ring{position:absolute;left:26px;top:50%;transform:translateY(-50%);width:86px;height:86px;border-radius:50%;border:5px solid rgba(127,216,255,.2);border-top-color:var(--ice)}
+.art .ring2{left:126px;width:56px;height:56px;border-width:4px;border-top-color:var(--acid);border-right-color:rgba(200,255,0,.35)}
+.art .bars{position:absolute;right:26px;top:50%;transform:translateY(-50%);display:flex;gap:7px;align-items:flex-end;height:70px}
+.art .bars i{width:9px;background:linear-gradient(180deg,var(--acid),var(--ice));box-shadow:0 0 6px var(--acid-dim)}
+.art .trace{position:absolute;left:210px;right:150px;top:50%;height:1px;background:linear-gradient(90deg,transparent,var(--ice),transparent);opacity:.5}
+.foot{margin-top:14px;display:flex;justify-content:space-between;font-size:9.5px;letter-spacing:.18em;color:var(--t40);padding:10px 6px 0}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="wrap">
+  <header class="mast bevel holo">
+    <div class="logo"><i></i><i></i></div>
+    <h1 class="disp">NEXUS<b>LINK</b></h1>
+    <div class="sp"></div>
+    <span class="tag">V4 DESIGN ROUND 2 · DIRECTION B</span>
+  </header>
+
+  <section class="hero bevel holo-b">
+    <div class="eyebrow">CHROME CYBERCORE</div>
+    <h2>BRUSHED CHROME ON<br>NEAR-BLACK <span class="ice">GRAPHITE.</span></h2>
+    <p>Y2K techno hardware: embossed neumorphic controls machined out of the chassis, frosted glass readout windows, holographic iridescent edge light on every rim, acid-lime and ice-blue instrumentation. Michroma wide technical display type over Kode Mono data. Not neon-on-navy — metal, glass and light.</p>
+    <div class="specs">
+      <div class="spec"><b>DISPLAY TYPE</b>MICHROMA</div>
+      <div class="spec"><b>DATA TYPE</b>KODE MONO</div>
+      <div class="spec"><b>ACCENTS</b>ACID #C8FF00 · ICE #7FD8FF</div>
+      <div class="spec"><b>SURFACES</b>GRAPHITE · CHROME · FROST</div>
+      <div class="spec"><b>SCREENS</b>3 + NAVIGATOR</div>
+    </div>
+  </section>
+
+  <div class="cards">
+    <a class="card bevel" href="dp1.html">
+      <span class="ck">DP-1 · 2560×1440</span>
+      <h3>COMMAND HUB</h3>
+      <p>Reactor centred on a frosted glass disc with a real drop shadow, knot watermark at 50% flood behind it. Ten embossed hub tiles with one live insight each, full utility strip below.</p>
+      <div class="art recess"><span class="ring"></span><span class="ring ring2"></span><span class="trace"></span><span class="bars"><i style="height:38px"></i><i style="height:56px"></i><i style="height:24px"></i><i style="height:64px"></i><i style="height:44px"></i></span></div>
+      <div class="bot"><span class="res">2560 × 1440</span><span class="go">OPEN →</span></div>
+    </a>
+    <a class="card bevel" href="dp2.html">
+      <span class="ck">DP-2 · 1920×1200</span>
+      <h3>BOARD SCHEMATIC</h3>
+      <p>78-node real inventory: 7900X with both CCDs and 12 cores, SPD5118 DIMMs, PCIe root and 14 bridges, B580 + Raphael, 2 NVMe, USB tree, PipeWire, NICs. Flow particles, thermal lens, hover bandwidth.</p>
+      <div class="art recess"><span class="bars" style="left:26px;right:auto"><i style="height:52px"></i><i style="height:30px"></i><i style="height:62px"></i><i style="height:20px"></i><i style="height:46px"></i><i style="height:58px"></i></span><span class="trace"></span><span class="ring" style="left:auto;right:60px"></span></div>
+      <div class="bot"><span class="res">1920 × 1200</span><span class="go">OPEN →</span></div>
+    </a>
+    <a class="card bevel" href="hdmi.html">
+      <span class="ck">HDMI-A-3 · 1920×1200</span>
+      <h3>WORKBENCH + PATCH BAY</h3>
+      <p>Window cards, agent sessions with state, process ledger in % of one core, repos with CI, day/week/month token ledger. Right side: jacks for network, audio routes, bluetooth, peripherals, clipboard, downloads.</p>
+      <div class="art recess"><span class="ring"></span><span class="bars"><i style="height:28px"></i><i style="height:60px"></i><i style="height:40px"></i><i style="height:52px"></i></span></div>
+      <div class="bot"><span class="res">1920 × 1200</span><span class="go">OPEN →</span></div>
+    </a>
+    <a class="card bevel" href="nav.html">
+      <span class="ck">OVERLAY · KEYBOARD FIRST</span>
+      <h3>NAVIGATOR</h3>
+      <p>Drill-down surface over a dimmed hub. Breadcrumbs, search-as-you-type, preview pane, action bar. Files (~ → projects → haze → Cargo.toml) and Processes sections. Arrows, Enter, Backspace, / all live.</p>
+      <div class="art recess"><span class="trace" style="left:26px"></span><span class="bars"><i style="height:34px"></i><i style="height:50px"></i><i style="height:26px"></i><i style="height:62px"></i><i style="height:42px"></i></span></div>
+      <div class="bot"><span class="res">1420 × 880 OVERLAY</span><span class="go">OPEN →</span></div>
+    </a>
+  </div>
+
+  <div class="foot"><span>DIRECTION B / CHROME CYBERCORE · SELF-CONTAINED · FONTS EMBEDDED</span><span>VALUES FROM hud-collect · tokens.json · recon/*.json</span></div>
+</div>
+<div class="scan"></div>
+</body>
+</html>

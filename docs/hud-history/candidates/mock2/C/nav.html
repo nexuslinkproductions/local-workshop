@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" data-size="2560x1440"><head><meta charset="utf-8">
+<title>Navigator · NEXUSLINK HUD v4 · C</title>
+<link rel="stylesheet" href="deck.css">
+<style>
+html,body{width:2560px;height:1440px}
+.backdrop{position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 0%, rgba(24,28,36,.55), rgba(9,11,15,.92) 74%)}
+.console{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:2246px;height:1246px;
+  display:flex;flex-direction:column;gap:16px;padding:30px 34px 26px}
+.toprail{display:flex;align-items:center;gap:20px;min-height:54px}
+.brand{display:flex;align-items:center;gap:14px;padding-right:18px}
+.brand .nameplate{font-size:19px;color:var(--ink)}
+#crumbs{flex:1;height:46px;display:flex;align-items:center;gap:6px;padding:0 18px;overflow:hidden}
+.crumb{font-family:'Share Tech Mono';font-size:14.5px;color:var(--amber);cursor:pointer;white-space:nowrap}
+.crumb.root{color:var(--ink2)}
+.crumb:hover{text-decoration:underline}
+.crumb-sep{color:var(--dim);font-family:'Share Tech Mono';font-size:13px}
+#searchwrap{position:relative;width:560px;height:46px;display:flex;align-items:center;gap:10px;padding:0 16px}
+#search{flex:1;background:none;border:0;outline:0;font-family:'Share Tech Mono';font-size:15px;color:var(--amber);caret-color:var(--amber);letter-spacing:.03em}
+#search::placeholder{color:#8d8471}
+.search-hint{font-family:'Tektur';font-size:10px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;white-space:nowrap}
+.main{flex:1;display:grid;grid-template-columns:252px 1fr 748px;gap:18px;min-height:0}
+.rail{display:flex;flex-direction:column;gap:12px}
+.secbtn{display:flex;align-items:center;gap:12px;padding:15px 16px;font-size:14px;color:var(--ink2)}
+.secbtn .nameplate{font-size:14px;color:var(--ink2)}
+.secbtn.sel{color:var(--amber)} .secbtn.sel .nameplate{color:var(--amber)}
+.railmeta{margin-top:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px;font-family:'Share Tech Mono';font-size:11.5px;color:var(--dim);line-height:1.75}
+.railmeta b{color:var(--ink2);font-weight:400}
+.listcol{display:flex;flex-direction:column;gap:12px;min-height:0}
+.listhead{display:flex;align-items:baseline;gap:14px;padding:0 4px}
+.listhead .path{font-family:'Share Tech Mono';font-size:13px;color:var(--etch);letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.listhead .count{margin-left:auto;font-family:'Tektur';font-size:10.5px;color:var(--dim);letter-spacing:.14em;white-space:nowrap}
+#list{flex:1;overflow:hidden;display:flex;flex-direction:column;gap:7px;padding:14px}
+.lrow{display:flex;align-items:center;gap:13px;height:44px;padding:0 13px;border-radius:9px;cursor:pointer;
+  background:linear-gradient(150deg,var(--raise-a),var(--raise-b));
+  box-shadow:4px 4px 9px var(--sh-soft), -3px -3px 7px rgba(255,255,255,.028), inset 0 1px 0 var(--edge2)}
+.lrow:hover{filter:brightness(1.13)}
+.lrow.sel{box-shadow:inset 4px 4px 9px rgba(0,0,0,.72), inset -2px -2px 5px rgba(255,255,255,.03), inset 0 0 0 1px rgba(255,176,84,.38);
+  background:linear-gradient(150deg,#171a20,#14161c)}
+.lrow .ico{width:24px;height:24px;border-radius:5px;flex:none;display:flex;align-items:center;justify-content:center;
+  font-family:'Tektur';font-size:9px;letter-spacing:.06em;color:var(--cyan);
+  background:#122020;box-shadow:inset 0 0 0 1px rgba(92,224,212,.28)}
+.lrow.file .ico{color:var(--amber);background:#231d12;box-shadow:inset 0 0 0 1px rgba(255,176,84,.26)}
+.lrow .nm{font-size:14.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lrow .mt{margin-left:auto;font-family:'Share Tech Mono';font-size:11.5px;color:var(--dim);white-space:nowrap}
+.lrow.sel .nm{color:var(--amber)}
+.empty{padding:26px;font-size:13px;color:var(--dim);font-family:'Share Tech Mono'}
+</style></head><body></body></html>
+<style>
+.prev{display:flex;flex-direction:column;gap:12px;min-height:0}
+.prev-h{display:flex;align-items:center;gap:12px;padding:0 4px;min-height:24px}
+.prev-h .nm{font-family:'Tektur';font-weight:600;font-size:14.5px;letter-spacing:.05em;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prevbody{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.prevfile{flex:1;margin:0;padding:18px 20px;overflow:hidden;font-family:'Share Tech Mono';
+  font-size:13px;line-height:1.72;color:var(--ink2);white-space:pre-wrap}
+.prevfile .ln{display:inline-block;width:2.2em;color:#8a8172;user-select:none}
+.prevdir{flex:1;margin:0;padding:22px 26px;display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.prevdir .big{font-size:20px;color:var(--ink)}
+.prevproc{flex:1;margin:0;padding:22px 26px;display:flex;flex-direction:column;gap:16px;overflow:hidden}
+.prevproc .hero{display:flex;align-items:baseline;gap:14px}
+.prevproc .hero .readout{font-size:56px}
+.actions{display:flex;gap:10px}
+.act{flex:1;padding:13px 8px;font-size:12px}
+.statusbar{display:flex;align-items:center;gap:16px;min-height:38px;padding:0 18px}
+#status{font-family:'Share Tech Mono';font-size:12.5px;color:var(--amber);letter-spacing:.02em;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.keys{margin-left:auto;display:flex;align-items:center;gap:14px;flex:none}
+.kb{display:flex;align-items:center;gap:6px;font-family:'Tektur';font-size:9.5px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;white-space:nowrap}
+</style>
+<div class="fx-scan"></div><div class="fx-grain"></div>
+<div class="backdrop"></div>
+<div class="console plate-raised" id="console">
+  <span class="scr tl"></span><span class="scr tr"></span><span class="scr bl"></span><span class="scr br"></span>
+  <div class="toprail">
+    <div class="brand"><canvas id="knot" style="width:38px;height:38px"></canvas><span class="nameplate">NAVIGATOR</span><span class="led cy blink"></span></div>
+    <div id="crumbs" class="well"></div>
+    <div id="searchwrap" class="well"><span class="tag" style="font-size:10px">find</span><input id="search" autocomplete="off" spellcheck="false" placeholder="search as you type"><span class="search-hint">press /</span></div>
+  </div>
+  <div class="main">
+    <div class="rail">
+      <div class="secbtn plate-raised" id="sec-files"><span class="led"></span><span class="nameplate">Files</span></div>
+      <div class="secbtn plate-raised" id="sec-procs"><span class="led cy"></span><span class="nameplate">Processes</span></div>
+      <div class="railmeta well">
+        <span><b>OmarchyLink</b> · omarchy 4.0.4-1</span>
+        <span>kernel 6.18.6-arch1-1 · 24T</span>
+        <span>78 devices · 13 flow sources</span>
+        <span>layout: us · asus-tuf-k7</span>
+      </div>
+    </div>
+    <div class="listcol">
+      <div class="listhead"><span class="path" id="listpath">/home/nexuslink</span><span class="count" id="listcount"></span></div>
+      <div id="list" class="well"></div>
+    </div>
+    <div class="prev">
+      <div class="prev-h"><span class="tag" id="prevtype" style="font-size:10px">preview</span><span class="nm" id="prevname">—</span></div>
+      <div id="prevbody" class="glass"></div>
+      <div class="actions" id="actions"></div>
+    </div>
+  </div>
+  <div class="statusbar well">
+    <span class="led gr" style="width:7px;height:7px"></span><span id="status">ready</span>
+    <div class="keys">
+      <span class="kb"><span class="key">↑</span><span class="key">↓</span> move</span>
+      <span class="kb"><span class="key">→</span><span class="key">⏎</span> open</span>
+      <span class="kb"><span class="key">←</span><span class="key">⌫</span> back</span>
+      <span class="kb"><span class="key">/</span> search</span>
+      <span class="kb"><span class="key">esc</span> clear</span>
+    </div>
+  </div>
+</div>
+<script src="knot.js"></script>
+<script>
+const F = (n,s,t)=>({n,s,t});
+const FS = {
+ '~': {dirs:['Applications','Documents','Downloads','Music','October','Pictures','projects','Projects','Videos','Work'], files:[]},
+ 'projects': {dirs:['astralmon','cursor-plugins','haze','hud-target'], files:[]},
+ 'Projects': {dirs:['NEXUS_AI_CENTER'], files:[]},
+ 'astralmon': {dirs:['android','config','docker','docs','include','kde','packaging','src','systemd','tests','udev'],
+   files:[F('CMakeLists.txt','9.1K','txt'),F('HARDWARE.md','2.9K','md'),F('HOWTO.md','1.1K','md'),F('LICENSE','34K','txt'),F('PRIVACY.md','0.8K','md'),F('README.md','3.4K','md'),F('VERSIONS','0.1K','txt')]},
+ 'cursor-plugins': {dirs:['pstack'], files:[F('README.md','1.8K','md')]},
+ 'haze': {dirs:['crates','dev','docs','fixtures','installer','lean-rework','node_modules'],
+   files:[F('AGENTS.md','4.2K','md'),F('README.md','1.9K','md'),F('app-icon.svg','0.9K','svg'),F('Cargo.lock','225K','txt'),F('Cargo.toml','0.5K','txt'),F('CLAUDE.md','11B','md'),F('deny.toml','3.7K','txt'),F('Dockerfile','3.1K','txt'),F('index.html','5.6K','html'),F('mise.local.toml','20B','txt'),F('nixpacks.toml','81B','txt'),F('osv-scanner.toml','?','txt'),F('package.json','?','json')]},
+ 'hud-target': {dirs:['release'], files:[F('CACHEDIR.TAG','43B','txt')]},
+};
+const TXT = {
+ 'haze/README.md':'# Haze\n\n**The unified workspace where agents and humans work together.**\n\nHaze is a Tauri 2 desktop app (Rust shell + React 19 frontend) for teams that\nbuild with AI agents: chat with an orchestrator that spawns parallel sub-agents,\nrun a full coding ADE against a local repo, design screens on a canvas, and keep\nteam work (messages, boards) in the same shell.\n\n**Version:** `0.1.0` (pre-release) · **Identifier:** `ai.legionedge.haze`',
+ 'haze/AGENTS.md':'# AGENTS.md - Haze-Desktop\n\nHaze-Desktop is an agent harness: a Tauri 2 + React 19 desktop app whose\nproduct IS an agent runtime: three agent loops, an approval-gate model,\nloop guards, sub-agent fan-out, and the YURI memory/knowledge-graph layer.\nThis file is the L0 router (ICM): it tells you where you are and what to\nload. It never carries content that a deeper file owns.',
+ 'haze/Cargo.toml':'[workspace]\nresolver = "2"\nmembers = [\n    "src-tauri",\n    "src-tauri/crates/haze-proto",\n    "src-tauri/crates/haze-mcp",\n    "src-tauri/crates/haze-proc",\n    "src-tauri/crates/haze-rpc",\n    "src-tauri/crates/haze-harness",\n    "src-tauri/crates/haze-browser",\n    "src-tauri/crates/haze-computer",\n    "crates/haze-api",\n    "installer",\n]',
+ 'haze/CLAUDE.md':'@AGENTS.md',
+ 'astralmon/README.md':'# astralmon\n\nFull-telemetry monitor for the **ASUS ROG Astral GeForce RTX 5090** on Linux —\nevery NVML channel the driver exposes, plus the board\'s ASUS-specific per-pin\n12V-2x6 power delivery sensors (IT8915FN, "Power Detector+"), read over the\ngpu\'s own I2C bus — and, if one is fitted, a **Thermal Grizzly WireView Pro II**\non the cable, which measures the same six pins from the other side of the\nconnector and reports the connector\'s own temperature. Styled as a spaceship',
+ 'astralmon/HARDWARE.md':'# HARDWARE.md — IT8915FN / "Power Detector+" I2C protocol notes\n\nThese findings must survive independently of the code. Sources: Timic3\'s\n`astral-power-monitoring` Rust PoC (Windows/NVAPI), LibreHardwareMonitor\nPR #2168 (C#), the LACT issue #906 Linux write-up — plus first-hand probing\nrecorded at the bottom.',
+ 'astralmon/HOWTO.md':'# astralmon — HOWTO\n\nA practical guide from zero to a live bridge console. For the hardware\nprotocol details see [HARDWARE.md](HARDWARE.md); for the project overview see\n[README.md](README.md).',
+ 'cursor-plugins/README.md':'# Cursor plugins\n\nOfficial Cursor plugins for popular developer tools, frameworks, and SaaS\nproducts. Each plugin is a standalone directory at the repository root with\nits own `.cursor-plugin/plugin.json` manifest.\n\n## Plugins',
+ 'hud-target/CACHEDIR.TAG':'Signature: 8a477f597d28d452dc41b7dd5e1ba1c9\n#\n# This file is a cache directory tag created by borgbackup.\n#\n# Such files are automatically recognized by borg to not be backed up.',
+};
+const PROCS = [
+ {n:'devin', cpu:216, pid:1450589, st:'5 ACP windows · 12 session locks', note:'Devin desktop · heavy'},
+ {n:'quickshell', cpu:141, pid:1871285, st:'HUD host · baseline 76.4% (30 s)', note:'quickshell 4.0.4 · wlr bottom layer'},
+ {n:'electron', cpu:115, pid:1995212, st:'renderer · discord client', note:'chromium embedded'},
+ {n:'opencode', cpu:97, pid:2047893, st:'TUI · 3 sessions', note:'opencode 1.2.3 · glm-5-3'},
+ {n:'october-desktop', cpu:38, pid:1617900, st:'Electron shell', note:'october desktop app'},
+ {n:'chromium', cpu:18, pid:1833644, st:'Cal.com Video — Chromium', note:'ws1 · HDMI-A-3'},
+];
+</script>
+<script>
+const $ = id => document.getElementById(id);
+let sec = 'files';            // 'files' | 'procs'
+let trail = [];               // path below ~ as name segments
+let sel = 0;
+let q = '';
+const HOME = '/home/nexuslink';
+
+const cur = () => trail.length ? trail[trail.length-1] : '~';
+const curNode = () => FS[cur()] || {dirs:[], files:[]};
+const absPath = () => sec==='procs' ? 'processes' : HOME + (trail.length ? '/' + trail.join('/') : '');
+const FLAT = [];
+(function flatten(prefix, name){
+  const p = prefix + (prefix ? '/' : '') + name;
+  const node = FS[name];
+  FLAT.push({n: name, path: p, kind: 'dir'});
+  if (!node) return;
+  node.dirs.forEach(d => flatten(p, d));
+  node.files.forEach(f => FLAT.push({n: f.n, s: f.s, t: f.t, path: p + '/' + f.n, kind: 'file'}));
+})('', '~');
+const entries = () => {
+  if (sec === 'procs') return PROCS.map(p=>({...p, kind:'proc'}));
+  if (q){
+    const needle = q.toLowerCase();
+    return FLAT.filter(e => e.path.toLowerCase().includes(needle));
+  }
+  const node = curNode();
+  return [...node.dirs.map(d=>({n:d, kind:'dir'})), ...node.files.map(f=>({...f, kind:'file'}))];
+};
+
+function render(){
+  const list = entries();
+  if (sel >= list.length) sel = Math.max(0, list.length-1);
+  $('listpath').textContent = absPath() + (q ? '  ·  filter: "'+q+'"' : '');
+  $('listcount').textContent = list.length + ' items';
+  const L = $('list'); L.innerHTML = '';
+  if (!list.length){ const d=document.createElement('div'); d.className='empty';
+    d.textContent = q ? 'no matches' : 'empty directory'; L.appendChild(d); }
+  list.forEach((e,i)=>{
+    const r=document.createElement('div');
+    r.className='lrow'+(e.kind==='file'?' file':'')+(i===sel?' sel':'');
+    const ico = e.kind==='proc' ? 'PID' : e.kind==='dir' ? 'DIR' : (e.t||'txt').toUpperCase().slice(0,4);
+    r.innerHTML = '<span class="ico">'+ico+'</span><span class="nm">'+e.n+'</span><span class="mt">'+mt(e)+'</span>';
+    r.onclick = ()=>{ sel=i; render(); };
+    r.ondblclick = ()=>{ sel=i; activate(); };
+    L.appendChild(r);
+  });
+  renderCrumbs(); renderPreview(list[sel]);
+}
+const mt = e => e.kind==='proc' ? e.cpu+'% of one core · '+e.pid
+  : (q && e.path) ? e.path
+  : e.kind==='dir' ? ((FS[e.n]?.dirs.length||0)+(FS[e.n]?.files.length||0))+' items'
+  : (e.s||'') ;
+
+function renderCrumbs(){
+  const C = $('crumbs'); C.innerHTML='';
+  const mk = (label, depth, cls)=>{
+    const s=document.createElement('span'); s.className='crumb '+(cls||''); s.textContent=label;
+    s.onclick=()=>{ trail = trail.slice(0, depth); sel=0; q=''; $('search').value=''; render(); };
+    C.appendChild(s);
+  };
+  if (sec==='procs'){ mk('processes', 0, 'root'); return; }
+  mk('~', 0, 'root');
+  trail.forEach((t,i)=>{
+    const sep=document.createElement('span'); sep.className='crumb-sep'; sep.textContent='/'; C.appendChild(sep);
+    mk(t, i+1);
+  });
+}
+
+function renderPreview(e){
+  const P = $('prevbody'); const A = $('actions'); A.innerHTML='';
+  $('prevname').textContent = e ? e.n : '—';
+  $('prevtype').textContent = e ? (e.kind==='proc'?'process':e.kind==='dir'?'directory':'file · '+(e.t||'txt')) : 'preview';
+  P.innerHTML=''; P.className='glass';
+  if (!e){ P.innerHTML='<div class="empty" style="padding:30px">nothing selected</div>'; return; }
+  if (e.kind==='proc'){
+    P.classList.add('prevproc');
+    P.innerHTML = '<div class="hero"><span class="readout">'+e.cpu+'</span><span class="tag" style="font-size:12px">% of one core</span></div>'
+      +'<div class="kv"><span>pid</span><b class="mono">'+e.pid+'</b></div>'
+      +'<div class="kv"><span>state</span><b class="mono">'+e.st+'</b></div>'
+      +'<div class="kv"><span>note</span><b class="mono">'+e.note+'</b></div>';
+    act(A,'focus','hyprctl dispatch focuswindow title:'+e.n);
+    act(A,'inspect','ps -p '+e.pid+' -o pid,pcpu,pmem,etime,comm');
+  } else if (e.kind==='dir'){
+    const node = FS[e.n]||{dirs:[],files:[]};
+    P.classList.add('prevdir');
+    const pdir = (q && e.path) ? e.path : absPath()+'/'+e.n;
+    P.innerHTML = '<div class="big">'+e.n+'/</div>'
+      +'<div class="kv"><span>entries</span><b class="mono">'+(node.dirs.length+node.files.length)+'</b></div>'
+      +'<div class="kv"><span>subdirs</span><b class="mono">'+node.dirs.length+'</b></div>'
+      +'<div class="kv"><span>path</span><b class="mono" style="font-size:11.5px">'+pdir+'</b></div>';
+    act(A,'open','nautilus '+HOME+pdir.replace('~',''));
+    act(A,'terminal here','alacritty --working-directory '+HOME+pdir.replace('~',''));
+    act(A,'copy path','wl-copy '+HOME+pdir.replace('~',''));
+  } else {
+    const key = (q && e.path) ? e.path.slice(2) : (trail.length ? trail.join('/')+'/'+e.n : e.n);
+    const dirOf = (q && e.path) ? e.path.split('/').slice(0,-1).join('/') : absPath();
+    const segs = key.split('/');
+    const body = TXT[key] || TXT[segs.slice(-2).join('/')];
+    P.classList.add('prevfile');
+    if (body){
+      const lines = body.split('\n');
+      P.innerHTML = lines.map((l,i)=>'<span class="ln">'+String(i+1).padStart(2)+'</span>'
+        + l.replace(/&/g,'&amp;').replace(/</g,'&lt;')).join('\n');
+    } else {
+      P.innerHTML = '<span style="color:#8d8471">no text preview for this file type ('+(e.t||'txt')+')</span>';
+    }
+    const full = HOME+'/'+key;
+    act(A,'open','xdg-open '+full);
+    act(A,'terminal here','alacritty --working-directory '+full.slice(0, full.lastIndexOf('/')));
+    act(A,'copy path','wl-copy '+full);
+    act(A,'reveal','nautilus -s '+full);
+  }
+}
+function act(A,label,cmd){
+  const b=document.createElement('button'); b.className='pbtn act'; b.textContent=label;
+  b.onclick=()=>{ $('status').textContent = '$ '+cmd; };
+  A.appendChild(b);
+}
+
+function canDescend(e){
+  if (q && e.path){ const segs = e.path.split('/'); const parent = segs[segs.length-2];
+    return !!(FS[parent] && FS[parent].dirs.includes(e.n)); }
+  return curNode().dirs.includes(e.n);
+}
+function activate(){
+  const list = entries(); const e = list[sel]; if(!e) return;
+  if (e.kind==='proc'){ $('status').textContent = 'inspect pid '+e.pid+' · '+e.n; return; }
+  if (e.kind==='dir' && canDescend(e)){
+    trail = (q && e.path) ? e.path.split('/').slice(1) : [...trail, e.n];
+    sel=0; q=''; $('search').value=''; $('search').blur(); render();
+    $('status').textContent = 'entered '+absPath();
+  } else if (e.kind==='file'){
+    $('status').textContent = 'previewing '+e.n;
+  } else if (q && e.path){
+    $('status').textContent = 'cannot enter '+e.path+' (not modelled)';
+  }
+}
+function up(){ if (trail.length){ trail.pop(); sel=0; q=''; $('search').value=''; render();
+  $('status').textContent = 'back to '+absPath(); } }
+
+document.addEventListener('keydown', ev=>{
+  const typing = document.activeElement === $('search');
+  if (ev.key === '/'){ if(!typing){ ev.preventDefault(); $('search').focus(); } return; }
+  if (ev.key === 'Escape'){ $('search').blur(); if(q){ q=''; $('search').value=''; sel=0; render(); } return; }
+  if (ev.key==='ArrowDown'){ ev.preventDefault(); sel=Math.min(sel+1, entries().length-1); render(); return; }
+  if (ev.key==='ArrowUp'){ ev.preventDefault(); sel=Math.max(sel-1,0); render(); return; }
+  if (ev.key==='Enter'){ ev.preventDefault(); activate(); return; }
+  if (typing) return;
+  if (ev.key==='ArrowRight'){ ev.preventDefault(); activate(); }
+  else if (ev.key==='ArrowLeft' || ev.key==='Backspace'){ ev.preventDefault(); up(); }
+});
+$('search').addEventListener('input', ()=>{ q=$('search').value; sel=0; render(); });
+$('sec-files').onclick = ()=>{ sec='files'; trail=[]; sel=0; q=''; $('search').value='';
+  $('sec-files').classList.add('sel'); $('sec-procs').classList.remove('sel'); render(); };
+$('sec-procs').onclick = ()=>{ sec='procs'; trail=[]; sel=0; q=''; $('search').value='';
+  $('sec-procs').classList.add('sel'); $('sec-files').classList.remove('sel'); render(); };
+
+const kv=$('knot'); drawKnot(kv,3,0.55); kv.style.width='38px'; kv.style.height='38px';
+$('sec-files').classList.add('sel');
+render();
+$('status').textContent = HOME+' · '+entries().length+' entries · type / to search';
+</script>
+</body></html>

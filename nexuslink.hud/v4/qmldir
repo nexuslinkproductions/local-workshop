@@ -1,0 +1,28 @@
+module NexusHud.V4
+# LANE-T-BEGIN (Topology/FlowBus singletons — other lanes append below/above)
+singleton Topology 1.0 Topology.qml
+singleton FlowBus 1.0 FlowBus.qml
+# LANE-T-END
+# LANE-S-BEGIN (style singletons + chrome components)
+singleton Style 1.0 Style.qml
+singleton Theme 1.0 Theme.qml
+GlassPane 1.0 GlassPane.qml
+EmbossedTile 1.0 EmbossedTile.qml
+Tag 1.0 Tag.qml
+ScanOverlay 1.0 ScanOverlay.qml
+KnotField 1.0 KnotField.qml
+# LANE-S-END
+# LANE-D/N-BEGIN (screens + shared dock — lane D1/D2/D3/N components)
+Navigator 1.0 Navigator.qml
+CommandHub 1.0 CommandHub.qml
+BoardView 1.0 BoardView.qml
+# LANE-B4: DP-2 second tab — OPS live system feed (hosted by BoardView)
+OpsView 1.0 OpsView.qml
+Workbench 1.0 Workbench.qml
+AppGrid 1.0 AppGrid.qml
+# LANE-W1: workbench DEVICES tab — glyph-drawn peripheral cards + vitals popover
+DeviceBay 1.0 DeviceBay.qml
+UtilityDock 1.0 UtilityDock.qml
+# LANE-G2: compact-dock media cell (album art body for UtilityDock)
+MediaCell 1.0 MediaCell.qml
+# LANE-D/N-END

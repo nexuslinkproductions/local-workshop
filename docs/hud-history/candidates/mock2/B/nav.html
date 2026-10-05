@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NAVIGATOR · CHROME CYBERCORE</title>
+<link rel="stylesheet" href="core.css">
+<style>
+body{width:1920px;height:1200px}
+/* dimmed host screen behind the overlay */
+.host{position:absolute;inset:0;padding:26px 34px;filter:brightness(.42) saturate(.7)}
+.host .fakebar{height:64px;display:flex;align-items:center;padding:0 22px;gap:20px}
+.host .faketiles{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:22px;height:300px}
+.scrim{position:absolute;inset:0;background:rgba(4,5,7,.55)}
+
+/* ---------- navigator overlay ---------- */
+.nav{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:1420px;height:880px;display:flex;flex-direction:column;overflow:hidden;
+}
+.nav .nh{flex:none;height:58px;display:flex;align-items:center;gap:16px;padding:0 20px;border-bottom:1px solid rgba(0,0,0,.6)}
+.nav .nh .nt{font-family:var(--disp);font-size:12px;letter-spacing:.3em;color:var(--txt)}
+.crumbs{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t55);min-width:0;overflow:hidden;white-space:nowrap}
+.crumbs b{color:var(--acid);font-weight:600}
+.crumbs .csep{color:var(--t40)}
+.nav .nh .sp{flex:1}
+.search{display:flex;align-items:center;gap:9px;width:340px;padding:8px 14px;font-size:12.5px}
+.search .slash{font-family:var(--disp);font-size:11px;color:var(--acid)}
+.search input{flex:1;background:none;border:none;outline:none;color:var(--txt);font-family:var(--mono);font-size:12.5px;min-width:0}
+.search input::placeholder{color:var(--t40)}
+
+.nav .nb{flex:1;display:grid;grid-template-columns:280px 1fr 400px;min-height:0}
+/* section rail */
+.rail{border-right:1px solid rgba(0,0,0,.55);padding:14px 12px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.sec{display:flex;align-items:center;gap:11px;padding:10px 14px;cursor:pointer;font-size:12px;color:var(--t70)}
+.sec .dot{width:7px;height:7px;border-radius:50%;background:var(--t40);flex:none}
+.sec.on{color:var(--acid);box-shadow:inset 0 2px 6px rgba(0,0,0,.75),inset 0 -1px 0 rgba(235,245,252,.08);background-color:#0d0f13;background-image:linear-gradient(180deg,#0a0c0f,#101318)}
+.sec.on .dot{background:var(--acid);box-shadow:0 0 7px var(--acid-dim)}
+.sec .sk{margin-left:auto;font-size:9px;color:var(--t40)}
+.rail .rh{font-family:var(--disp);font-size:9px;letter-spacing:.3em;color:var(--t55);padding:4px 14px 8px}
+.rail .rh2{font-size:9.5px;color:var(--t40);padding:0 14px;line-height:1.6}
+
+/* list */
+.list{overflow:hidden;padding:12px 14px;display:flex;flex-direction:column;gap:5px;min-height:0}
+.row{display:flex;align-items:center;gap:12px;padding:9px 14px;font-size:12.5px;color:var(--t70);cursor:pointer;flex:none;border-radius:7px}
+.row .ico{width:16px;flex:none;text-align:center;color:var(--ice);font-size:11px}
+.row .meta{margin-left:auto;font-size:10px;color:var(--t40);flex:none;padding-left:14px}
+.row.sel{background-color:#161a20;background-image:linear-gradient(180deg,var(--ink2),var(--ink));box-shadow:inset 0 1px 0 rgba(235,245,252,.22),inset 0 -1px 0 rgba(0,0,0,.65),0 0 0 1px rgba(200,255,0,.35);color:var(--txt)}
+.row.sel .meta{color:var(--t55)}
+.row .match{color:var(--acid);font-weight:600}
+
+/* preview */
+.prev{border-left:1px solid rgba(0,0,0,.55);display:flex;flex-direction:column;min-height:0}
+.prev .pv{flex:1;margin:14px;padding:16px 18px;overflow:hidden;font-size:11.5px;line-height:1.62;color:var(--t70);white-space:pre-wrap}
+.prev .pv .k{color:var(--ice)} .prev .pv .s{color:var(--acid)} .prev .pv .c{color:var(--t40)}
+.prev .ph2{flex:none;margin:0 14px 14px;padding:11px 16px;font-size:11px;color:var(--t55)}
+.prev .ph2 b{color:var(--txt);font-weight:600}
+/* action bar */
+.acts{flex:none;display:flex;gap:9px;padding:12px 14px;border-top:1px solid rgba(0,0,0,.6)}
+.act{flex:1;padding:10px 8px;text-align:center;font-size:10.5px;letter-spacing:.1em;color:var(--t70);cursor:pointer;white-space:nowrap}
+.act b{display:block;font-family:var(--disp);font-size:9px;color:var(--t40);margin-top:4px;font-weight:400;letter-spacing:.18em}
+.act.pri{color:var(--acid)}
+.act:hover{color:var(--txt);box-shadow:inset 0 1px 0 rgba(235,245,252,.3),inset 0 -1px 0 rgba(0,0,0,.65),0 2px 8px rgba(0,0,0,.6)}
+
+/* footer keymap */
+.nf{flex:none;height:44px;display:flex;align-items:center;gap:22px;padding:0 20px;font-size:10px;color:var(--t55);border-top:1px solid rgba(0,0,0,.6)}
+.nf b{font-family:var(--disp);font-weight:400;color:var(--ice);font-size:9px;margin-right:5px}
+.nf .sp{flex:1}
+.nf .cnt{color:var(--t40)}
+</style>
+</head>
+<body>
+<div class="field"></div>
+
+<!-- ghost of the host hub behind -->
+<div class="host">
+  <div class="fakebar bevel"><span class="disp" style="font-size:15px;letter-spacing:.4em">NEXUS<span class="t-acid">LINK</span></span><span class="t-dim" style="font-size:10px;letter-spacing:.2em">COMMAND HUB · DP-1</span></div>
+  <div class="faketiles">
+    <div class="emboss" data-overlap-ok></div><div class="emboss" data-overlap-ok></div><div class="emboss" data-overlap-ok></div>
+  </div>
+</div>
+<div class="scrim"></div>
+
+<!-- ================= NAVIGATOR ================= -->
+<div class="nav bevel holo" id="nav">
+  <div class="nh">
+    <span class="nt">NAVIGATOR</span>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="sp"></div>
+    <div class="search recess"><span class="slash">/</span><input id="q" placeholder="type to filter…" autocomplete="off"></div>
+  </div>
+
+  <div class="nb">
+    <div class="rail" id="rail">
+      <div class="rh">SECTIONS</div>
+      <div class="sec emboss" data-sec="files"><span class="dot"></span>Files<span class="sk">F1</span></div>
+      <div class="sec emboss" data-sec="proc"><span class="dot"></span>Processes<span class="sk">F2</span></div>
+      <div class="sec emboss" data-sec="agents"><span class="dot"></span>Agents<span class="sk">F3</span></div>
+      <div class="sec emboss" data-sec="repos"><span class="dot"></span>Repos / CI<span class="sk">F4</span></div>
+      <div class="sec emboss" data-sec="tokens"><span class="dot"></span>Tokens<span class="sk">F5</span></div>
+      <div class="sec emboss" data-sec="devices"><span class="dot"></span>Devices<span class="sk">F6</span></div>
+      <div class="rh" style="margin-top:10px">CONTEXT</div>
+      <div class="rh2" id="ctx">~ · 10 items live</div>
+    </div>
+    <div class="list" id="list"></div>
+    <div class="prev">
+      <div class="pv glass" id="pv"></div>
+      <div class="ph2 recess" id="pinfo"></div>
+      <div class="acts" id="acts"></div>
+    </div>
+  </div>
+
+  <div class="nf">
+    <span><b>↑↓</b>MOVE</span><span><b>ENTER</b>OPEN / DRILL</span><span><b>BKSP</b>UP</span><span><b>/</b>SEARCH</span><span><b>ESC</b>CLEAR / CLOSE</span>
+    <div class="sp"></div><span class="cnt" id="cnt"></span>
+  </div>
+</div>
+<div class="scan"></div>
+
+<script>
+/* =============== data: real paths from this machine =============== */
+const FS={
+ '':{label:'~',items:[
+  {n:'Applications',k:'dir'},{n:'Documents',k:'dir'},{n:'Downloads',k:'dir'},{n:'Music',k:'dir'},
+  {n:'October',k:'dir'},{n:'Pictures',k:'dir'},{n:'projects',k:'dir'},{n:'Projects',k:'dir'},
+  {n:'Videos',k:'dir'},{n:'Work',k:'dir'}]},
+ 'projects':{label:'~/projects',items:[
+  {n:'astralmon',k:'dir'},{n:'cursor-plugins',k:'dir'},{n:'haze',k:'dir'},{n:'hud-target',k:'dir'}]},
+ 'projects/haze':{label:'~/projects/haze',items:[
+  {n:'AGENTS.md',k:'file',sz:'4.1K'},{n:'app-icon.svg',k:'file',sz:'2.8K'},{n:'Cargo.lock',k:'file',sz:'212K'},
+  {n:'Cargo.toml',k:'file',sz:'1.9K'},{n:'CLAUDE.md',k:'file',sz:'3.3K'},{n:'crates',k:'dir'},
+  {n:'deny.toml',k:'file',sz:'1.2K'},{n:'dev',k:'dir'},{n:'Dockerfile',k:'file',sz:'840B'},
+  {n:'docs',k:'dir'}]},
+};
+const PREVIEWS={
+ 'projects/haze/Cargo.toml':
+`<span class="c"># ~/projects/haze/Cargo.toml</span>
+[<span class="k">package</span>]
+name = <span class="s">"haze"</span>
+version = <span class="s">"1.4.0"</span>
+edition = <span class="s">"2021"</span>
+description = <span class="s">"Haze agent team runtime"</span>
+
+[<span class="k">dependencies</span>]
+tokio = { version = <span class="s">"1.41"</span>, features = [<span class="s">"full"</span>] }
+serde = { version = <span class="s">"1.0"</span>, features = [<span class="s">"derive"</span>] }
+serde_json = <span class="s">"1.0"</span>
+clap = { version = <span class="s">"4.5"</span>, features = [<span class="s">"derive"</span>] }
+tracing = <span class="s">"0.1"</span>
+
+[<span class="k">workspace</span>]
+members = [<span class="s">"crates/*"</span>]`,
+ 'projects/haze/AGENTS.md':
+`<span class="c"># ~/projects/haze/AGENTS.md</span>
+
+Haze workspace router.
+
+<span class="k">## Where things live</span>
+  VERSIONS/BETA     working line (v1.4.0)
+  VERSIONS/RELEASE  tagged releases
+  docs/             ADRs + glossary
+
+<span class="k">## Rules</span>
+- launch sessions from a version folder
+- never edit RELEASE after tag
+- collector keys are additive-only`,
+};
+const PROC=[
+ {n:'electron',cpu:99,mem:'2.1G',st:'Sl',pid:4120},{n:'quickshell',cpu:89,mem:'486M',st:'Sl',pid:1871285},
+ {n:'electron',cpu:70,mem:'1.4G',st:'Sl',pid:4188},{n:'opencode',cpu:43,mem:'812M',st:'Sl',pid:220114},
+ {n:'opencode',cpu:39,mem:'790M',st:'Sl',pid:220587},{n:'october-desktop',cpu:32,mem:'1.2G',st:'Sl',pid:88123},
+ {n:'electron',cpu:22,mem:'655M',st:'Sl',pid:4301},{n:'devin-desktop',cpu:14,mem:'1.8G',st:'Sl',pid:55401},
+ {n:'chromium',cpu:11,mem:'2.9G',st:'Sl',pid:3310},{n:'Hyprland',cpu:7,mem:'388M',st:'Ss',pid:1204},
+ {n:'next-server',cpu:6,mem:'702M',st:'Sl',pid:1697452},{n:'pipewire',cpu:3,mem:'44M',st:'S<sl',pid:1550}];
+const AGENTS=[
+ {n:'devin',st:'LIVE',cls:'live',cpu:237,procs:29,note:'5 acp · 4 live locks: abrupt-howler, cottony-owner…'},
+ {n:'opencode',st:'LIVE',cls:'live',cpu:87,procs:6,note:'hud v4 lane B · 58 sessions in db'},
+ {n:'october-desktop',st:'LIVE',cls:'live',cpu:32,procs:7,note:'ws 4 · bus-bridge :36229'},
+ {n:'hermes',st:'IDLE',cls:'idle',cpu:0,procs:0,note:'3 cron jobs disabled · kanban empty'},
+ {n:'claude / codex',st:'WAIT',cls:'wait',cpu:0,procs:0,note:'installed via mise · no local feed'}];
+const REPOS=[
+ {n:'haze',d:'dirty ×2',ah:'behind 1',ci:'✗ Security 14:07Z',fail:1},
+ {n:'cursor-plugins',d:'dirty ×1',ah:'0/0',ci:'— no ci'},
+ {n:'astralmon',d:'clean',ah:'0/0',ci:'— no ci'},
+ {n:'AURICLE',d:'clean',ah:'main',ci:'✓ push 3h30m ago'},
+ {n:'PRs in haze',d:'#245 #244 #243 #225',ah:'4 open',ci:'0 review-requested'}];
+const TOKENS=[
+ {n:'devin',day:'160.6M in / 36.2M out',wk:'160.6M / 36.2M',mo:'170.1M / 38.0M'},
+ {n:'opencode',day:'52.3M in · $0.23',wk:'52.3M · $0.23',mo:'65.5M · $0.37'},
+ {n:'haze team',day:'0',wk:'0',mo:'489.3M / 2.1M · 73 msg'},
+ {n:'claude',day:'no local feed',wk:'—',mo:'—'},
+ {n:'codex',day:'ready · 0',wk:'0',mo:'0'},
+ {n:'fireworks',day:'unavailable',wk:'—',mo:'—'}];
+const DEVICES=[
+ {n:'G502 X PLUS',v:'94% discharging',s:'usb 6-6.3 · hidpp'},
+ {n:'Razer Kiyo',v:'cam + mic live',s:'usb 6-6.1 · uvcvideo'},
+ {n:'ASUS TUF K7',v:'EN-US',s:'usb 6-6.4 · event13/14'},
+ {n:'Corsair Slipstream',v:'sink 95% · mic LIVE',s:'usb 6-6.2'},
+ {n:'MSI MYSTIC LIGHT',v:'rgb controller',s:'usb 6-7'},
+ {n:'MT7922 BT',v:'hci0 · 0 paired',s:'usb 6-8 · btusb'},
+ {n:'DataTraveler 3.0',v:'OMARCHY_202609 100%',s:'usb 7-3 · sda'}];
+
+/* =============== state =============== */
+let sec='files', path='', q='', sel=0, procSel=0;
+const $=id=>document.getElementById(id);
+
+function fileItems(){
+  const node=FS[path]||{items:[]};
+  let it=node.items;
+  if(q)it=it.filter(i=>i.n.toLowerCase().includes(q.toLowerCase()));
+  return it;
+}
+function hi(name){
+  if(!q)return name;
+  const i=name.toLowerCase().indexOf(q.toLowerCase());
+  if(i<0)return name;
+  return name.slice(0,i)+'<span class="match">'+name.slice(i,i+q.length)+'</span>'+name.slice(i+q.length);
+}
+
+function render(){
+  /* crumbs */
+  const CR={files:'<b>FILES</b> <span class="csep">/</span> '+(path?path.split('/').join(' <span class="csep">›</span> '):'~'),
+    proc:'<b>PROCESSES</b> <span class="csep">/</span> by cpu',
+    agents:'<b>AGENTS</b> <span class="csep">/</span> live sessions',
+    repos:'<b>REPOS / CI</b> <span class="csep">/</span> ~/projects',
+    tokens:'<b>TOKENS</b> <span class="csep">/</span> provider ledger',
+    devices:'<b>DEVICES</b> <span class="csep">/</span> usb tree'};
+  $('crumbs').innerHTML=CR[sec];
+  /* rail */
+  document.querySelectorAll('.sec').forEach(s=>s.classList.toggle('on',s.dataset.sec===sec));
+  /* list */
+  const L=$('list');
+  if(sec==='files'){
+    const it=fileItems();
+    sel=Math.max(0,Math.min(sel,it.length-1));
+    L.innerHTML=it.map((f,i)=>
+      `<div class="row${i===sel?' sel':''}" data-i="${i}">
+        <span class="ico">${f.k==='dir'?'▣':'▤'}</span>${hi(f.n)}
+        <span class="meta">${f.k==='dir'?'dir':f.sz}</span></div>`).join('')||
+      '<div class="row"><span class="t-faint">no matches</span></div>';
+    $('cnt').textContent=it.length+' items · '+(FS[path]?FS[path].label:'~');
+    const f=it[sel];
+    if(f){previewFile(f)}else{$('pv').innerHTML='';$('pinfo').innerHTML='';$('acts').innerHTML=''}
+  }else if(sec==='proc'){
+    procSel=Math.max(0,Math.min(procSel,PROC.length-1));
+    L.innerHTML=PROC.map((p,i)=>
+      `<div class="row${i===procSel?' sel':''}" data-i="${i}">
+        <span class="ico">◈</span>${p.n}
+        <span class="meta num">${p.cpu}% of one core</span></div>`).join('');
+    $('cnt').textContent=PROC.length+' processes · sorted by cpu';
+    previewProc(PROC[procSel]);
+  }else if(sec==='agents'){
+    L.innerHTML=AGENTS.map((a,i)=>
+      `<div class="row${i===0?' sel':''}" data-i="${i}">
+        <span class="ico">◉</span>${a.n}
+        <span class="meta"><span class="st ${a.cls}" style="padding:1px 7px;border-radius:8px;font-size:9px">${a.st}</span> ${a.cpu}% · ${a.procs} procs</span></div>`).join('');
+    $('cnt').textContent='5 agent classes · 42 procs';
+    const a=AGENTS[0];
+    $('pv').innerHTML=`<span class="c"># agent detail</span>\nname   <span class="s">${a.n}</span>\nstate  <span class="k">${a.st}</span>\ncpu    <span class="s">${a.cpu}% of one core</span>\nprocs  <span class="k">${a.procs}</span>\n\n<span class="c"># ${a.note}</span>`;
+    $('pinfo').innerHTML=`cpu <b>${a.cpu}%</b> · procs <b>${a.procs}</b>`;
+    $('acts').innerHTML=`<div class="act emboss pri">FOCUS<b>ENTER</b></div><div class="act emboss">SESSIONS<b>S</b></div><div class="act emboss">LOGS<b>L</b></div>`;
+  }else if(sec==='repos'){
+    L.innerHTML=REPOS.map((r,i)=>
+      `<div class="row${i===0?' sel':''}" data-i="${i}">
+        <span class="ico">▦</span>${r.n}
+        <span class="meta">${r.d} · ${r.ah} · <span style="color:${r.fail?'var(--alert)':'var(--acid)'}">${r.ci}</span></span></div>`).join('');
+    $('cnt').textContent='4 repos + pr queue · ~/projects';
+    const r=REPOS[0];
+    $('pv').innerHTML=`<span class="c"># repo detail</span>\nname   <span class="s">${r.n}</span>\nstate  <span class="k">${r.d} · ${r.ah}</span>\nci     <span class="s">${r.ci}</span>\n\n<span class="c"># git-repos recon lane</span>`;
+    $('pinfo').innerHTML=`<b>${r.d}</b> · ${r.ci}`;
+    $('acts').innerHTML=`<div class="act emboss pri">OPEN<b>ENTER</b></div><div class="act emboss">GIT LOG<b>G</b></div><div class="act emboss">CI RUNS<b>C</b></div>`;
+  }else if(sec==='tokens'){
+    L.innerHTML=TOKENS.map((t,i)=>
+      `<div class="row${i===0?' sel':''}" data-i="${i}">
+        <span class="ico">◍</span>${t.n}
+        <span class="meta num">${t.day}</span></div>`).join('');
+    $('cnt').textContent='6 providers · ledger 60 s pulse';
+    const t=TOKENS[0];
+    $('pv').innerHTML=`<span class="c"># provider ledger</span>\nprovider <span class="s">${t.n}</span>\nday      <span class="k">${t.day}</span>\nweek     <span class="k">${t.wk}</span>\nmonth    <span class="s">${t.mo}</span>\n\n<span class="c"># ~/.local/state/nexuslink/tokens.json</span>`;
+    $('pinfo').innerHTML=`today <b>${t.day}</b>`;
+    $('acts').innerHTML=`<div class="act emboss pri">LEDGER<b>ENTER</b></div><div class="act emboss">HISTORY<b>H</b></div><div class="act emboss">EXPORT<b>E</b></div>`;
+  }else{
+    L.innerHTML=DEVICES.map((d,i)=>
+      `<div class="row${i===0?' sel':''}" data-i="${i}">
+        <span class="ico">▨</span>${d.n}
+        <span class="meta">${d.v}</span></div>`).join('');
+    $('cnt').textContent='7 usb devices · 2 hubs';
+    const d=DEVICES[0];
+    $('pv').innerHTML=`<span class="c"># device detail</span>\nname   <span class="s">${d.n}</span>\nstate  <span class="k">${d.v}</span>\npath   <span class="k">${d.s}</span>\n\n<span class="c"># devices-bus.json usb tree</span>`;
+    $('pinfo').innerHTML=`<b>${d.v}</b> · ${d.s}`;
+    $('acts').innerHTML=`<div class="act emboss pri">INFO<b>ENTER</b></div><div class="act emboss">UDEVADM<b>U</b></div><div class="act emboss">EJECT<b>E</b></div>`;
+  }
+  L.querySelectorAll('.row').forEach(r=>r.onclick=()=>{
+    if(sec==='files')sel=+r.dataset.i;else procSel=+r.dataset.i;
+    render();enter();
+  });
+}
+
+function previewFile(f){
+  const full=(path?path+'/':'')+f.n;
+  if(f.k==='dir'){
+    $('pv').innerHTML=`<span class="c"># ~/${full}</span>\n\ndirectory — Enter to drill in`;
+    $('pinfo').innerHTML=`path <b>~/${full}</b> · type <b>dir</b>`;
+  }else{
+    $('pv').innerHTML=PREVIEWS[full]||`<span class="c"># ~/${full}</span>\n\n(binary or unindexed file — ${f.sz})`;
+    $('pinfo').innerHTML=`path <b>~/${full}</b> · size <b>${f.sz}</b>`;
+  }
+  $('acts').innerHTML=
+    `<div class="act emboss pri">OPEN<b>ENTER</b></div>
+     <div class="act emboss">TERMINAL HERE<b>T</b></div>
+     <div class="act emboss">COPY PATH<b>C</b></div>
+     <div class="act emboss">REVEAL<b>R</b></div>`;
+}
+function previewProc(p){
+  $('pv').innerHTML=
+`<span class="c"># process detail</span>
+name   <span class="s">${p.n}</span>
+pid    <span class="k">${p.pid}</span>
+state  <span class="k">${p.st}</span>
+cpu    <span class="s">${p.cpu}% of one core</span>
+rss    <span class="k">${p.mem}</span>
+
+<span class="c"># from /proc/${p.pid}/stat — collector proc lane</span>`;
+  $('pinfo').innerHTML=`pid <b>${p.pid}</b> · cpu <b>${p.cpu}%</b> · rss <b>${p.mem}</b>`;
+  $('acts').innerHTML=
+    `<div class="act emboss pri">FOCUS WINDOW<b>ENTER</b></div>
+     <div class="act emboss">NICE -5<b>N</b></div>
+     <div class="act emboss">SIGNAL TERM<b>K</b></div>
+     <div class="act emboss">OPEN /PROC<b>P</b></div>`;
+}
+
+function enter(){
+  if(sec!=='files')return;
+  const it=fileItems(),f=it[sel];
+  if(f&&f.k==='dir'&&FS[(path?path+'/':'')+f.n]){
+    path=(path?path+'/':'')+f.n;sel=0;q='';$('q').value='';render();
+  }
+}
+function up(){
+  if(q){q='';$('q').value='';sel=0;render();return}
+  if(!path)return;
+  path=path.split('/').slice(0,-1).join('/');sel=0;render();
+}
+
+document.addEventListener('keydown',e=>{
+  const typing=document.activeElement===$('q');
+  if(e.key==='/'&&!typing){e.preventDefault();$('q').focus();return}
+  if(e.key==='Escape'){
+    if(typing){$('q').blur();return}
+    if(q){q='';$('q').value='';sel=0;render()}return;
+  }
+  if(typing){
+    if(e.key==='Enter'){$('q').blur();enter()}
+    return;
+  }
+  if(e.key==='ArrowDown'){e.preventDefault();if(sec==='files')sel++;else procSel++;render()}
+  else if(e.key==='ArrowUp'){e.preventDefault();if(sec==='files')sel--;else procSel--;render()}
+  else if(e.key==='Enter'){enter()}
+  else if(e.key==='Backspace'){e.preventDefault();up()}
+  else if(e.key==='F1'){sec='files';render()}
+  else if(e.key==='F2'){sec='proc';render()}
+  else if(e.key==='F3'){sec='agents';render()}
+  else if(e.key==='F4'){sec='repos';render()}
+  else if(e.key==='F5'){sec='tokens';render()}
+  else if(e.key==='F6'){sec='devices';render()}
+});
+$('q').addEventListener('input',()=>{q=$('q').value;sel=0;render()});
+document.querySelectorAll('.sec').forEach(s=>s.onclick=()=>{sec=s.dataset.sec;render()});
+render();
+</script>
+</body>
+</html>

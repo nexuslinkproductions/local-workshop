@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" data-size="2560x1440"><head><meta charset="utf-8">
+<title>NEXUSLINK HUD v4 · C · Tactile Instrument Panel</title>
+<link rel="stylesheet" href="deck.css">
+<style>
+html,body{width:2560px;height:1440px}
+.stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
+.knot-bg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);opacity:.9;filter:drop-shadow(0 0 44px rgba(255,176,84,.07))}
+.masterplate{position:relative;width:1460px;padding:66px 84px 58px;display:flex;flex-direction:column;align-items:center;gap:26px}
+.ttl{display:flex;align-items:baseline;gap:26px}
+.ttl h1{font-family:'Tektur';font-weight:800;font-size:64px;letter-spacing:.06em;color:var(--ink);
+  text-shadow:0 2px 0 rgba(0,0,0,.6),0 0 34px rgba(255,176,84,.10)}
+.ttl .serial{font-size:26px}
+.sub{display:flex;align-items:center;gap:14px}
+.sub .readout{font-size:15px}
+.rationale{max-width:1080px;text-align:center;font-size:19px;line-height:1.65;color:var(--ink2)}
+.rationale b{color:var(--ink);font-weight:600}
+.screens{display:flex;gap:18px;margin-top:10px}
+.sc{width:328px;padding:16px 18px 14px;display:flex;flex-direction:column;gap:9px;cursor:pointer;text-decoration:none;color:inherit}
+.sc .who{display:flex;align-items:center;gap:9px}
+.sc .who .nameplate{font-size:14px;color:var(--ink)}
+.sc .desc{font-size:12.5px;line-height:1.5;color:var(--ink2)}
+.sc .dim{font-family:'Share Tech Mono';font-size:11px;color:var(--etch);letter-spacing:.06em}
+.sc:hover{box-shadow:9px 9px 20px var(--sh-dark), -6px -6px 14px rgba(255,255,255,.05), inset 0 1px 0 var(--edge)}
+.sc:hover .who .nameplate{color:var(--amber)}
+.specimen{margin-top:26px;display:flex;gap:34px;align-items:baseline}
+.specimen .sw{display:flex;flex-direction:column;gap:6px;align-items:center}
+.specimen .sw small{font-size:10px;color:var(--etch);letter-spacing:.14em;font-family:'Tektur';text-transform:uppercase}
+.sw-t{font-family:'Tektur';font-weight:700;font-size:21px;color:var(--ink)}
+.sw-c{font-size:18px;color:var(--ink2)}
+.sw-d{font-size:20px}
+.sw-m{font-family:'Share Tech Mono';font-size:17px;color:var(--ink2)}
+.swatches{display:flex;gap:12px;margin-top:4px}
+.swatches i{width:44px;height:16px;border-radius:5px;box-shadow:inset 0 1px 2px rgba(0,0,0,.5),0 2px 5px rgba(0,0,0,.45)}
+.footline{position:absolute;bottom:34px;left:0;right:0;display:flex;justify-content:center;gap:38px;
+  font-family:'Share Tech Mono';font-size:12px;color:var(--dim);letter-spacing:.08em}
+</style></head><body>
+<div class="fx-scan"></div><div class="fx-grain"></div>
+<div class="stage">
+  <canvas class="knot-bg" id="knot"></canvas>
+  <div class="masterplate plate-raised">
+    <span class="scr tl"></span><span class="scr tr"></span><span class="scr bl"></span><span class="scr br"></span>
+    <div class="sub"><span class="tag" style="font-size:11px">Nexuslink HUD v4 · round 2 · lane C</span><span class="led"></span><span class="readout" style="font-size:15px">DIRECTION 03</span></div>
+    <div class="ttl"><h1>TACTILE INSTRUMENT</h1><span class="readout serial">PANEL</span></div>
+    <div class="sub"><span class="led cy"></span><span class="tag" style="letter-spacing:.22em;font-size:11px">soft-extruded deck · recessed glass · amber + cyan lamps · etched knot</span></div>
+    <p class="rationale">A physical control deck, not a web page. Every panel is <b>machined metal and soft-touch composite</b>:
+      raised plates carry the labels, recessed glass windows carry the data, and indicator LEDs carry state.
+      Readouts are <b>dot-matrix amber</b> like real segment displays. The knot is engraved into the deck, lit to half.
+      Grain and scanlines stay at machine-room whisper level.</p>
+    <div class="screens">
+      <a class="sc plate-raised" href="dp1.html"><div class="who"><span class="led"></span><span class="nameplate">DP-1 · Command Hub</span></div>
+        <div class="desc">Reactor instrument centred on the etched knot; ten press-in hub tiles; utility switchbank.</div><div class="dim">2560 × 1440 · main</div></a>
+      <a class="sc plate-raised" href="dp2.html"><div class="who"><span class="led cy"></span><span class="nameplate">DP-2 · Board Schematic</span></div>
+        <div class="desc">All 78 inventory nodes as socketed chips; live flows on the traces; thermal lens toggle.</div><div class="dim">1920 × 1200 · right</div></a>
+      <a class="sc plate-raised" href="hdmi.html"><div class="who"><span class="led gr"></span><span class="nameplate">HDMI-A-3 · Workbench</span></div>
+        <div class="desc">Workspaces, agents, process ledger, tokens; patch bay of jacks for every endpoint.</div><div class="dim">1920 × 1200 · left</div></a>
+      <a class="sc plate-raised" href="nav.html"><div class="who"><span class="led cy"></span><span class="nameplate">The Navigator</span></div>
+        <div class="desc">Drill-down deck: search-as-you-type, breadcrumbs, preview pane, keyboard first.</div><div class="dim">overlay · any screen</div></a>
+    </div>
+    <div class="specimen">
+      <div class="sw"><span class="sw-t">TEKTUR</span><small>nameplates</small></div>
+      <div class="sw"><span class="sw-c" style="font-family:'Chakra Petch';font-weight:600">Chakra Petch</span><small>body</small></div>
+      <div class="sw"><span class="readout sw-d">1234</span><small>dot-matrix</small></div>
+      <div class="sw"><span class="sw-m">data 0x1F</span><small>ledger</small></div>
+    </div>
+    <div class="swatches">
+      <i style="background:linear-gradient(180deg,#20242d,#181b21)"></i>
+      <i style="background:#ffb054"></i>
+      <i style="background:#5ce0d4"></i>
+      <i style="background:#93e08c"></i>
+      <i style="background:#ff7058"></i>
+      <i style="background:#0b0d11"></i>
+    </div>
+  </div>
+  <div class="footline"><span>OMARCHYLINK · 7900X · 24T</span><span>STREAM SNAPSHOT 2026-09-28</span><span>FONTS: SIL OFL 1.1</span><span>NEXUSLINKPRODUCTIONS</span></div>
+</div>
+<script src="knot.js"></script>
+<script>drawKnot(document.getElementById('knot'), 13, 0.5);</script>
+</body></html>

@@ -1,0 +1,12 @@
+# repo tracks only Marcel's nexuslink.* plugins; third-party plugins stay untracked
+/*
+!/.gitignore
+!/README.md
+!/nexuslink.*/
+!/docs/
+*.bak
+*-bak
+*.v1bak
+__pycache__/
+!/collector/
+target/

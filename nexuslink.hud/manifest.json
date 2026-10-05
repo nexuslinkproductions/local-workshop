@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "nexuslink.hud",
+  "name": "NEXUS System HUD",
+  "version": "1.0.0",
+  "author": "nexuslink",
+  "description": "Persistent cyberpunk system dashboard on the desktop layer",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Hud.qml" }
+}

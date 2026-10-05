@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DP-1 · COMMAND HUB · CHROME CYBERCORE</title>
+<link rel="stylesheet" href="core.css">
+<style>
+body{width:2560px;height:1440px}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;padding:26px 34px 20px}
+
+/* ---------- masthead ---------- */
+.mast{height:64px;flex:none;display:flex;align-items:center;gap:26px;padding:0 22px}
+.mast .logo{width:30px;height:30px;flex:none;position:relative}
+.mast .logo i{position:absolute;inset:0;border:2px solid var(--ice);transform:rotate(45deg);box-shadow:0 0 10px var(--ice-dim)}
+.mast .logo i+i{inset:7px;border-color:var(--acid);box-shadow:0 0 8px var(--acid-dim)}
+.mast h1{font-size:19px;letter-spacing:.42em;color:var(--txt)}
+.mast h1 b{font-weight:400;color:var(--acid)}
+.mast .sub{font-size:10px;letter-spacing:.22em;color:var(--t55)}
+.mast .sp{flex:1}
+.clock{font-size:22px;letter-spacing:.1em;color:var(--ice)}
+.mast .up{font-size:10px;color:var(--t55);letter-spacing:.14em;margin-left:14px}
+
+/* ---------- main band ---------- */
+.band{flex:1;display:grid;grid-template-columns:1fr 940px 1fr;gap:26px;min-height:0;margin-top:18px}
+.col{display:flex;flex-direction:column;gap:16px;min-height:0}
+
+/* hub tile: embossed graphite control with dense frosted readout */
+.tile{padding:12px 14px 11px;cursor:pointer;position:relative;overflow:hidden;flex:1;display:flex;flex-direction:column;min-height:0}
+.tile:hover{box-shadow:inset 0 1px 0 rgba(235,245,252,.28),inset 0 -1px 0 rgba(0,0,0,.65),0 2px 8px rgba(0,0,0,.6),0 0 0 1px rgba(200,255,0,.22)}
+.tile .th{display:flex;align-items:center;gap:9px;flex:none}
+.tile .led{width:7px;height:7px;border-radius:50%;background:var(--ice);box-shadow:0 0 7px var(--ice-dim);flex:none}
+.tile.hot .led{background:var(--acid);box-shadow:0 0 8px var(--acid-dim)}
+.tile .tn{font-family:var(--disp);font-size:11px;letter-spacing:.26em;color:var(--txt)}
+.tile .tk{font-size:9px;color:var(--t40);letter-spacing:.1em;margin-left:auto}
+.tile .ins{font-size:10.5px;color:var(--t70);margin-top:7px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .ins b{color:var(--acid);font-weight:600}
+.tile .ins .ice{color:var(--ice)}
+.tile .body{margin-top:7px;padding:7px 10px;flex:1;min-height:0;display:flex;flex-direction:column;justify-content:space-evenly;gap:4px}
+
+/* dense fact rows inside tiles */
+.fact{display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:center;font-size:10.5px;color:var(--t70);min-height:0}
+.fact .fl{color:var(--t55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fact .fv{color:var(--txt);text-align:right;white-space:nowrap}
+.fact .fv b{color:var(--acid);font-weight:600}.fact .fv .i{color:var(--ice)}
+.fbar{grid-column:1/-1;height:4px;border-radius:2px;background:#0a0c0f;box-shadow:inset 0 1px 2px rgba(0,0,0,.8);margin-top:-2px}
+.fbar i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--ice),var(--acid));box-shadow:0 0 5px var(--acid-dim)}
+.fbar.ice i{background:linear-gradient(90deg,#3a6a7a,var(--ice));box-shadow:0 0 5px var(--ice-dim)}
+.fbar.warn i{background:linear-gradient(90deg,var(--amber),var(--alert));box-shadow:0 0 5px rgba(255,179,0,.5)}
+
+/* mini bar chart (tokens) */
+.mchart{display:flex;align-items:flex-end;gap:5px;height:44px;padding:2px 2px 0}
+.mchart .mc{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:3px;height:100%}
+.mchart .mc i{display:block;border-radius:2px 2px 0 0;background:linear-gradient(180deg,var(--acid),rgba(200,255,0,.25));box-shadow:0 0 6px var(--acid-dim)}
+.mchart .mc.ice i{background:linear-gradient(180deg,var(--ice),rgba(127,216,255,.25));box-shadow:0 0 6px var(--ice-dim)}
+.mchart .mc span{font-size:8px;color:var(--t40);text-align:center;letter-spacing:.04em}
+
+/* sparkline */
+.spark{display:block;width:100%;height:40px}
+.spark polyline{fill:none;stroke:var(--acid);stroke-width:1.6;filter:drop-shadow(0 0 3px var(--acid-dim))}
+.spark .base{stroke:rgba(190,220,245,.14);stroke-width:1;filter:none}
+
+/* ---------- reactor cluster ---------- */
+.corebox{position:relative;display:flex;flex-direction:column;min-height:0}
+.knot{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none}
+.dial{
+  position:relative;width:760px;height:760px;margin:auto;flex:none;
+  border-radius:50%;
+  background-color:rgba(11,14,18,.88);
+  background-image:radial-gradient(circle at 50% 42%,rgba(16,20,26,.88),rgba(8,10,13,.94) 72%);
+  box-shadow:
+    0 30px 80px rgba(0,0,0,.85),
+    0 0 0 1px rgba(190,220,245,.10),
+    inset 0 2px 0 rgba(235,245,252,.10),
+    inset 0 -18px 50px rgba(0,0,0,.7);
+}
+.dial .glasdisc{
+  position:absolute;inset:118px;border-radius:50%;
+  background-color:rgba(13,16,19,.9);
+  background-image:radial-gradient(circle at 50% 38%,rgba(148,170,188,.10),rgba(10,12,15,.55) 75%);
+  border:1px solid var(--glass-line);
+  box-shadow:inset 0 2px 0 rgba(235,245,252,.22),0 24px 60px rgba(0,0,0,.8),inset 0 -30px 60px rgba(0,0,0,.5);
+  backdrop-filter:blur(2px);
+}
+.dial svg{position:absolute;inset:0;width:100%;height:100%}
+.dial .face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.face .rl{font-family:var(--disp);font-size:13px;letter-spacing:.58em;color:var(--t55);text-indent:.58em}
+.face .hero{font-family:var(--disp);font-size:104px;line-height:.86;margin-top:34px;color:var(--txt);text-shadow:0 0 34px rgba(127,216,255,.35),0 2px 0 rgba(0,0,0,.8)}
+.face .hero small{font-size:44px;color:var(--ice)}
+.face .rows{margin-top:26px;display:flex;flex-direction:column;gap:5px;font-size:14.5px;color:var(--t70)}
+.face .rows .r b{color:var(--txt);font-weight:600}
+.face .rows .r .a{color:var(--acid)} .face .rows .r .i{color:var(--ice)}
+.face .say{margin-top:14px;font-size:12px;padding:5px 16px;border-radius:20px;color:var(--acid)}
+.chassis-tag{position:absolute;left:50%;transform:translateX(-50%);font-size:9.5px;letter-spacing:.3em;color:var(--t40);white-space:nowrap}
+
+/* ---------- utility strip ---------- */
+.util{flex:none;height:118px;margin-top:18px;display:flex;align-items:stretch;gap:10px;padding:12px 14px}
+.uchip{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:8px 12px;cursor:pointer;position:relative}
+.uchip:hover{box-shadow:inset 0 1px 0 rgba(235,245,252,.28),inset 0 -1px 0 rgba(0,0,0,.65),0 2px 8px rgba(0,0,0,.6),0 0 0 1px rgba(127,216,255,.25)}
+.uchip .ul{font-size:9px;letter-spacing:.18em;color:var(--t55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uchip .uv{font-size:12.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uchip .uv b{color:var(--acid);font-weight:600}.uchip .uv .i{color:var(--ice)}
+.uchip .us{font-size:9.5px;color:var(--t40);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uchip .bar{height:3px;border-radius:2px;background:#0a0c0f;box-shadow:inset 0 1px 2px rgba(0,0,0,.8)}
+.uchip .bar i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--ice),var(--acid))}
+.usep{width:1px;background:linear-gradient(180deg,transparent,rgba(235,245,252,.14),transparent);flex:none}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="wrap">
+
+  <!-- ======================= MASTHEAD ======================= -->
+  <header class="mast bevel holo">
+    <div class="logo"><i></i><i></i></div>
+    <h1 class="disp">NEXUS<b>LINK</b></h1>
+    <div class="sub">COMMAND HUB · DP-1 · 2560×1440</div>
+    <div class="sp"></div>
+    <div class="sub">Vienna · 23°C · ↖19km/h</div>
+    <div class="clock disp num">17:22:40</div>
+    <div class="up num">UP 29h42m<br>LOAD 5.30 5.50 5.75</div>
+  </header>
+
+  <!-- ======================= MAIN BAND ======================= -->
+  <div class="band">
+
+    <!-- ===== left column : 5 hub tiles ===== -->
+    <div class="col">
+      <div class="tile emboss hot">
+        <div class="th"><span class="led"></span><span class="tn">FILES</span><span class="tk">F1</span></div>
+        <div class="ins"><b>3</b> mounts live · Kingston NTFS at <b>71%</b> is the pressure point</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">/ · omarchy_root</span><span class="fv num"><b>41%</b> · 153G free</span><span class="fbar"><i style="width:41%"></i></span></div>
+          <div class="fact"><span class="fl">82CC5F65 · Kingston 2TB</span><span class="fv num"><b>71%</b> · 572G free</span><span class="fbar warn"><i style="width:71%"></i></span></div>
+          <div class="fact"><span class="fl">DATA · Samsung 2TB</span><span class="fv num"><b>0%</b> · 1.6T free</span><span class="fbar ice"><i style="width:1%"></i></span></div>
+          <div class="fact"><span class="fl">OMARCHY_202609 · sda1</span><span class="fv num"><b>100%</b> · iso9660</span><span class="fbar warn"><i style="width:100%"></i></span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">PROCESSES</span><span class="tk">F2</span></div>
+        <div class="ins">electron at <b>99%</b> of one core · 3 lanes over 40%</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">electron · devin-desktop</span><span class="fv num"><b>99%</b></span><span class="fbar"><i style="width:49%"></i></span></div>
+          <div class="fact"><span class="fl">quickshell</span><span class="fv num"><b>89%</b></span><span class="fbar"><i style="width:44%"></i></span></div>
+          <div class="fact"><span class="fl">electron · renderer</span><span class="fv num"><b>70%</b></span><span class="fbar"><i style="width:35%"></i></span></div>
+          <div class="fact"><span class="fl">opencode ×2 lanes</span><span class="fv num"><span class="i">43% · 39%</span></span><span class="fbar ice"><i style="width:22%"></i></span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">DEVICES</span><span class="tk">F3</span></div>
+        <div class="ins">G502 X PLUS <b>94%</b> · 4 peripherals on the ASM107x hub</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">G502 X PLUS · 6-6.3</span><span class="fv num"><b>94%</b> discharging</span><span class="fbar"><i style="width:94%"></i></span></div>
+          <div class="fact"><span class="fl">Razer Kiyo · 6-6.1</span><span class="fv num">cam + mic <span class="i">live</span></span></div>
+          <div class="fact"><span class="fl">ASUS TUF K7 · 6-6.4</span><span class="fv num">EN-US</span></div>
+          <div class="fact"><span class="fl">Corsair Slipstream · 6-6.2</span><span class="fv num">sink <b>95%</b></span></div>
+        </div>
+      </div>
+      <div class="tile emboss hot">
+        <div class="th"><span class="led"></span><span class="tn">AGENTS</span><span class="tk">F4</span></div>
+        <div class="ins"><b>4</b> Devin sessions live · devin procs burning <b>237%</b></div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">devin · 29 procs · 5 acp</span><span class="fv num"><b>237%</b></span><span class="fbar"><i style="width:79%"></i></span></div>
+          <div class="fact"><span class="fl">opencode · 6 procs</span><span class="fv num"><b>87%</b></span><span class="fbar"><i style="width:29%"></i></span></div>
+          <div class="fact"><span class="fl">october-desktop</span><span class="fv num"><span class="i">32%</span></span><span class="fbar ice"><i style="width:11%"></i></span></div>
+          <div class="fact"><span class="fl">live locks</span><span class="fv num">abrupt-howler · cottony-owner · fossil-alarm · grateful-porkpie</span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">REPOS / CI</span><span class="tk">F5</span></div>
+        <div class="ins"><b>50</b> unread · Security CI <span class="ice">FAILED</span> on main 14:07Z</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">haze</span><span class="fv num">dirty <b>2</b> · behind 1</span></div>
+          <div class="fact"><span class="fl">cursor-plugins</span><span class="fv num">dirty <b>1</b> · 0/0</span></div>
+          <div class="fact"><span class="fl">astralmon · AURICLE</span><span class="fv num"><span class="i">clean</span></span></div>
+          <div class="fact"><span class="fl">open PRs in haze</span><span class="fv num"><b>4</b> · #245 #244 #243 #225</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== centre : reactor ===== -->
+    <div class="corebox">
+      <canvas class="knot" id="knot" width="744" height="760"></canvas>
+      <div class="dial reactor" id="reactor">
+        <div class="glasdisc"></div>
+        <svg viewBox="0 0 760 760" id="dialsvg"></svg>
+        <div class="face">
+          <div class="rl">R E A C T O R</div>
+          <div class="hero num">22<small>%</small></div>
+          <div class="rows num">
+            <div class="r">L <b>5.30 · 5.50 · 5.75</b> / 24</div>
+            <div class="r">CPU <b>83°</b> <span class="a">TCCD2 82°</span> · GPU <b class="i">53 W</b> <span class="i">B580 50°</span></div>
+            <div class="r">MEM <b>29.2G</b> / 61.9G <span class="i">· zram 1.8×</span></div>
+            <div class="r">R <b class="i">46 KB/s</b> · W <b class="i">8.5 MB/s</b> · enp15s0 up</div>
+            <div class="r t-faint">up 29h42m · 17:22:40</div>
+            <div class="r"><span class="a">▲ electron 99%</span></div>
+          </div>
+          <div class="say emboss">haze: CI Security failed on main</div>
+        </div>
+      </div>
+      <div class="chassis-tag" style="bottom:6px">GRAPHITE CHASSIS · FROSTED CORE DISC · KNOT AT 50% FLOOD</div>
+    </div>
+
+    <!-- ===== right column : 5 hub tiles ===== -->
+    <div class="col">
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">NETWORK</span><span class="tk">F6</span></div>
+        <div class="ins">enp15s0 <b>UP</b> 2.5GbE · 52.6 GiB rx since boot</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">enp15s0 · RTL8125</span><span class="fv num"><b>UP</b> 192.168.0.112/24</span></div>
+          <div class="fact"><span class="fl">rx / tx totals</span><span class="fv num"><span class="i">52.6 GiB</span> / 7.1 GiB</span></div>
+          <div class="fact"><span class="fl">wlp16s0 · MT7922</span><span class="fv num"><span class="i">DOWN</span> · no link</span></div>
+          <div class="fact"><span class="fl">vpn / tailscale</span><span class="fv num">not installed</span></div>
+        </div>
+      </div>
+      <div class="tile emboss hot">
+        <div class="th"><span class="led"></span><span class="tn">STORAGE</span><span class="tk">F7</span></div>
+        <div class="ins">nvme1 <b>46°</b> · Kingston NTFS partition at <b>71%</b></div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">nvme0 · Kingston 2TB</span><span class="fv num"><b>45°</b>/57° · 71% used</span><span class="fbar warn"><i style="width:71%"></i></span></div>
+          <div class="fact"><span class="fl">nvme1 · Samsung 980 PRO</span><span class="fv num"><b>46°</b>/55° · 0% used</span><span class="fbar ice"><i style="width:2%"></i></span></div>
+          <div class="fact"><span class="fl">sda · DataTraveler 3.0</span><span class="fv num">iso9660 <b>100%</b></span><span class="fbar warn"><i style="width:100%"></i></span></div>
+          <div class="fact"><span class="fl">io now</span><span class="fv num">rd <span class="i">46K/s</span> · wr <span class="i">8.5M/s</span></span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">MEDIA</span><span class="tk">F8</span></div>
+        <div class="ins">No player active · Corsair sink at <b>95%</b> vol</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">Corsair Slipstream ★default</span><span class="fv num"><b>95%</b></span><span class="fbar"><i style="width:95%"></i></span></div>
+          <div class="fact"><span class="fl">Ryzen analog-stereo</span><span class="fv num"><span class="i">60%</span></span><span class="fbar ice"><i style="width:60%"></i></span></div>
+          <div class="fact"><span class="fl">LC27G7xT HDMI-stereo</span><span class="fv num"><span class="i">40%</span></span><span class="fbar ice"><i style="width:40%"></i></span></div>
+          <div class="fact"><span class="fl">mic · Corsair mono</span><span class="fv num"><b>LIVE</b> 100% · Kiyo src ready</span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">TOKENS</span><span class="tk">F9</span></div>
+        <div class="ins">today <b>212.9M</b> in · devin 160.6M · opencode $0.23</div>
+        <div class="body glass">
+          <div class="mchart num">
+            <div class="mc"><i style="height:100%"></i><span>devin 160.6M</span></div>
+            <div class="mc ice"><i style="height:33%"></i><span>opencode 52.3M</span></div>
+            <div class="mc"><i style="height:2%"></i><span>haze 0</span></div>
+            <div class="mc ice"><i style="height:2%"></i><span>codex 0</span></div>
+            <div class="mc"><i style="height:2%"></i><span>claude 0</span></div>
+          </div>
+          <div class="fact"><span class="fl">opencode out / cost</span><span class="fv num">683K · <b>$0.23</b> · 1027 msgs</span></div>
+        </div>
+      </div>
+      <div class="tile emboss">
+        <div class="th"><span class="led"></span><span class="tn">SYSTEM</span><span class="tk">F10</span></div>
+        <div class="ins"><b>2</b> updates pending · performance profile · up 29h42m</div>
+        <div class="body glass">
+          <div class="fact"><span class="fl">aether</span><span class="fv num">4.29.8 → <b>4.30.0</b></span></div>
+          <div class="fact"><span class="fl">mise-bin</span><span class="fv num">2026.9.7 → <b>2026.9.14</b></span></div>
+          <div class="fact"><span class="fl">power profile</span><span class="fv num"><span class="i">performance</span> · AC</span></div>
+          <div class="fact"><span class="fl">uptime · psi io</span><span class="fv num">29h42m · <b>0.21</b></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= UTILITY STRIP ======================= -->
+  <footer class="util bevel holo-b">
+    <div class="uchip emboss"><span class="ul">MEDIA / MPRIS</span><span class="uv">— no player —</span><span class="us">playPause ready</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">NOTIFICATIONS</span><span class="uv"><b>10</b> hist · DND off</span><span class="us">newest: T7 unmounted</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">VOLUME</span><span class="uv num"><b>95%</b> Corsair</span><span class="bar"><i style="width:95%"></i></span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">MIC</span><span class="uv"><span class="i">LIVE</span> 100%</span><span class="us">Kiyo + analog src</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">CLIPBOARD</span><span class="uv num"><b>31</b> entries</span><span class="us">newest: udev cmd</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">CAPTURE</span><span class="uv">grim · OCR · picker</span><span class="us">no recorder running</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">IDLE INHIBIT</span><span class="uv">awake · lock 300s</span><span class="us">screensaver 150s</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">WEATHER</span><span class="uv num">23°C ↖19</span><span class="us">Vienna</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">TIMERS</span><span class="uv">0 active</span><span class="us">set reminder</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">UPDATES</span><span class="uv num"><b>2</b> pending</span><span class="us">aether · mise-bin</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">WORKSPACES</span><span class="uv num"><b>3</b> ws · 5 win</span><span class="us">1 · 4 · 7</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">NIGHT LIGHT</span><span class="uv">off</span><span class="us">hyprsunset idle</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">POWER</span><span class="uv"><span class="i">performance</span></span><span class="us">AC line</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">DISK</span><span class="uv num">41% · 153G free</span><span class="bar"><i style="width:41%"></i></span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">DOWNLOADS</span><span class="uv">Devin 3.10.35</span><span class="us">+2 more recent</span></div>
+    <div class="usep"></div>
+    <div class="uchip emboss"><span class="ul">THEME</span><span class="uv">Hackerman</span><span class="us">omarchy 4.0.4</span></div>
+  </footer>
+</div>
+<div class="scan"></div>
+
+<script>
+/* ---- pixel knot watermark: real 48x49 matrix from HudV3, ~50% flood ---- */
+const knotRows=[
+"......................##........................",
+".....................####.......................",
+"....................######......................",
+"...................########.....................",
+"...................###..####....................",
+"..................####...###....................",
+".................############...................",
+".................###......#####.................",
+"..............######.......###.##...............",
+"............##..###........####..##.............",
+"...........#....###.........###....#............",
+".........##....###..........###.....##..........",
+"........##.....###...........###.....##.........",
+".......##......###...........###......##........",
+"......##.......##............###.......##.......",
+"......#.......###.............##........#.......",
+".....#........###.............###........#......",
+"....##........###.............###........#......",
+"....#.........###.............###.........#.....",
+"....#.........###.............###.........#.....",
+"...#..........###.............###..........#....",
+"...#...........#.############.###..........#....",
+"..##...........##############.###..........#....",
+"..#..........#########....######.###........#...",
+"..#........######............###.####.......#...",
+"..#......######.##...........###.######.....#...",
+"..#.....#####...###..........###...#####....#...",
+"..#....####.....###.........###......####...#...",
+"..#...####......####........###.......####..#...",
+"..#..####........###.......###.........####.#...",
+"..#.####.........####......###..........#####...",
+"..#.###...........####....###............###....",
+"..#####............###...####.............###...",
+"...###.............####..###..............####..",
+"..###...............####.##................###..",
+"..###................#####................#####.",
+".####.................#####...............#.###.",
+".####..............##########............##.###.",
+".###.#...........######..######..........#...###",
+"###...#........#######....#########.....########",
+"#######...##########........####################",
+"##################.............###############..",
+"..#############.....................###.#.......",
+".........##.........................##..........",
+"..........##.......................##...........",
+"............##...................##.............",
+".............###...............###..............",
+"...............####.........####................",
+"...................#########...................."];
+(function(){
+  const c=document.getElementById('knot'),x=c.getContext('2d');
+  const px=c.width/48,py=c.height/49;
+  /* deterministic ~50% flood: hash picks lit cells, acid-lime or ice-blue */
+  for(let r=0;r<49;r++)for(let col=0;col<48;col++){
+    if(knotRows[r][col]!=='#')continue;
+    const h=(r*131+col*197)%100;
+    if(h>=50)continue; /* 50% flood */
+    const ice=h%3===0;
+    x.fillStyle=ice?'rgba(127,216,255,.34)':'rgba(200,255,0,.30)';
+    x.fillRect(col*px,r*py,px-.7,py-.7);
+  }
+})();
+
+/* ---- reactor rings: CPU / GPU-pwr / MEM / NET + orbit corona ---- */
+(function(){
+  const NS='http://www.w3.org/2000/svg',svg=document.getElementById('dialsvg');
+  const cx=380,cy=380,A0=-Math.PI*.75,SW=Math.PI*1.5;
+  const p=(r,a)=>[cx+Math.cos(a)*r,cy+Math.sin(a)*r];
+  const arc=(r,a0,a1)=>{const[x0,y0]=p(r,a0),[x1,y1]=p(r,a1);
+    return `M ${x0} ${y0} A ${r} ${r} 0 ${a1-a0>Math.PI?1:0} 1 ${x1} ${y1}`};
+  const mk=(d,stroke,w,op,dash)=>{const e=document.createElementNS(NS,'path');
+    e.setAttribute('d',d);e.setAttribute('fill','none');e.setAttribute('stroke',stroke);
+    e.setAttribute('stroke-width',w);e.setAttribute('opacity',op==null?1:op);
+    if(dash)e.setAttribute('stroke-dasharray',dash);svg.appendChild(e);return e};
+  const R=368;
+  /* orbit corona: 72 notches, lit head sector */
+  for(let i=0;i<72;i++){
+    const a=i/72*Math.PI*2,maj=i%6===0;
+    const hd=((a-Math.PI*.5)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+    const head=Math.max(0,1-hd/(Math.PI*.6));
+    const r0=R*.995,r1=r0-(maj?R*.030:R*.016);
+    const[x0,y0]=p(r0,a),[x1,y1]=p(r1,a);
+    mk(`M ${x0} ${y0} L ${x1} ${y1}`,'#7fd8ff',1.2,.06+(maj?.05:0)+head*.3);
+  }
+  const rings=[
+    {r:R*.885,f:.22,col:'#7fd8ff',tag:'CPU'},
+    {r:R*.750,f:.27,col:'#ffb300',tag:'GPU'},
+    {r:R*.615,f:.47,col:'#c8ff00',tag:'MEM'},
+    {r:R*.480,f:.06,col:'#8affd0',tag:'NET'}];
+  for(const g of rings){
+    mk(arc(g.r,A0,A0+SW),'rgba(190,220,245,.14)',10);
+    mk(arc(g.r,A0,A0+SW*g.f),g.col,15,.14);
+    mk(arc(g.r,A0,A0+SW*g.f),g.col,10,1);
+    const[hx,hy]=p(g.r,A0+SW*g.f);
+    const dot=document.createElementNS(NS,'circle');
+    dot.setAttribute('cx',hx);dot.setAttribute('cy',hy);dot.setAttribute('r',7);
+    dot.setAttribute('fill',g.col);svg.appendChild(dot);
+    const[tx,ty]=p(g.r,A0);
+    const t=document.createElementNS(NS,'text');
+    t.setAttribute('x',tx-14);t.setAttribute('y',ty+4);t.setAttribute('text-anchor','end');
+    t.setAttribute('fill','rgba(217,226,234,.55)');t.setAttribute('font-size','15');
+    t.setAttribute('font-family','Kode Mono,monospace');t.textContent=g.tag;svg.appendChild(t);
+  }
+  /* 18 segment notches per ring */
+  for(const g of rings)for(let d=0;d<18;d++){
+    const a=A0+SW*d/18,h=8;
+    const[x0,y0]=p(g.r-h,a),[x1,y1]=p(g.r+h,a);
+    mk(`M ${x0} ${y0} L ${x1} ${y1}`,'rgba(6,8,10,.9)',2.4);
+  }
+})();
+</script>
+</body>
+</html>

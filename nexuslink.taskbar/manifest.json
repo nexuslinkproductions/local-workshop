@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "nexuslink.taskbar",
+  "name": "NEXUS Taskbar",
+  "version": "1.0.0",
+  "author": "nexuslink",
+  "description": "Windows-style taskbar: every open window lives in the bar, click to focus",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Taskbar.qml" },
+  "barWidget": {
+    "displayName": "Taskbar",
+    "description": "All open windows in the bar — click to focus, middle-click to close.",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

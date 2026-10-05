@@ -1,0 +1,546 @@
+{
+  "harness": "verify/hudcheck.py",
+  "started_local": "2026-09-28 16:54:20",
+  "ts": "20260928T165419",
+  "argv": [
+    "--only",
+    "P4"
+  ],
+  "config": {
+    "cpu_seconds": 60,
+    "knot_seconds": 150,
+    "restart_check": false,
+    "shots": false,
+    "only": [
+      "P4"
+    ]
+  },
+  "selftest": {
+    "ok": false,
+    "error": "Function not found."
+  },
+  "panels": {
+    "ok": true,
+    "data": {
+      "screens": [
+        {
+          "screen": "DP-2",
+          "role": "hardware",
+          "panels": [
+            {
+              "id": "matrix",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.2646310432569975,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "sensors",
+              "fx": 0,
+              "fy": 0.18599562363238512,
+              "fw": 0.2646310432569975,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "gpu",
+              "fx": 0.27353689567430023,
+              "fy": 0.12035010940919037,
+              "fw": 0.4071246819338422,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "gpu2",
+              "fx": 0.27989821882951654,
+              "fy": 0.5579868708971554,
+              "fw": 0.4071246819338422,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "storage",
+              "fx": 0.7124681933842238,
+              "fy": 0.010940919037199124,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "periph",
+              "fx": 0.7124681933842238,
+              "fy": 0.45951859956236324,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "memory",
+              "fx": 0.7124681933842238,
+              "fy": 0.5361050328227571,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0,
+              "fy": 0.849015317286652,
+              "fw": 1,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        },
+        {
+          "screen": "HDMI-A-3",
+          "role": "ops",
+          "panels": [
+            {
+              "id": "windows",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.3053435114503817,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "procs",
+              "fx": 0,
+              "fy": 0.30634573304157553,
+              "fw": 0.3053435114503817,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "agents",
+              "fx": 0.3129770992366412,
+              "fy": 0,
+              "fw": 0.34096692111959287,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "repo",
+              "fx": 0.31170483460559795,
+              "fy": 0.47045951859956237,
+              "fw": 0.34096692111959287,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "launch",
+              "fx": 0.6793893129770993,
+              "fy": 0,
+              "fw": 0.32061068702290074,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "actions",
+              "fx": 0.6793893129770993,
+              "fy": 0.12407002188183806,
+              "fw": 0.32061068702290074,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "tokens",
+              "fx": 0.6793893129770993,
+              "fy": 0.2188183807439825,
+              "fw": 0.32061068702290074,
+              "fh": 0.24442013129102844,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "network",
+              "fx": 0.6793893129770993,
+              "fy": 0.47045951859956237,
+              "fw": 0.32061068702290074,
+              "fh": 0.36083150984682705,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0,
+              "fy": 0.849015317286652,
+              "fw": 1,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        },
+        {
+          "screen": "DP-1",
+          "role": "command",
+          "panels": [
+            {
+              "id": "system",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.20356234096692113,
+              "fh": 1,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "center",
+              "fx": 0.35559796437659036,
+              "fy": 0.056191646191646176,
+              "fw": 0.5,
+              "fh": 0.58,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "agents",
+              "fx": 0.2051526717557252,
+              "fy": 0.8753071253071254,
+              "fw": 0.3470737913486005,
+              "fh": 0.12457002457002458,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0.5629770992366413,
+              "fy": 0.7647420147420149,
+              "fw": 0.43409669211195917,
+              "fh": 0.11965601965601967,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        }
+      ]
+    },
+    "error": null
+  },
+  "monitors": {
+    "ok": true,
+    "error": null,
+    "by_name": {
+      "DP-2": {
+        "name": "DP-2",
+        "w": 1920,
+        "h": 1200,
+        "x": 2560,
+        "y": 0,
+        "focused": false,
+        "workspace": 7
+      },
+      "HDMI-A-3": {
+        "name": "HDMI-A-3",
+        "w": 1920,
+        "h": 1200,
+        "x": -1920,
+        "y": 0,
+        "focused": false,
+        "workspace": 1
+      },
+      "DP-1": {
+        "name": "DP-1",
+        "w": 2560,
+        "h": 1440,
+        "x": 0,
+        "y": 0,
+        "focused": true,
+        "workspace": 4
+      }
+    },
+    "list": [
+      {
+        "name": "DP-2",
+        "w": 1920,
+        "h": 1200,
+        "x": 2560,
+        "y": 0,
+        "focused": false,
+        "workspace": 7
+      },
+      {
+        "name": "HDMI-A-3",
+        "w": 1920,
+        "h": 1200,
+        "x": -1920,
+        "y": 0,
+        "focused": false,
+        "workspace": 1
+      },
+      {
+        "name": "DP-1",
+        "w": 2560,
+        "h": 1440,
+        "x": 0,
+        "y": 0,
+        "focused": true,
+        "workspace": 4
+      }
+    ]
+  },
+  "checks": {
+    "P4": {
+      "restart_check": false,
+      "source": "panels-fallback",
+      "screen_px": [
+        2560.0,
+        1440.0
+      ],
+      "snapshot": [
+        {
+          "id": "system",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "fx": 0.0,
+          "fy": 0.0
+        },
+        {
+          "id": "center",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            910.3307888040713,
+            80.9159705159705,
+            1280.0,
+            835.1999999999999
+          ],
+          "fx": 0.35559796437659036,
+          "fy": 0.056191646191646176
+        },
+        {
+          "id": "agents",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            525.1908396946566,
+            1260.4422604422605,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "fx": 0.2051526717557252,
+          "fy": 0.8753071253071254
+        },
+        {
+          "id": "status",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "fx": 0.5629770992366413,
+          "fy": 0.7647420147420149
+        }
+      ],
+      "movable_ids": [
+        "system",
+        "center",
+        "agents",
+        "status"
+      ],
+      "state_backup": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/nexuslink.hud/verify/out/20260928T165419-hud-state-preP4.json",
+      "restore": {
+        "moves": [],
+        "clean": true,
+        "residual": []
+      },
+      "panels": [
+        {
+          "id": "system",
+          "before": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "target_px": [
+            120.0,
+            0.0
+          ],
+          "target_fx_fy": [
+            0.046875,
+            0.0
+          ],
+          "free_spot": false,
+          "move_rc": "ok",
+          "after": [
+            122.13740458015268,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "moved_px": 122.1,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ]
+        },
+        {
+          "id": "center",
+          "before": [
+            910.3307888040713,
+            80.9159705159705,
+            1280.0,
+            835.1999999999999
+          ],
+          "target_px": [
+            840.0,
+            168.0
+          ],
+          "target_fx_fy": [
+            0.328125,
+            0.11666666666666667
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            842.7480916030536,
+            172.4815724815725,
+            1280.0,
+            835.1999999999999
+          ],
+          "moved_px": 113.8,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            916.030534351145,
+            79.60687960687962,
+            1280.0,
+            835.1999999999999
+          ]
+        },
+        {
+          "id": "agents",
+          "before": [
+            525.1908396946566,
+            1260.4422604422605,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "target_px": [
+            552.0,
+            1128.0
+          ],
+          "target_fx_fy": [
+            0.215625,
+            0.7833333333333333
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            549.6183206106871,
+            1127.764127764128,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "moved_px": 134.9,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            525.1908396946566,
+            1260.4422604422605,
+            888.5089058524172,
+            179.3808353808354
+          ]
+        },
+        {
+          "id": "status",
+          "before": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "target_px": [
+            1368.0,
+            1032.0
+          ],
+          "target_fx_fy": [
+            0.534375,
+            0.7166666666666667
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            1367.93893129771,
+            1034.889434889435,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "moved_px": 98.8,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ]
+        }
+      ],
+      "verdict": "VERIFIED",
+      "seconds": 1.1
+    }
+  },
+  "shots": [],
+  "summary": {
+    "verdicts": {
+      "VERIFIED": 1,
+      "NOT VERIFIED": 0,
+      "INCONCLUSIVE": 0
+    },
+    "all_verified": true,
+    "exit_code": 0
+  }
+}

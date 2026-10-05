@@ -1,0 +1,183 @@
+/* deck.css — TACTILE INSTRUMENT PANEL direction (mock2/C)
+   Dark soft-extruded hardware deck: raised plates, recessed glass instrument
+   windows, amber/cyan indicator LEDs, etched knot. QML-implementable:
+   layered translucent rects + two offset soft shadows, no per-frame filters. */
+
+@font-face{font-family:'Tektur';src:url('fonts/Tektur-VF.ttf') format('truetype');font-weight:400 900;font-style:normal}
+@font-face{font-family:'Chakra Petch';src:url('fonts/ChakraPetch-Regular.ttf') format('truetype');font-weight:400}
+@font-face{font-family:'Chakra Petch';src:url('fonts/ChakraPetch-Medium.ttf') format('truetype');font-weight:500}
+@font-face{font-family:'Chakra Petch';src:url('fonts/ChakraPetch-SemiBold.ttf') format('truetype');font-weight:600}
+@font-face{font-family:'Chakra Petch';src:url('fonts/ChakraPetch-Bold.ttf') format('truetype');font-weight:700}
+@font-face{font-family:'Doto';src:url('fonts/Doto-VF.ttf') format('truetype');font-weight:100 900;font-style:normal}
+@font-face{font-family:'Share Tech Mono';src:url('fonts/ShareTechMono-Regular.ttf') format('truetype');font-weight:400}
+
+:root{
+  --deck0:#101318; --deck1:#171a20; --deck2:#1d2129; --raise-a:#20242d; --raise-b:#181b21;
+  --well:#0b0d11; --well2:#0e1015;
+  --edge:rgba(255,255,255,.05); --edge2:rgba(255,255,255,.028);
+  --line:#2a2f39;
+  --ink:#e4dfd3; --ink2:#aca897; --etch:#918d7e; --dim:#8f8b7e;
+  --amber:#ffb054; --amber-d:#c9822a; --amber-glow:rgba(255,176,84,.30);
+  --cyan:#5ce0d4; --cyan-d:#2e9c93; --cyan-glow:rgba(92,224,212,.28);
+  --green:#93e08c; --red:#ff7058;
+  --glass:rgba(9,11,16,.62);
+  --sh-dark:rgba(0,0,0,.62); --sh-soft:rgba(0,0,0,.42);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden}
+body{position:relative}
+body{
+  font-family:'Chakra Petch',sans-serif;font-size:14px;color:var(--ink);
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(58,64,78,.20), transparent 55%),
+    radial-gradient(140% 120% at 50% 115%, rgba(0,0,0,.5), transparent 55%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.011) 0 1px, transparent 1px 3px),
+    linear-gradient(163deg,#1b1f27 0%, var(--deck1) 42%, #12151b 100%);
+}
+/* cybercore grain + scanlines, kept subtle: fixed overlays, pointer-transparent */
+.fx-scan{position:fixed;inset:0;z-index:90;pointer-events:none;
+  background:repeating-linear-gradient(0deg, rgba(4,6,10,.14) 0 1px, transparent 1px 3px);
+  opacity:.30;mix-blend-mode:multiply}
+.fx-grain{position:fixed;inset:0;z-index:91;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E")}
+.mono{font-family:'Share Tech Mono',monospace;font-variant-numeric:tabular-nums}
+.plate{font-family:'Tektur',sans-serif;text-transform:uppercase;letter-spacing:.14em}
+.readout{font-family:'Doto',monospace;font-weight:700;letter-spacing:.05em;color:var(--amber);line-height:1.25;
+  text-shadow:0 0 12px var(--amber-glow),0 0 2px rgba(255,176,84,.5)}
+.readout.cy{color:var(--cyan);text-shadow:0 0 12px var(--cyan-glow),0 0 2px rgba(92,224,212,.5)}
+.readout.dim{color:#a8863f;text-shadow:none}
+
+/* ---- extruded + recessed surfaces (neumorphic: two offset soft shadows) ---- */
+.plate-raised{position:relative;border-radius:14px;
+  background:linear-gradient(145deg,var(--raise-a) 0%,var(--raise-b) 100%);
+  box-shadow:7px 7px 16px var(--sh-dark), -5px -5px 12px rgba(255,255,255,.035),
+             inset 0 1px 0 var(--edge), inset 0 -1px 0 rgba(0,0,0,.45)}
+.well{position:relative;border-radius:11px;background:linear-gradient(180deg,#0a0c10,var(--well2));
+  box-shadow:inset 4px 4px 10px rgba(0,0,0,.72), inset -2px -2px 6px rgba(255,255,255,.03),
+             0 1px 0 rgba(255,255,255,.05)}
+.glass{position:relative;border-radius:11px;overflow:hidden;
+  background:linear-gradient(180deg, rgba(20,26,36,.32), rgba(9,11,16,.66) 26%), var(--glass);
+  box-shadow:inset 5px 5px 12px rgba(0,0,0,.75), inset -3px -3px 7px rgba(255,255,255,.028),
+             0 1px 0 rgba(255,255,255,.05), 0 10px 26px rgba(0,0,0,.45)}
+.glass::before{content:'';position:absolute;left:6%;right:52%;top:0;height:26%;
+  background:linear-gradient(180deg, rgba(214,228,240,.075), transparent);
+  border-radius:0 0 100% 100%;pointer-events:none}
+.bezel{position:relative;border-radius:16px;padding:9px;
+  background:linear-gradient(150deg,#232833,#171a20 55%,#14161c);
+  box-shadow:8px 8px 18px var(--sh-dark), -5px -5px 12px rgba(255,255,255,.04),
+             inset 0 1px 0 var(--edge)}
+.hairline{border:1px solid var(--line)}
+.hr{height:1px;background:linear-gradient(90deg,transparent,var(--line) 18%,var(--line) 82%,transparent)}
+
+/* ---- screws ---- */
+.scr{position:absolute;width:11px;height:11px;border-radius:50%;z-index:5;
+  background:radial-gradient(circle at 35% 30%, #3a404d, #20242c 55%, #14161b);
+  box-shadow:0 1px 2px rgba(0,0,0,.8), inset 0 1px 1px rgba(255,255,255,.14)}
+.scr::after{content:'';position:absolute;left:1.5px;right:1.5px;top:calc(50% - .75px);height:1.5px;
+  background:rgba(0,0,0,.75);transform:rotate(-24deg);border-radius:2px}
+.scr.tl{top:7px;left:7px}.scr.tr{top:7px;right:7px}.scr.bl{bottom:7px;left:7px}.scr.br{bottom:7px;right:7px}
+
+/* ---- nameplates + etched labels ---- */
+.nameplate{font-family:'Tektur';font-weight:600;text-transform:uppercase;letter-spacing:.17em;
+  color:var(--etch);text-shadow:0 1px 0 rgba(255,255,255,.045)}
+.tag{font-family:'Tektur';font-weight:500;text-transform:uppercase;letter-spacing:.13em;color:var(--dim)}
+.stamp{display:inline-block;padding:3px 10px 2px;border-radius:4px;font-family:'Tektur';font-weight:600;
+  font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink2);
+  background:linear-gradient(180deg,#262b35,#1b1f26);
+  box-shadow:inset 0 1px 0 var(--edge2), 0 2px 4px rgba(0,0,0,.5);border:1px solid #2e3440}
+
+/* ---- indicator LEDs ---- */
+.led{position:relative;width:9px;height:9px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 38% 32%, #ffe9c8 0%, var(--amber) 34%, var(--amber-d) 78%, #4c3210 100%);
+  box-shadow:0 0 9px var(--amber-glow), inset 0 -1px 2px rgba(0,0,0,.5), 0 0 0 2px rgba(0,0,0,.38)}
+.led.cy{background:radial-gradient(circle at 38% 32%, #dcfff9 0%, var(--cyan) 34%, var(--cyan-d) 78%, #0d3f3a 100%);
+  box-shadow:0 0 9px var(--cyan-glow), inset 0 -1px 2px rgba(0,0,0,.5), 0 0 0 2px rgba(0,0,0,.38)}
+.led.gr{background:radial-gradient(circle at 38% 32%, #e7ffe2 0%, var(--green) 34%, #3f8f3a 78%, #143312 100%);
+  box-shadow:0 0 9px rgba(147,224,140,.26), inset 0 -1px 2px rgba(0,0,0,.5), 0 0 0 2px rgba(0,0,0,.38)}
+.led.rd{background:radial-gradient(circle at 38% 32%, #ffe4dc 0%, var(--red) 34%, #a63c2a 78%, #3f130c 100%);
+  box-shadow:0 0 9px rgba(255,112,88,.26), inset 0 -1px 2px rgba(0,0,0,.5), 0 0 0 2px rgba(0,0,0,.38)}
+.led.off{background:radial-gradient(circle at 38% 32%, #3a3f49 0%, #262a32 60%, #17191f 100%);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.8), 0 0 0 2px rgba(0,0,0,.38)}
+.led.blink{animation:ledblink 2.6s ease-in-out infinite}
+@keyframes ledblink{0%,86%,100%{filter:brightness(1)}90%{filter:brightness(.55)}95%{filter:brightness(1.12)}}
+
+/* ---- segmented instrument meters ---- */
+.seg{position:relative;height:12px;border-radius:4px;overflow:hidden;
+  background:repeating-linear-gradient(90deg, rgba(255,255,255,.055) 0 6px, transparent 6px 9px), #0a0c10;
+  box-shadow:inset 2px 2px 5px rgba(0,0,0,.75), inset -1px -1px 3px rgba(255,255,255,.04)}
+.seg>i{position:absolute;inset:0;width:var(--v,50%);
+  background:repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 9px);
+  box-shadow:0 0 8px var(--amber-glow)}
+.seg>i.cy{background:repeating-linear-gradient(90deg, var(--cyan) 0 6px, transparent 6px 9px);box-shadow:0 0 8px var(--cyan-glow)}
+.seg>i.gr{background:repeating-linear-gradient(90deg, var(--green) 0 6px, transparent 6px 9px);box-shadow:0 0 8px rgba(147,224,140,.24)}
+.seg>i.rd{background:repeating-linear-gradient(90deg, var(--red) 0 6px, transparent 6px 9px);box-shadow:0 0 8px rgba(255,112,88,.24)}
+.seg.thin{height:8px}
+
+/* ---- rotary knob ---- */
+.knob{position:relative;width:30px;height:30px;border-radius:50%;
+  background:radial-gradient(circle at 34% 28%, #343a46, #1d2129 62%, #13161b),
+             repeating-conic-gradient(from 0deg, #262b34 0 9deg, #171a20 9deg 18deg);
+  background-blend-mode:normal;
+  box-shadow:3px 3px 7px var(--sh-dark), -2px -2px 5px rgba(255,255,255,.05),
+             inset 0 0 0 2.5px rgba(0,0,0,.35), inset 0 1px 1px rgba(255,255,255,.1)}
+.knob::before{content:'';position:absolute;left:50%;top:50%;width:20px;height:20px;border-radius:50%;
+  transform:translate(-50%,-50%);
+  background:radial-gradient(circle at 38% 30%, #2c323d, #191c22 70%);
+  box-shadow:inset 0 1px 2px rgba(255,255,255,.08), 0 2px 3px rgba(0,0,0,.55)}
+.knob::after{content:'';position:absolute;left:calc(50% - 1.25px);top:2px;width:2.5px;height:9px;border-radius:2px;
+  background:var(--amber);box-shadow:0 0 6px var(--amber-glow);
+  transform-origin:50% calc(50% - 2px);transform:rotate(var(--deg,0deg))}
+
+/* ---- toggle + push buttons ---- */
+.tog{position:relative;width:36px;height:19px;border-radius:10px;flex:none;cursor:pointer;
+  background:linear-gradient(180deg,#0a0c10,#141720);
+  box-shadow:inset 3px 3px 6px rgba(0,0,0,.75), 0 1px 0 rgba(255,255,255,.06)}
+.tog::after{content:'';position:absolute;top:2.5px;left:3px;width:14px;height:14px;border-radius:50%;
+  background:linear-gradient(145deg,#3d434f,#20242c);
+  box-shadow:2px 2px 4px rgba(0,0,0,.6), inset 0 1px 1px rgba(255,255,255,.18);
+  transition:left .14s ease}
+.tog.on::after{left:19px;background:linear-gradient(145deg,#5a5f52,#33362c)}
+.pbtn{position:relative;border:0;cursor:pointer;border-radius:8px;font-family:'Tektur';font-weight:600;
+  color:var(--ink2);background:linear-gradient(150deg,var(--raise-a),var(--raise-b));
+  box-shadow:5px 5px 10px var(--sh-soft), -3px -3px 8px rgba(255,255,255,.03),
+             inset 0 1px 0 var(--edge);
+  text-transform:uppercase;letter-spacing:.12em;transition:all .08s ease}
+.pbtn:hover{color:var(--ink)}
+.pbtn:active,.pbtn.sel{box-shadow:inset 4px 4px 9px rgba(0,0,0,.7), inset -2px -2px 5px rgba(255,255,255,.03);
+  background:linear-gradient(150deg,#171a20,#14161c);color:var(--amber)}
+.jack{position:relative;width:19px;height:19px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 40% 34%, #05070a 0 44%, #101319 46%, #262b34 72%, #14161b);
+  box-shadow:inset 0 2px 4px rgba(0,0,0,.85), 0 1px 0 rgba(255,255,255,.06)}
+.jack.patched::after{content:'';position:absolute;left:50%;top:50%;width:8px;height:8px;border-radius:50%;
+  transform:translate(-50%,-50%);background:radial-gradient(circle at 40% 32%, #ffe9c8, var(--amber) 60%, var(--amber-d));
+  box-shadow:0 0 8px var(--amber-glow)}
+.jack.cy.patched::after{background:radial-gradient(circle at 40% 32%, #dcfff9, var(--cyan) 60%, var(--cyan-d));box-shadow:0 0 8px var(--cyan-glow)}
+
+/* ---- module chrome ---- */
+.mod{display:flex;flex-direction:column;gap:9px}
+.mod-h{display:flex;align-items:center;gap:9px;min-height:18px}
+.mod-h .nameplate{font-size:11px}
+.mod-h .sub{margin-left:auto;font-size:10px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;font-family:'Tektur'}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.kv b{font-family:'Share Tech Mono';font-weight:400;font-size:13px;color:var(--ink)}
+.kv span{font-size:11px;color:var(--etch);letter-spacing:.08em;text-transform:uppercase}
+.row{display:flex;align-items:center;gap:10px}
+.data{font-family:'Share Tech Mono';font-size:12.5px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.data b{color:var(--ink);font-weight:400}
+.data .a{color:var(--amber)} .data .c{color:var(--cyan)} .data .g{color:var(--green)} .data .r{color:var(--red)}
+
+/* keycap (for nav footer hints) */
+.key{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:21px;padding:0 7px;
+  border-radius:5px;font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);
+  background:linear-gradient(180deg,#262b35,#1a1d23);
+  box-shadow:0 3px 0 #0c0e12, 0 4px 6px rgba(0,0,0,.5), inset 0 1px 0 var(--edge2)}
+.key.hit{background:linear-gradient(180deg,#2c313c,#22262e);box-shadow:inset 2px 2px 5px rgba(0,0,0,.7);transform:translateY(2px)}
+
+/* tooltip used by dp2 link hover */
+.tip{position:fixed;z-index:120;pointer-events:none;display:none;
+  padding:7px 11px;border-radius:8px;font-family:'Share Tech Mono';font-size:12px;color:var(--ink);
+  background:linear-gradient(180deg, rgba(33,38,47,.97), rgba(22,25,31,.97));
+  box-shadow:0 6px 18px rgba(0,0,0,.6), inset 0 1px 0 var(--edge);
+  border:1px solid #343b47}
+.tip em{font-style:normal;color:var(--amber)}
+.tip .u{color:var(--etch);font-size:10px;letter-spacing:.12em;display:block;margin-top:2px;font-family:'Tektur'}

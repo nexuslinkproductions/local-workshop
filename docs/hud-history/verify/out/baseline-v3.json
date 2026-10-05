@@ -1,0 +1,631 @@
+{
+  "harness": "verify/hudcheck.py",
+  "started_local": "2026-09-28 17:06:45",
+  "ts": "20260928T170541",
+  "argv": [
+    "--cpu-seconds",
+    "60",
+    "--knot-seconds",
+    "30"
+  ],
+  "config": {
+    "cpu_seconds": 60,
+    "knot_seconds": 30,
+    "restart_check": false,
+    "shots": false,
+    "only": [
+      "P1",
+      "P2",
+      "P3",
+      "P4",
+      "P5",
+      "P6",
+      "P7",
+      "P8",
+      "P9"
+    ]
+  },
+  "selftest": {
+    "ok": false,
+    "error": "Function not found."
+  },
+  "panels": {
+    "ok": true,
+    "data": {
+      "screens": [
+        {
+          "screen": "DP-2",
+          "role": "hardware",
+          "panels": [
+            {
+              "id": "matrix",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.2646310432569975,
+              "fh": 0.13063457330415756,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "sensors",
+              "fx": 0,
+              "fy": 0.18599562363238512,
+              "fw": 0.2646310432569975,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "gpu",
+              "fx": 0.27353689567430023,
+              "fy": 0.12035010940919037,
+              "fw": 0.4071246819338422,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "gpu2",
+              "fx": 0.27989821882951654,
+              "fy": 0.5579868708971554,
+              "fw": 0.4071246819338422,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "storage",
+              "fx": 0.7124681933842238,
+              "fy": 0.010940919037199124,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "periph",
+              "fx": 0.7124681933842238,
+              "fy": 0.45951859956236324,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "memory",
+              "fx": 0.7124681933842238,
+              "fy": 0.5361050328227571,
+              "fw": 0.28498727735368956,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0,
+              "fy": 0.849015317286652,
+              "fw": 1,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        },
+        {
+          "screen": "HDMI-A-3",
+          "role": "ops",
+          "panels": [
+            {
+              "id": "windows",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.3053435114503817,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "procs",
+              "fx": 0,
+              "fy": 0.30634573304157553,
+              "fw": 0.3053435114503817,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "agents",
+              "fx": 0.3129770992366412,
+              "fy": 0,
+              "fw": 0.34096692111959287,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "repo",
+              "fx": 0.31170483460559795,
+              "fy": 0.47045951859956237,
+              "fw": 0.34096692111959287,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "launch",
+              "fx": 0.6793893129770993,
+              "fy": 0,
+              "fw": 0.32061068702290074,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "actions",
+              "fx": 0.6793893129770993,
+              "fy": 0.12407002188183806,
+              "fw": 0.32061068702290074,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "tokens",
+              "fx": 0.6793893129770993,
+              "fy": 0.2188183807439825,
+              "fw": 0.32061068702290074,
+              "fh": 0.24442013129102844,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "network",
+              "fx": 0.6793893129770993,
+              "fy": 0.47045951859956237,
+              "fw": 0.32061068702290074,
+              "fh": 0.36083150984682705,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0,
+              "fy": 0.849015317286652,
+              "fw": 1,
+              "fh": 0,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        },
+        {
+          "screen": "DP-1",
+          "role": "command",
+          "panels": [
+            {
+              "id": "system",
+              "fx": 0,
+              "fy": 0,
+              "fw": 0.20356234096692113,
+              "fh": 1,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "center",
+              "fx": 0.35782442748091603,
+              "fy": 0.05528255528255529,
+              "fw": 0.5,
+              "fh": 0.58,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "agents",
+              "fx": 0.2051526717557252,
+              "fy": 0.8753071253071254,
+              "fw": 0.3470737913486005,
+              "fh": 0.12457002457002458,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            },
+            {
+              "id": "status",
+              "fx": 0.5629770992366413,
+              "fy": 0.7647420147420149,
+              "fw": 0.43409669211195917,
+              "fh": 0.11965601965601967,
+              "visible": true,
+              "hidden": false,
+              "collapsed": false
+            }
+          ]
+        }
+      ]
+    },
+    "error": null
+  },
+  "monitors": {
+    "ok": true,
+    "error": null,
+    "by_name": {
+      "DP-2": {
+        "name": "DP-2",
+        "w": 1920,
+        "h": 1200,
+        "x": 2560,
+        "y": 0,
+        "focused": false,
+        "workspace": 7
+      },
+      "HDMI-A-3": {
+        "name": "HDMI-A-3",
+        "w": 1920,
+        "h": 1200,
+        "x": -1920,
+        "y": 0,
+        "focused": false,
+        "workspace": 2
+      },
+      "DP-1": {
+        "name": "DP-1",
+        "w": 2560,
+        "h": 1440,
+        "x": 0,
+        "y": 0,
+        "focused": true,
+        "workspace": 4
+      }
+    },
+    "list": [
+      {
+        "name": "DP-2",
+        "w": 1920,
+        "h": 1200,
+        "x": 2560,
+        "y": 0,
+        "focused": false,
+        "workspace": 7
+      },
+      {
+        "name": "HDMI-A-3",
+        "w": 1920,
+        "h": 1200,
+        "x": -1920,
+        "y": 0,
+        "focused": false,
+        "workspace": 2
+      },
+      {
+        "name": "DP-1",
+        "w": 2560,
+        "h": 1440,
+        "x": 0,
+        "y": 0,
+        "focused": true,
+        "workspace": 4
+      }
+    ]
+  },
+  "checks": {
+    "P1": {
+      "screens": {},
+      "verdict": "NOT VERIFIED",
+      "reason": "selftest unavailable: Function not found.",
+      "seconds": 0.0
+    },
+    "P2": {
+      "verdict": "NOT VERIFIED",
+      "reason": "selftest unavailable: Function not found.",
+      "seconds": 0.0
+    },
+    "P3": {
+      "source": "panels-fallback",
+      "violations": [],
+      "verdict": "VERIFIED",
+      "seconds": 0.0
+    },
+    "P4": {
+      "restart_check": false,
+      "source": "panels-fallback",
+      "screen_px": [
+        2560.0,
+        1440.0
+      ],
+      "snapshot": [
+        {
+          "id": "system",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "fx": 0.0,
+          "fy": 0.0
+        },
+        {
+          "id": "center",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            916.030534351145,
+            79.60687960687962,
+            1280.0,
+            835.1999999999999
+          ],
+          "fx": 0.35782442748091603,
+          "fy": 0.05528255528255529
+        },
+        {
+          "id": "agents",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            525.1908396946566,
+            1260.4422604422605,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "fx": 0.2051526717557252,
+          "fy": 0.8753071253071254
+        },
+        {
+          "id": "status",
+          "movable": true,
+          "hidden": false,
+          "rect": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "fx": 0.5629770992366413,
+          "fy": 0.7647420147420149
+        }
+      ],
+      "movable_ids": [
+        "system",
+        "center",
+        "agents",
+        "status"
+      ],
+      "state_backup": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/nexuslink.hud/verify/out/20260928T170541-hud-state-preP4.json",
+      "restore": {
+        "moves": [
+          {
+            "id": "agents",
+            "fx": 0.2051526717557252,
+            "fy": 0.8753071253071254
+          }
+        ],
+        "clean": true,
+        "residual": []
+      },
+      "panels": [
+        {
+          "id": "system",
+          "before": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "target_px": [
+            120.0,
+            0.0
+          ],
+          "target_fx_fy": [
+            0.046875,
+            0.0
+          ],
+          "free_spot": false,
+          "move_rc": "ok",
+          "after": [
+            122.13740458015268,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ],
+          "moved_px": 122.1,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            0.0,
+            0.0,
+            521.1195928753181,
+            1440.0
+          ]
+        },
+        {
+          "id": "center",
+          "before": [
+            916.030534351145,
+            79.60687960687962,
+            1280.0,
+            835.1999999999999
+          ],
+          "target_px": [
+            1032.0,
+            72.0
+          ],
+          "target_fx_fy": [
+            0.403125,
+            0.05
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            1025.9541984732825,
+            66.33906633906635,
+            1280.0,
+            835.1999999999999
+          ],
+          "moved_px": 110.7,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            916.030534351145,
+            79.60687960687962,
+            1280.0,
+            835.1999999999999
+          ]
+        },
+        {
+          "id": "agents",
+          "before": [
+            647.3282442748092,
+            915.4791154791155,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "target_px": [
+            552.0,
+            936.0
+          ],
+          "target_fx_fy": [
+            0.215625,
+            0.65
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            549.6183206106871,
+            942.0147420147421,
+            888.5089058524172,
+            179.3808353808354
+          ],
+          "moved_px": 101.2,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            647.3282442748092,
+            915.4791154791155,
+            888.5089058524172,
+            179.3808353808354
+          ]
+        },
+        {
+          "id": "status",
+          "before": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "target_px": [
+            1368.0,
+            1176.0
+          ],
+          "target_fx_fy": [
+            0.534375,
+            0.8166666666666667
+          ],
+          "free_spot": true,
+          "move_rc": "ok",
+          "after": [
+            1367.93893129771,
+            1180.8353808353809,
+            1111.2875318066156,
+            172.30466830466833
+          ],
+          "moved_px": 108.2,
+          "moved": true,
+          "move_back_rc": "ok",
+          "after_move_back": [
+            1441.2213740458017,
+            1101.2285012285015,
+            1111.2875318066156,
+            172.30466830466833
+          ]
+        }
+      ],
+      "verdict": "VERIFIED",
+      "seconds": 1.2
+    },
+    "P5": {
+      "seconds": 0.0,
+      "samples": [],
+      "reason": "selftest unavailable: Function not found.",
+      "verdict": "NOT VERIFIED"
+    },
+    "P6": {
+      "verdict": "NOT VERIFIED",
+      "reason": "selftest unavailable: Function not found.",
+      "seconds": 0.0
+    },
+    "P7": {
+      "per_screen": {},
+      "verdict": "NOT VERIFIED",
+      "reason": "selftest unavailable: Function not found.",
+      "seconds": 0.0
+    },
+    "P8": {
+      "procs_at_start": [
+        {
+          "pid": 1871285,
+          "cmdline": "quickshell -n -p /usr/share/omarchy/shell"
+        }
+      ],
+      "pid": 1871285,
+      "starttime": 10338211,
+      "clk_tck": 100,
+      "cpu_ticks_start": 288143,
+      "elapsed_s": 60.0,
+      "cpu_ticks_end": 293701,
+      "pid_now": 1871285,
+      "cpu_seconds_used": 55.58,
+      "percent_of_one_core": 92.63,
+      "limit_percent": 15.0,
+      "verdict": "NOT VERIFIED",
+      "seconds": 63.0
+    },
+    "P9": {
+      "pid_hint": 1871285,
+      "pid": 1871285,
+      "total_lines": 45,
+      "hud_lines": 10,
+      "excluded_mouse_lines": 7,
+      "offending_count": 3,
+      "offending_lines": [
+        "Sep 28 16:05:32 OmarchyLink omarchy-shell[1871285]:   WARN scene: QML Connections at file:///home/nexuslink/.config/omarchy/plugins/nexuslink.hud/Hud.qml[4678:15]: Detected function \"onAccentChanged\" in Connections element. This is probably intended to be a signal handler but no signal of the target matches the name.",
+        "Sep 28 16:05:32 OmarchyLink omarchy-shell[1871285]:   WARN scene: QML Connections at file:///home/nexuslink/.config/omarchy/plugins/nexuslink.hud/Hud.qml[4678:15]: Detected function \"onAccentChanged\" in Connections element. This is probably intended to be a signal handler but no signal of the target matches the name.",
+        "Sep 28 16:05:32 OmarchyLink omarchy-shell[1871285]:   WARN scene: QML Connections at file:///home/nexuslink/.config/omarchy/plugins/nexuslink.hud/Hud.qml[4678:15]: Detected function \"onAccentChanged\" in Connections element. This is probably intended to be a signal handler but no signal of the target matches the name."
+      ],
+      "verdict": "NOT VERIFIED",
+      "seconds": 0.0
+    }
+  },
+  "shots": [],
+  "summary": {
+    "verdicts": {
+      "VERIFIED": 2,
+      "NOT VERIFIED": 7,
+      "INCONCLUSIVE": 0
+    },
+    "all_verified": false,
+    "exit_code": 1
+  }
+}

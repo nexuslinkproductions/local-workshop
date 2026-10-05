@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en" data-size="1920x1200"><head><meta charset="utf-8">
+<title>Board Schematic · DP-2 · NEXUSLINK HUD v4 · C</title>
+<link rel="stylesheet" href="deck.css">
+<style>
+html,body{width:1920px;height:1200px}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;padding:14px 20px 16px}
+.head{display:flex;align-items:center;gap:18px;min-height:54px;padding:0 20px}
+.head .nameplate{font-size:16px;color:var(--ink)}
+.canvas{position:relative;flex:1;min-height:0;border-radius:14px;
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(40,46,58,.25), transparent 60%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.016) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.016) 0 1px, transparent 1px 46px),
+    linear-gradient(170deg,#161920,#101318 60%,#0d1014);
+  box-shadow:inset 0 0 0 1px #262b34, inset 0 2px 18px rgba(0,0,0,.5)}
+#bus{position:absolute;inset:0;z-index:0}
+.bus{fill:none;stroke:#3a4050;stroke-width:2.4;stroke-linecap:round}
+.flow{fill:none;stroke:var(--amber);stroke-width:2.6;stroke-linecap:round;opacity:.85;
+  stroke-dasharray:3 15;animation:flowdash 1.6s linear infinite;cursor:pointer}
+.flow.cy{stroke:var(--cyan);animation-duration:2.2s}
+@keyframes flowdash{to{stroke-dashoffset:-72}}
+.buslbl{font:10.5px 'Share Tech Mono';fill:#8b909c}
+.panel{position:absolute;z-index:1;display:flex;flex-direction:column;gap:8px;padding:12px 14px}
+.panel>.ph{display:flex;align-items:center;gap:9px;min-height:17px}
+.panel>.ph .nameplate{font-size:11px}
+.panel>.ph .sub{margin-left:auto;font-family:'Share Tech Mono';font-size:10.5px;color:var(--dim)}
+/* node chip */
+.nd{position:relative;display:flex;align-items:center;gap:9px;min-height:30px;padding:4px 9px;border-radius:8px;
+  background:linear-gradient(150deg,var(--raise-a),var(--raise-b));
+  box-shadow:4px 4px 8px var(--sh-soft), -3px -3px 6px rgba(255,255,255,.026), inset 0 1px 0 var(--edge2)}
+.nd .nm{font-family:'Tektur';font-weight:500;font-size:11px;letter-spacing:.04em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nd .vt{margin-left:auto;font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);white-space:nowrap}
+.nd .vt b{color:var(--amber);font-weight:400}
+.nd .vt i{font-style:normal;color:var(--etch);font-size:10px}
+.nd.hot .vt b{color:var(--red)}
+.nd.dimnd{opacity:.82}
+.nd.core{min-height:30px;flex-direction:column;gap:2px;align-items:stretch;padding:4px 8px}
+.nd.core .nm{font-size:9.5px;letter-spacing:.08em;color:var(--ink2)}
+.nd.core .vt{margin-left:0;font-size:10.5px}
+.lens-heat .nd,.lens-heat .ccd,.lens-heat .dimmslot{background:linear-gradient(160deg,hsl(var(--h,220) 42% 25%),hsl(var(--h,220) 46% 15%));
+  box-shadow:4px 4px 8px var(--sh-soft), -3px -3px 6px rgba(255,255,255,.02), inset 0 0 0 1px hsl(var(--h,220) 60% 34%)}
+.lens-heat .nd .nm{color:hsl(var(--h,220) 30% 88%)}
+.lens-heat .nd .vt b{color:hsl(var(--h,220) 85% 72%)}
+</style></head><body></body></html>
+<style>
+.urow{display:flex;align-items:center;gap:8px;margin-left:var(--ind,0);position:relative}
+.urow::before{content:'';position:absolute;left:calc(var(--ind,0) - 14px);top:50%;width:10px;height:2.4px;background:#333947}
+.urow .port{font-family:'Share Tech Mono';font-size:9.5px;color:var(--cyan);width:44px;flex:none}
+.ccd{display:flex;flex-direction:column;gap:6px;padding:9px 10px}
+.ccd .cgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.dimmslot{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:9px;
+  background:linear-gradient(150deg,#22262e,#171a20);
+  box-shadow:5px 5px 10px var(--sh-soft), -3px -3px 7px rgba(255,255,255,.03), inset 0 1px 0 var(--edge2),
+             inset 0 0 0 1px #262b34}
+.dimmslot .notch{width:7px;height:26px;border-radius:2px;background:#0d0f13;box-shadow:inset 1px 1px 3px rgba(0,0,0,.8)}
+.dimmslot .lbl{font-family:'Tektur';font-size:10.5px;color:var(--ink2);letter-spacing:.05em}
+.dimmslot .vt{margin-left:auto;font-family:'Share Tech Mono';font-size:12px;color:var(--amber)}
+.parts{display:flex;flex-direction:column;gap:4px;margin-top:2px}
+.part{display:flex;align-items:center;gap:8px;font-family:'Share Tech Mono';font-size:10px;color:var(--ink2);
+  padding:3px 8px;border-radius:4px;background:rgba(10,12,17,.55);box-shadow:inset 0 0 0 1px #232833}
+.part i{font-style:normal;color:var(--etch);width:74px;flex:none}
+.part .m{margin-left:auto;color:var(--dim);white-space:nowrap}
+.part .fs{color:var(--cyan)}
+.disp{display:flex;align-items:center;gap:9px;padding:5px 10px;border-radius:7px;
+  background:rgba(10,12,17,.5);box-shadow:inset 2px 2px 5px rgba(0,0,0,.55), inset 0 0 0 1px #232833}
+.disp .nm{font-family:'Share Tech Mono';font-size:10.5px;color:var(--ink2)}
+.disp .vt{margin-left:auto;font-family:'Share Tech Mono';font-size:10px;color:var(--dim)}
+.lens{display:flex;align-items:center;gap:10px}
+.lensbtn{padding:8px 16px;font-size:10.5px}
+.legend{display:flex;align-items:center;gap:16px;margin-left:auto;font-family:'Share Tech Mono';font-size:11px;color:var(--ink2)}
+.legend .li{display:flex;align-items:center;gap:7px}
+.legend .sw{width:22px;height:3.4px;border-radius:2px}
+.hint{font-family:'Tektur';font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+</style>
+<div class="fx-scan"></div><div class="fx-grain"></div>
+<div class="wrap">
+  <div class="head plate-raised">
+    <span class="scr tl"></span><span class="scr tr"></span>
+    <span class="nameplate">Board Schematic</span>
+    <span class="stamp">DP-2 · right · omarchylink</span>
+    <div class="lens">
+      <span class="hint">lens</span>
+      <button class="pbtn lensbtn sel" id="lens-link">Link</button>
+      <button class="pbtn lensbtn" id="lens-heat">Heat</button>
+    </div>
+    <div class="legend">
+      <span class="li"><span class="sw" style="background:var(--amber)"></span>flow source</span>
+      <span class="li"><span class="sw" style="background:var(--cyan)"></span>active link</span>
+      <span class="li"><span class="sw" style="background:#3a4050"></span>bus trace</span>
+      <span class="li" id="ncount">78 nodes</span>
+    </div>
+  </div>
+  <div class="canvas" id="canvas">
+    <svg id="bus" xmlns="http://www.w3.org/2000/svg" width="1880" height="1104" viewBox="0 0 1880 1104"></svg>
+    <div class="panel well" style="left:20px;top:20px;width:580px;height:589px">
+      <span class="scr tr"></span>
+      <div class="ph"><span class="led cy"></span><span class="nameplate">USB Tree</span><span class="sub">4 xhci · 16 nodes</span></div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="nd urow" style="--ind:0" data-t="51" data-tip="AMD 800-series USB3 xHCI 11:00.0 · hwmon4 51°C · hosts usb6 + usb7"><span class="port">11:00.0</span><span class="nm">xhci chipset</span><span class="vt"><b>51°C</b> <i>usb6/7</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="36" data-tip="usb6 root hub · 480 Mbps high-speed"><span class="port">usb6</span><span class="nm">root hub</span><span class="vt"><i>480M</i></span></div>
+        <div class="nd urow" style="--ind:32px" data-t="36" data-tip="ASM107x hub 6-6 · 480 Mbps"><span class="port">6-6</span><span class="nm">ASM107x hub</span><span class="vt"><i>480M</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="36" data-tip="Razer Kiyo 6-6.1 · uvcvideo + usb-audio · flow: none idle"><span class="port">6-6.1</span><span class="nm">Razer Kiyo</span><span class="vt"><i>cam+aud</i> 480M</span></div>
+        <div class="nd urow" style="--ind:48px" data-t="36" data-tip="Corsair Slipstream receiver 6-6.2 · default audio sink 95%"><span class="port">6-6.2</span><span class="nm">Slipstream rcvr</span><span class="vt"><i>hid</i> 480M</span></div>
+        <div class="nd urow" style="--ind:48px" data-t="36" data-tip="Logitech receiver 6-6.3 · G502 X PLUS · hidpp battery 94% discharging"><span class="port">6-6.3</span><span class="nm">Logitech rcvr</span><span class="vt"><b>94%</b> <i>batt</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="36" data-tip="ASUS TUF GAMING K7 6-6.4 · event13/14 · layout us"><span class="port">6-6.4</span><span class="nm">ASUS TUF K7</span><span class="vt"><i>kbd</i> 480M</span></div>
+        <div class="nd urow" style="--ind:16px" data-t="36" data-tip="MSI MYSTIC LIGHT 6-7 · RGB controller"><span class="port">6-7</span><span class="nm">MSI Mystic Light</span><span class="vt"><i>rgb</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="38" data-tip="MediaTek Wireless_Device 6-8 · btusb · hci0 present"><span class="port">6-8</span><span class="nm">MT7922 BT radio</span><span class="vt"><i>btusb</i></span></div>
+        <div class="nd urow dimnd" style="--ind:32px" data-t="37" data-tip="hci0 · MT7922 controller · powered, no paired devices"><span class="port">hci0</span><span class="nm">hci0 controller</span><span class="vt"><i>0 paired</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="37" data-tip="usb7 root hub · 10 Gbps super-speed"><span class="port">usb7</span><span class="nm">root hub</span><span class="vt"><i>10G</i></span></div>
+        <div class="nd urow" style="--ind:32px" data-t="37" data-tip="ASM107x hub 7-6 · 5 Gbps"><span class="port">7-6</span><span class="nm">ASM107x hub</span><span class="vt"><i>5G</i></span></div>
+        <div class="nd urow" style="--ind:32px" data-t="38" data-tip="Kingston DataTraveler 3.0 7-3 · sda · 61.9 GB · OMARCHY_202609 iso mounted · flow: 0 B/s idle"><span class="port">7-3</span><span class="nm">DataTraveler 3.0</span><span class="vt"><i>sda</i> 61.9G</span></div>
+        <div class="nd urow dimnd" style="--ind:0" data-t="39" data-tip="Raphael USB3 xHCI 14:00.3 · usb1/usb2 · no devices"><span class="port">14:00.3</span><span class="nm">xhci apu</span><span class="vt"><i>usb1/2</i> empty</span></div>
+        <div class="nd urow dimnd" style="--ind:0" data-t="39" data-tip="Raphael USB3 xHCI 14:00.4 · usb3/usb4 · no devices"><span class="port">14:00.4</span><span class="nm">xhci apu</span><span class="vt"><i>usb3/4</i> empty</span></div>
+        <div class="nd urow dimnd" style="--ind:0" data-t="39" data-tip="Raphael USB2 xHCI 15:00.0 · usb5 · no devices"><span class="port">15:00.0</span><span class="nm">xhci apu</span><span class="vt"><i>usb5</i> empty</span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:20px;top:621px;width:580px;height:351px">
+      <span class="scr tr"></span>
+      <div class="ph"><span class="led"></span><span class="nameplate">Audio</span><span class="sub">3 pci · 6 pipewire nodes</span></div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="nd" data-t="38" data-tip="B580 HDMI/DP audio · snd_hda_intel · card 1 PCH"><span class="nm">B580 HDMI audio</span><span class="vt"><i>04:00.1</i> card 1</span></div>
+        <div class="nd" data-t="38" data-tip="PipeWire sink alsa_output.pci-0000_04_00.0.hdmi-stereo → LC27G7xT"><span class="nm">pw · hdmi-stereo sink</span><span class="vt"><i>→ DP-1</i></span></div>
+        <div class="nd" data-t="39" data-tip="Radeon HD Audio 14:00.1 · card 2"><span class="nm">Radeon HD audio</span><span class="vt"><i>14:00.1</i> card 2</span></div>
+        <div class="nd" data-t="39" data-tip="Ryzen HD Audio 14:00.6 analog · card 3"><span class="nm">Ryzen HD audio</span><span class="vt"><i>14:00.6</i> card 3</span></div>
+        <div class="nd" data-t="39" data-tip="PipeWire sink alsa_output.pci-0000_14_00.6.analog-stereo · standby"><span class="nm">pw · analog-stereo sink</span><span class="vt"><i>standby</i></span></div>
+        <div class="nd" data-t="39" data-tip="PipeWire source alsa_input.pci-0000_14_00.6.analog-stereo · idle"><span class="nm">pw · analog source</span><span class="vt"><i>idle</i></span></div>
+        <div class="nd" data-t="37" data-tip="PipeWire sink alsa_output.usb-Corsair...analog-stereo · DEFAULT · 95%"><span class="nm">pw · corsair sink</span><span class="vt"><b>95%</b> <i>default</i></span></div>
+        <div class="nd" data-t="37" data-tip="PipeWire source alsa_input.usb-Corsair...mono-fallback · live 100%"><span class="nm">pw · corsair mic</span><span class="vt"><i>live</i> 100%</span></div>
+        <div class="nd" data-t="37" data-tip="PipeWire source alsa_input.usb-...Razer_Kiyo-02.analog-stereo · idle"><span class="nm">pw · kiyo mic</span><span class="vt"><i>idle</i></span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:20px;top:984px;width:580px;height:115px">
+      <span class="scr br"></span>
+      <div class="ph"><span class="led cy"></span><span class="nameplate">Inputs + Security</span><span class="sub">event nodes</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <div class="nd" data-t="36" data-tip="ASUS TUF GAMING K7 · event13/14 · main keyboard, layout us"><span class="nm">kbd event13/14</span><span class="vt"><i>tuf k7</i></span></div>
+        <div class="nd" data-t="36" data-tip="G502 X PLUS · event11/mouse2 · battery 94%"><span class="nm">mouse event11</span><span class="vt"><i>g502</i></span></div>
+        <div class="nd" data-t="36" data-tip="Corsair Slipstream kbd+mouse · event6-10"><span class="nm">event6-10</span><span class="vt"><i>corsair</i></span></div>
+        <div class="nd" data-t="40" data-tip="AMD PSP/CCP 14:00.2 · crypto coprocessor · driver bound"><span class="nm">PSP / CCP</span><span class="vt"><i>14:00.2</i> ok</span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:624px;top:40px;width:640px;height:250px">
+      <span class="scr tl"></span><span class="scr tr"></span>
+      <div class="ph"><span class="led"></span><span class="nameplate">CPU Package · Ryzen 9 7900X</span><span class="sub">12c / 24t</span></div>
+      <div class="nd hot" style="min-height:44px" data-t="83" data-tip="AMD Ryzen 9 7900X 12-Core · Tctl 83°C · flow: cpu_pkg0 ⇄ machine · load 7.70"><span class="nm" style="font-size:13px">cpu_pkg0</span><span class="vt" style="font-size:13px"><b>83°C</b> Tctl · avg <b>5150</b> MHz · max 5222</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="ccd plate-raised" data-t="87" data-tip="CCD0 (die 0, L3 cpus 0-5,12-17) · Tccd1 87°C">
+          <div class="row" style="justify-content:space-between"><span class="tag" style="font-size:10px">CCD0 · Tccd1</span><span class="data" style="font-size:12px"><span class="a">87°C</span></span></div>
+          <div class="cgrid">
+            <div class="nd core" data-t="87" data-tip="core 0 · cpu0/cpu12 · scaling_cur_freq"><span class="nm">core 0</span><span class="vt">5.2 <i>GHz</i></span></div>
+            <div class="nd core" data-t="87" data-tip="core 1 · cpu1/cpu13"><span class="nm">core 1</span><span class="vt">5.2 <i>GHz</i></span></div>
+            <div class="nd core" data-t="87" data-tip="core 2 · cpu2/cpu14"><span class="nm">core 2</span><span class="vt">5.2 <i>GHz</i></span></div>
+            <div class="nd core" data-t="87" data-tip="core 3 · cpu3/cpu15"><span class="nm">core 3</span><span class="vt">4.7 <i>GHz</i></span></div>
+            <div class="nd core" data-t="87" data-tip="core 4 · cpu4/cpu16"><span class="nm">core 4</span><span class="vt">5.2 <i>GHz</i></span></div>
+            <div class="nd core" data-t="87" data-tip="core 5 · cpu5/cpu17"><span class="nm">core 5</span><span class="vt">3.7 <i>GHz</i></span></div>
+          </div>
+        </div>
+        <div class="ccd plate-raised" data-t="61" data-tip="CCD1 (die 1, L3 cpus 6-11,18-23) · Tccd2 61°C">
+          <div class="row" style="justify-content:space-between"><span class="tag" style="font-size:10px">CCD1 · Tccd2</span><span class="data" style="font-size:12px">61°C</span></div>
+          <div class="cgrid">
+            <div class="nd core" data-t="61" data-tip="core 6 · cpu6/cpu18"><span class="nm">core 6</span><span class="vt">3.7 <i>GHz</i></span></div>
+            <div class="nd core" data-t="61" data-tip="core 7 · cpu7/cpu19"><span class="nm">core 7</span><span class="vt">4.9 <i>GHz</i></span></div>
+            <div class="nd core" data-t="61" data-tip="core 8 · cpu8/cpu20"><span class="nm">core 8</span><span class="vt">5.1 <i>GHz</i></span></div>
+            <div class="nd core" data-t="61" data-tip="core 9 · cpu9/cpu21"><span class="nm">core 9</span><span class="vt">4.0 <i>GHz</i></span></div>
+            <div class="nd core" data-t="61" data-tip="core 10 · cpu10/cpu22"><span class="nm">core 10</span><span class="vt">3.7 <i>GHz</i></span></div>
+            <div class="nd core" data-t="61" data-tip="core 11 · cpu11/cpu23"><span class="nm">core 11</span><span class="vt">4.6 <i>GHz</i></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="gap:10px;margin-top:2px">
+        <span class="tag" style="font-size:9.5px">load 1m</span><div class="seg thin" style="flex:1"><i style="--v:32%"></i></div>
+        <span class="data" style="font-size:11px"><span class="a">7.70</span> / 24</span>
+      </div>
+    </div>
+    <div class="panel well" style="left:624px;top:320px;width:640px;height:54px;flex-direction:row;align-items:center;gap:10px">
+      <div class="nd hot" style="flex:1" data-t="83" data-tip="AMD Data Fabric 00:18.0-7 · k10temp on 00:18.3 · Tctl 83°C"><span class="nm">data fabric</span><span class="vt"><i>00:18.0-7</i> <b>83°C</b></span></div>
+      <div class="nd" style="flex:1" data-t="40" data-tip="FCH SMBus 00:14.0 · i2c-20 · SPD5118 DIMM sensors"><span class="nm">FCH SMBus</span><span class="vt"><i>i2c-20</i> bound</span></div>
+    </div>
+    <div class="panel well" style="left:624px;top:404px;width:640px;height:569px">
+      <span class="scr bl"></span><span class="scr br"></span>
+      <div class="ph"><span class="led cy"></span><span class="nameplate">PCIe Fabric</span><span class="sub">root + 14 bridges</span></div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="nd" data-t="41" data-tip="AMD Raphael/Granite Ridge root complex 0000:00:00.0"><span class="nm">root complex</span><span class="vt"><i>00:00.0</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD PCIe bridge 00:01.1 · x8@16.0 GT/s · max x16@32.0"><span class="port">00:01.1</span><span class="nm">→ gpu lane</span><span class="vt"><i>x8@16.0</i></span></div>
+        <div class="nd urow" style="--ind:32px" data-t="41" data-tip="Intel switch upstream 01:00.0 [8086:e2ff]"><span class="port">01:00.0</span><span class="nm">Intel switch up</span><span class="vt"><i>GT/s 16.0</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="41" data-tip="Intel switch downstream 02:01.0 → Arc B580"><span class="port">02:01.0</span><span class="nm">switch down</span><span class="vt"><i>→ B580</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="41" data-tip="Intel switch downstream 02:02.0 → B580 HDMI audio"><span class="port">02:02.0</span><span class="nm">switch down</span><span class="vt"><i>→ audio</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD PCIe bridge 00:01.2 · x4@16.0 → nvme0 KINGSTON"><span class="port">00:01.2</span><span class="nm">→ nvme lane</span><span class="vt"><i>x4@16.0</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD PCIe bridge 00:02.1 · x4@16.0 → chipset switch"><span class="port">00:02.1</span><span class="nm">→ chipset</span><span class="vt"><i>x4@16.0</i></span></div>
+        <div class="nd urow" style="--ind:32px" data-t="41" data-tip="AMD chipset switch 06:00.0 [1022:43f4]"><span class="port">06:00.0</span><span class="nm">chipset switch</span><span class="vt"><i>GT/s 16.0</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="43" data-tip="switch port 07:0a.0 → Realtek RTL8125 2.5GbE"><span class="port">07:0a.0</span><span class="nm">port a</span><span class="vt"><i>→ nic</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="48" data-tip="switch port 07:0b.0 → MediaTek MT7922 Wi-Fi 6E"><span class="port">07:0b.0</span><span class="nm">port b</span><span class="vt"><i>→ wifi</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="51" data-tip="switch port 07:0c.0 → AMD 800-series xHCI 11:00.0"><span class="port">07:0c.0</span><span class="nm">port c</span><span class="vt"><i>→ xhci</i></span></div>
+        <div class="nd urow" style="--ind:48px" data-t="41" data-tip="switch port 07:0d.0 → AMD 600-series SATA 12:00.0 ahci"><span class="port">07:0d.0</span><span class="nm">port d</span><span class="vt"><i>→ sata</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD PCIe bridge 00:02.2 · x4@16.0 → nvme1 Samsung 980 PRO"><span class="port">00:02.2</span><span class="nm">→ nvme lane</span><span class="vt"><i>x4@16.0</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD APU fabric bridge 00:08.1 · x16@16.0 → Raphael iGPU + PSP + audio + xhci"><span class="port">00:08.1</span><span class="nm">→ apu fabric</span><span class="vt"><i>x16@16.0</i></span></div>
+        <div class="nd urow" style="--ind:16px" data-t="41" data-tip="AMD bridge 00:08.3 · x16@16.0 → Raphael USB2 xHCI 15:00.0"><span class="port">00:08.3</span><span class="nm">→ apu lane</span><span class="vt"><i>x16@16.0</i></span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:1284px;top:20px;width:576px;height:179px">
+      <div class="ph"><span class="led gr"></span><span class="nameplate">Memory</span><span class="sub">64.85 GB DDR5</span></div>
+      <div class="nd" data-t="46" data-tip="64.85 GB DDR5 · 33 x 2 GiB blocks · MemAvailable 33.4 GiB · flow: mem ⇄ machine 12 kB/s dirty+wb"><span class="nm">memory</span><span class="vt"><b>33.4</b> GiB free · 46%</span></div>
+      <div class="dimmslot" data-t="56" data-tip="DIMM slot 0 · SPD5118 i2c 20-0051 · hwmon7 56°C">
+        <span class="notch"></span><span class="lbl">DIMM A0</span><span class="vt">56°C</span></div>
+      <div class="dimmslot" data-t="55" data-tip="DIMM slot 1 · SPD5118 i2c 20-0053 · hwmon8 55°C">
+        <span class="notch"></span><span class="lbl">DIMM A1</span><span class="vt">55°C</span></div>
+    </div>
+    <div class="panel well" style="left:1284px;top:219px;width:576px;height:163px">
+      <span class="scr tr"></span>
+      <div class="ph"><span class="led"></span><span class="nameplate">GPU · Arc B580</span><span class="sub">xe driver · card0</span></div>
+      <div class="nd" data-t="54" data-tip="Intel Arc B580 [8086:e20b] · xe · pkg 54°C · fan 0 rpm (passive) · 64 W / 200 W cap · flow: gt0 2100 MHz">
+        <span class="nm" style="font-size:12px">B580 · 12 GB</span><span class="vt"><b>54°C</b> · <b>64</b>/200 W · 2100 MHz</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="disp" data-tip="gpu_arc ⇄ DP-1 · Samsung LC27G7xT · 2560x1440 @0,0 · connected"><span class="nm">DP-1 · Samsung LC27G7xT</span><span class="vt">2560x1440 · main</span></div>
+        <div class="disp" data-tip="gpu_arc ⇄ DP-2 · HP E24i G4 · 1920x1200 @2560,0 · connected"><span class="nm">DP-2 · HP E24i G4</span><span class="vt">1920x1200 · right</span></div>
+        <div class="disp" data-tip="gpu_arc ⇄ HDMI-A-3 · HP Z24n G3 · 1920x1200 @-1920,0 · connected"><span class="nm">HDMI-A-3 · HP Z24n G3</span><span class="vt">1920x1200 · left</span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:1284px;top:394px;width:576px;height:54px;flex-direction:row;align-items:center;gap:10px">
+      <div class="nd" style="flex:1" data-t="53" data-tip="AMD Raphael iGPU [1002:164e] · amdgpu · card1 · edge 53°C · flow: 0% busy · PPT 65 W"><span class="nm">Raphael iGPU</span><span class="vt"><b>53°C</b> · 600 MHz · 65 W</span></div>
+    </div>
+    <div class="panel well" style="left:1284px;top:464px;width:576px;height:148px">
+      <span class="scr bl"></span>
+      <div class="ph"><span class="led cy"></span><span class="nameplate">nvme0n1 · KINGSTON</span><span class="sub">2 TB</span></div>
+      <div class="nd" data-t="46" data-tip="KINGSTON SNV3S2000G 2TB · 05:00.0 · composite 46°C · flow: 8.4 MB/s rd"><span class="nm">SNV3S2000G</span><span class="vt"><b>46°C</b> · hot 57°C</span></div>
+      <div class="parts">
+        <div class="part"><i>nvme0n1p1</i><span class="fs">vfat 100M</span><span class="m">—</span></div>
+        <div class="part"><i>nvme0n1p2</i><span class="fs">ntfs 1.86T</span><span class="m">82CC5F65CC5F5311 · 71%</span></div>
+        <div class="part"><i>nvme0n1p3</i><span class="fs">ntfs 902M</span><span class="m">—</span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:1284px;top:628px;width:576px;height:148px">
+      <span class="scr bl"></span>
+      <div class="ph"><span class="led cy"></span><span class="nameplate">nvme1n1 · Samsung 980 PRO</span><span class="sub">2 TB</span></div>
+      <div class="nd" data-t="48" data-tip="Samsung 980 PRO 2TB · 13:00.0 · composite 48°C · flow: 420 kB/s wr"><span class="nm">980 PRO</span><span class="vt"><b>48°C</b> · hot 52°C</span></div>
+      <div class="parts">
+        <div class="part"><i>nvme1n1p2</i><span class="fs">ntfs 1.57T</span><span class="m">DATA · 0%</span></div>
+        <div class="part"><i>nvme1n1p3</i><span class="fs">vfat 2G</span><span class="m">/boot · 3%</span></div>
+        <div class="part"><i>nvme1n1p4</i><span class="fs">luks 274G</span><span class="m">omarchy_root · 39%</span></div>
+      </div>
+    </div>
+    <div class="panel well" style="left:1284px;top:792px;width:576px;height:259px">
+      <span class="scr br"></span>
+      <div class="ph"><span class="led gr"></span><span class="nameplate">Network + SATA</span><span class="sub">2 nics · 3 links</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="nd" data-t="43" data-tip="Realtek RTL8125 2.5GbE 0f:00.0 · r8169 · hwmon6 43°C"><span class="nm">RTL8125 2.5GbE</span><span class="vt"><b>43°C</b></span></div>
+        <div class="nd" data-t="43" data-tip="net_eth ⇄ machine · enp15s0 UP · 192.168.0.112/24 · flow: 1.2 MB/s ↓ 96 kB/s ↑"><span class="nm">enp15s0</span><span class="vt"><i class="g">UP</i> · 192.168.0.112/24</span></div>
+        <div class="nd" data-t="48" data-tip="MediaTek MT7922 Wi-Fi 6E 10:00.0 · mt7921e · phy 48°C"><span class="nm">MT7922 6E</span><span class="vt"><b>48°C</b></span></div>
+        <div class="nd dimnd" data-t="48" data-tip="net_wifi ⇄ machine · wlp16s0 DOWN · flow: 0 B/s"><span class="nm">wlp16s0</span><span class="vt"><i>DOWN</i> · rf-soft</span></div>
+        <div class="nd dimnd" data-t="39" data-tip="lo loopback · UP · 127.0.0.1"><span class="nm">lo</span><span class="vt"><i>UP</i></span></div>
+        <div class="nd dimnd" data-t="41" data-tip="AMD 600-series SATA 12:00.0 · ahci · link GT/s 16.0 · no disks attached"><span class="nm">SATA ahci</span><span class="vt"><i>12:00.0</i> no disks</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const NS='http://www.w3.org/2000/svg', svg=document.getElementById('bus');
+  const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  const bus=(d)=>svg.appendChild(el('path',{d:d,'class':'bus'}));
+  const flow=(d,tip,cy)=>{const p=el('path',{d:d,'class':'flow'+(cy?' cy':''),'data-tip':tip});svg.appendChild(p);};
+  const lbl=(x,y,t)=>{const e=el('text',{x:x,y:y,'class':'buslbl'});e.textContent=t;svg.appendChild(e);};
+
+  svg.appendChild(el('line',{x1:20,y1:10,x2:1860,y2:10,'class':'bus',style:'stroke-width:3'}));
+
+  bus('M1284,109 L1264,109');
+  bus('M944,290 L944,320'); bus('M944,374 L944,404');
+  bus('M1264,500 L1274,500 L1274,300 L1284,300');
+  bus('M1264,540 L1274,540 L1274,421 L1284,421');
+  bus('M1264,580 L1274,580 L1274,538 L1284,538');
+  bus('M1264,620 L1274,620 L1274,702 L1284,702');
+  bus('M1264,900 L1274,900 L1274,924 L1284,924');
+  bus('M624,500 L612,500 L612,314 L600,314');
+  bus('M624,600 L612,600 L612,796 L600,796');
+  bus('M624,700 L612,700 L612,1041 L600,1041');
+
+  flow('M944,40 L944,10','cpu_pkg0 ⇄ machine · load 7.70 · 12c/24t · avg 5150 MHz');
+  flow('M1572,20 L1572,10','mem ⇄ machine · dirty+writeback 12 kB/s · 33.4 GiB free',true);
+  flow('M1860,924 L1870,924 L1870,10','net_eth ⇄ machine · enp15s0 · 1.2 MB/s ↓ · 96 kB/s ↑');
+  flow('M1860,702 L1870,702 L1870,10','nvme1n1 ⇄ machine · Samsung 980 PRO · 420 kB/s wr',true);
+  flow('M1860,538 L1870,538 L1870,10','nvme0n1 ⇄ machine · KINGSTON · 8.4 MB/s rd');
+  flow('M20,480 L10,480 L10,10','flash_kingston ⇄ machine · sda · 0 B/s idle',true);
+
+  const head=document.querySelector('.head');
+  const mc=document.createElement('div');
+  mc.className='nd'; mc.style.marginLeft='8px';
+  mc.setAttribute('data-t','83');
+  mc.setAttribute('data-tip','machine · OmarchyLink · load1 7.70 · 24 threads · 64.85 GB');
+  mc.innerHTML='<span class="nm">OmarchyLink</span><span class="vt"><b>7.70</b> <i>load1</i></span>';
+  head.appendChild(mc);
+
+  const heat={};
+  document.querySelectorAll('.nd,.ccd,.dimmslot').forEach(n=>{
+    const t=parseFloat(n.dataset.t||'34');
+    const h=Math.max(0,Math.min(215,215-(t-35)*(215/55)));
+    n.style.setProperty('--h',h.toFixed(0));
+  });
+  const lb=document.getElementById('lens-link'), hb=document.getElementById('lens-heat');
+  lb.onclick=()=>{document.body.classList.remove('lens-heat');lb.classList.add('sel');hb.classList.remove('sel');};
+  hb.onclick=()=>{document.body.classList.add('lens-heat');hb.classList.add('sel');lb.classList.remove('sel');};
+
+  const tip=document.createElement('div'); tip.className='tip'; document.body.appendChild(tip);
+  const show=(e)=>{const t=e.target.closest('[data-tip]');
+    if(!t){tip.style.display='none';return;}
+    const parts=t.getAttribute('data-tip').split(' · ');
+    tip.innerHTML='<em>'+parts[0]+'</em><span class="u">'+parts.slice(1).join(' · ')+'</span>';
+    tip.style.display='block';
+    const r=t.getBoundingClientRect();
+    let x=r.left+r.width/2-130, y=r.bottom+8;
+    if(y+60>window.innerHeight) y=r.top-58;
+    if(x<8)x=8; if(x+260>window.innerWidth)x=window.innerWidth-268;
+    tip.style.left=x+'px'; tip.style.top=y+'px';};
+  document.addEventListener('mouseover',show); document.addEventListener('mouseout',()=>{tip.style.display='none';});
+
+  const n=document.querySelectorAll('.nd').length+document.querySelectorAll('.ccd').length
+        +document.querySelectorAll('.dimmslot').length+document.querySelectorAll('.disp').length;
+  document.getElementById('ncount').textContent=n+' nodes · 13 flow sources';
+})();
+</script>
+</body></html>

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en" data-size="2560x1440"><head><meta charset="utf-8">
+<title>Command Hub · DP-1 · NEXUSLINK HUD v4 · C</title>
+<link rel="stylesheet" href="deck.css">
+<style>
+html,body{width:2560px;height:1440px}
+.stage{position:absolute;inset:0}
+.head{position:absolute;top:16px;left:20px;right:20px;height:64px;display:flex;align-items:center;gap:20px;padding:0 22px}
+.head .nameplate{font-size:17px;color:var(--ink)}
+.headmeta{margin-left:auto;display:flex;gap:24px;align-items:center;font-family:'Share Tech Mono';font-size:12.5px;color:var(--ink2)}
+.headmeta .chip{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.hcol{position:absolute;top:244px;width:434px;display:flex;flex-direction:column;gap:17px}
+.hcol.l{left:64px}
+.hcol.r{right:64px}
+.tile{position:relative;display:flex;flex-direction:column;gap:10px;height:176px;padding:17px 19px 15px;cursor:pointer;
+  text-decoration:none;color:inherit}
+.tile:hover{box-shadow:9px 9px 18px var(--sh-dark), -6px -6px 13px rgba(255,255,255,.05), inset 0 1px 0 var(--edge)}
+.tile:active{box-shadow:inset 4px 4px 9px rgba(0,0,0,.7), inset -2px -2px 5px rgba(255,255,255,.03)}
+.t-h{display:flex;align-items:center;gap:10px}
+.t-h .nameplate{font-size:13px;color:var(--ink)}
+.t-h .go{margin-left:auto;font-family:'Tektur';font-size:9.5px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase}
+.tile:hover .go{color:var(--amber)}
+.insight{font-size:15.5px;line-height:1.45;color:var(--ink2)}
+.insight b{color:var(--ink);font-weight:600}
+.t-foot{margin-top:auto;display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+.t-read{font-size:26px;line-height:1.25}
+.t-unit{font-family:'Tektur';font-size:9.5px;letter-spacing:.14em;color:var(--etch);text-transform:uppercase;margin-bottom:3px}
+.t-bar{flex:1;max-width:150px;margin-bottom:8px}
+</style></head><body></body></html>
+<style>
+/* ---- reactor instrument: dark glass disc on extruded bezel, knot etched behind ---- */
+.knotwrap{position:absolute;left:calc(50% - 408px);top:calc(50% - 416px);opacity:.92;pointer-events:none}
+.reactor{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:648px;height:648px}
+.ring-bezel{position:absolute;inset:0;border-radius:50%;
+  background:linear-gradient(150deg,#262b35,#171a20 55%,#12151a);
+  box-shadow:10px 12px 30px rgba(0,0,0,.72), -8px -8px 18px rgba(255,255,255,.045),
+             inset 0 1px 0 var(--edge), inset 0 -2px 5px rgba(0,0,0,.5)}
+.glass-disc{position:absolute;inset:29px;border-radius:50%;overflow:hidden;
+  background:radial-gradient(circle at 38% 30%, rgba(26,33,44,.5), rgba(8,10,15,.88) 62%);
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.035), inset 10px 12px 30px rgba(0,0,0,.85),
+             inset -6px -8px 22px rgba(255,255,255,.03), 0 22px 44px rgba(0,0,0,.55)}
+.glass-disc::after{content:'';position:absolute;left:8%;top:2%;width:52%;height:46%;border-radius:50%;
+  background:linear-gradient(195deg, rgba(210,228,242,.10), transparent 65%);transform:rotate(-14deg)}
+.scr.n{top:22px;left:50%;margin-left:-5px}.scr.s{bottom:22px;left:50%;margin-left:-5px}
+.scr.w{left:22px;top:50%;margin-top:-5px}.scr.e{right:22px;top:50%;margin-top:-5px}
+.gaugewrap{position:absolute;inset:29px}
+.r-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0}
+.r-eyebrow{font-family:'Tektur';font-size:11px;letter-spacing:.3em;color:var(--etch);text-transform:uppercase}
+.r-hero{font-size:118px;line-height:1.25;margin:8px 0 6px}
+.r-hero small{font-size:44px}
+.r-cap{font-family:'Tektur';font-size:11px;letter-spacing:.22em;color:var(--cyan);text-transform:uppercase}
+.r-row{display:flex;gap:12px;margin-top:16px}
+.r-cell{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:96px;padding:8px 10px 7px;border-radius:9px}
+.r-cell .readout{font-size:23px}
+.r-cell .lbl{font-family:'Tektur';font-size:8.5px;letter-spacing:.16em;color:var(--etch);text-transform:uppercase}
+.r-note{margin-top:12px;font-family:'Share Tech Mono';font-size:11.5px;color:var(--dim)}
+/* ---- utility switch bank ---- */
+.util{position:absolute;left:20px;right:20px;bottom:16px;height:138px;display:flex;align-items:center;gap:10px;padding:0 18px}
+.sw{position:relative;flex:1;min-width:0;height:104px;display:flex;flex-direction:column;justify-content:space-between;padding:12px 13px 11px}
+.sw .lab{display:flex;align-items:center;gap:8px}
+.sw .lab .tag{font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw .val{font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw .val b{color:var(--amber);font-weight:400}
+.sw .ctl{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sw .badge{position:absolute;top:-7px;right:-4px;min-width:20px;height:20px;border-radius:10px;padding:0 6px;
+  display:flex;align-items:center;justify-content:center;font-family:'Doto';font-weight:700;font-size:12px;color:#171207;
+  background:linear-gradient(180deg,#ffc477,#f0a13e);box-shadow:0 3px 8px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.5)}
+</style>
+<div class="fx-scan"></div><div class="fx-grain"></div>
+<div class="stage">
+  <div class="head plate-raised">
+    <span class="scr tl"></span><span class="scr tr"></span>
+    <canvas id="deckmark" width="34" height="34" style="width:34px;height:34px"></canvas>
+    <span class="nameplate">Nexuslink · Command Hub</span>
+    <span class="stamp">DP-1 · main</span>
+    <span class="stamp" style="color:var(--amber);border-color:rgba(255,176,84,.4)">navigator: press any tile</span>
+    <div class="headmeta">
+      <span class="chip"><span class="led gr" style="width:7px;height:7px"></span>up 1d 05h</span>
+      <span class="chip">Vienna 22°C ↖17</span>
+      <span class="chip">theme hackerman</span>
+      <span class="chip">profile perf</span>
+      <span class="chip readout cy" style="font-size:15px">17:42</span>
+    </div>
+  </div>
+  <div class="hcol l">
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tl"></span>
+      <div class="t-h"><span class="led cy"></span><span class="nameplate">Files</span><span class="go">open →</span></div>
+      <div class="insight">3 volumes on the desk. Newest download: <b>Devin-linux-x64-3.10.35</b> (363 MB). Clipboard holds <b>31</b> entries.</div>
+      <div class="t-foot"><div><div class="t-read readout cy">3</div><div class="t-unit">volumes</div></div><div class="seg thin t-bar"><i class="cy" style="--v:71%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tl"></span>
+      <div class="t-h"><span class="led"></span><span class="nameplate">Processes</span><span class="go">open →</span></div>
+      <div class="insight">devin at <b>216% of a core</b>, quickshell 141%. Chromium at <b>18%</b> is the quiet one. 22 agent procs total.</div>
+      <div class="t-foot"><div><div class="t-read readout">7.70</div><div class="t-unit">load 1m</div></div><div class="seg thin t-bar"><i style="--v:32%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tl"></span>
+      <div class="t-h"><span class="led gr"></span><span class="nameplate">Devices</span><span class="go">open →</span></div>
+      <div class="insight">G502 X PLUS battery <b>94%</b>. B580 fan parked at 0 rpm (passive, 64 W). Board carries <b>78 nodes</b>.</div>
+      <div class="t-foot"><div><div class="t-read readout cy">78</div><div class="t-unit">nodes</div></div><div class="seg thin t-bar"><i class="cy" style="--v:94%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tl"></span>
+      <div class="t-h"><span class="led blink"></span><span class="nameplate">Agents</span><span class="go">open →</span></div>
+      <div class="insight"><b>3 Devin sessions live</b> (abrupt-howler, cottony-owner, fossil-alarm). 5 ACP peers, 2 tmux agents.</div>
+      <div class="t-foot"><div><div class="t-read readout">3</div><div class="t-unit">live sessions</div></div><div class="seg thin t-bar"><i style="--v:25%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tl"></span>
+      <div class="t-h"><span class="led cy"></span><span class="nameplate">Repos / CI</span><span class="go">open →</span></div>
+      <div class="insight"><b>50 unread</b> on GitHub (nexuslinkproductions). 6 pushes to AURICLE today, newest 3.3 h ago.</div>
+      <div class="t-foot"><div><div class="t-read readout">50</div><div class="t-unit">unread</div></div><div class="seg thin t-bar"><i style="--v:100%"></i></div></div>
+    </a>
+  </div>
+  <div class="hcol r">
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tr"></span>
+      <div class="t-h"><span class="led gr"></span><span class="nameplate">Network</span><span class="go">open →</span></div>
+      <div class="insight">enp15s0 up at <b>192.168.0.112/24</b> (2.5GbE). wlp16s0 stays down. 1.2 MB/s downstream.</div>
+      <div class="t-foot"><div><div class="t-read readout cy">2.5</div><div class="t-unit">gbit link</div></div><div class="seg thin t-bar"><i class="cy" style="--v:48%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tr"></span>
+      <div class="t-h"><span class="led gr"></span><span class="nameplate">Storage</span><span class="go">open →</span></div>
+      <div class="insight">root at <b>39%</b> with 153 GB free. nvme1 48°C, nvme0 46°C. DATA volume at 1.57 TB.</div>
+      <div class="t-foot"><div><div class="t-read readout">153</div><div class="t-unit">gb free</div></div><div class="seg thin t-bar"><i class="cy" style="--v:39%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tr"></span>
+      <div class="t-h"><span class="led off"></span><span class="nameplate">Media</span><span class="go">open →</span></div>
+      <div class="insight">MPRIS idle. No player session since the last reboot. Sink ready: Corsair Slipstream at 95%.</div>
+      <div class="t-foot"><div><div class="t-read readout dim">IDLE</div><div class="t-unit">mpris</div></div><div class="seg thin t-bar"><i style="--v:0%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tr"></span>
+      <div class="t-h"><span class="led"></span><span class="nameplate">Settings / System</span><span class="go">open →</span></div>
+      <div class="insight"><b>2 updates ready: aether, mise-bin</b>. Power profile performance. Night light off, DND off.</div>
+      <div class="t-foot"><div><div class="t-read readout">2</div><div class="t-unit">updates</div></div><div class="seg thin t-bar"><i style="--v:12%"></i></div></div>
+    </a>
+    <a class="tile plate-raised" href="nav.html">
+      <span class="scr tr"></span>
+      <div class="t-h"><span class="led cy"></span><span class="nameplate">Tokens</span><span class="go">open →</span></div>
+      <div class="insight">opencode <b>29.5M in today · $0.22</b>. Devin 159.9M in. Claude still waiting for auth.</div>
+      <div class="t-foot"><div><div class="t-read readout cy">0.22</div><div class="t-unit">$ today</div></div><div class="seg thin t-bar"><i class="cy" style="--v:66%"></i></div></div>
+    </a>
+  </div>
+  <div class="knotwrap"><canvas id="knot" class="knot"></canvas></div>
+  <div class="reactor">
+    <div class="ring-bezel">
+      <span class="scr n"></span><span class="scr s"></span><span class="scr w"></span><span class="scr e"></span>
+    </div>
+    <div class="glass-disc">
+      <svg class="gaugewrap" viewBox="0 0 590 590"></svg>
+      <div class="r-center">
+        <div class="r-eyebrow">load avg · 1 min</div>
+        <div class="r-hero readout">7.70</div>
+        <div class="r-cap">of 24 threads · 32%</div>
+        <div class="r-row">
+          <div class="r-cell well"><span class="readout">83°</span><span class="lbl">Tctl</span></div>
+          <div class="r-cell well"><span class="readout">87/61</span><span class="lbl">CCD °C</span></div>
+          <div class="r-cell well"><span class="readout cy">5150</span><span class="lbl">MHz avg</span></div>
+        </div>
+        <div class="r-note">mem 46% used · 33.4 GiB free · swap 1.5 G of 124 G</div>
+      </div>
+    </div>
+  </div>
+  <div class="util plate-raised">
+    <span class="scr bl"></span><span class="scr br"></span>
+    <div class="sw well"><div class="lab"><span class="led off"></span><span class="tag">media</span></div><div class="val">no player</div><div class="ctl"><div class="tog"></div><span class="tag" style="font-size:8.5px">mpris</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led gr"></span><span class="tag">notifications</span></div><div class="val">dnd off · <b>10</b> history</div><div class="ctl"><div class="tog on"></div><span class="tag" style="font-size:8.5px">ringing</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led"></span><span class="tag">volume</span></div><div class="val">corsair · <b>95%</b></div><div class="ctl"><div class="knob" style="--deg:121deg;transform:scale(.8)"></div><span class="tag" style="font-size:8.5px">default sink</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led gr"></span><span class="tag">mic</span></div><div class="val">open · 100%</div><div class="ctl"><div class="tog on"></div><span class="tag" style="font-size:8.5px">live</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led cy"></span><span class="tag">clipboard</span></div><div class="val"><b>31</b> entries</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">open</button><span class="tag" style="font-size:8.5px">history</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led cy"></span><span class="tag">capture</span></div><div class="val">grim · slurp · ocr</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">shot</button><button class="pbtn" style="padding:7px 12px;font-size:9.5px">ocr</button></div></div>
+    <div class="sw well"><div class="lab"><span class="led off"></span><span class="tag">stay awake</span></div><div class="val">idle 150 s · lock 300 s</div><div class="ctl"><div class="tog"></div><span class="tag" style="font-size:8.5px">coffee</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led cy"></span><span class="tag">weather</span></div><div class="val">Vienna · <b>22°C</b></div><div class="ctl"><span class="tag" style="font-size:8.5px">wind ↖17</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led off"></span><span class="tag">reminders</span></div><div class="val">0 active</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">+25 min</button></div></div>
+    <div class="sw well"><div class="lab"><span class="led blink"></span><span class="tag">updates</span></div><div class="val">aether · mise-bin</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">apply</button><span class="badge">2</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led gr"></span><span class="tag">expose</span></div><div class="val">3 ws · 5 windows</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">show</button></div></div>
+    <div class="sw well"><div class="lab"><span class="led off"></span><span class="tag">night light</span></div><div class="val">off</div><div class="ctl"><div class="tog"></div><span class="tag" style="font-size:8.5px">hyprsunset</span></div></div>
+    <div class="sw well"><div class="lab"><span class="led"></span><span class="tag">power</span></div><div class="val">performance</div><div class="ctl"><button class="pbtn sel" style="padding:7px 12px;font-size:9.5px">perf</button></div></div>
+    <div class="sw well"><div class="lab"><span class="led gr"></span><span class="tag">disk</span></div><div class="val">root <b>41%</b> · 153G free</div><div class="ctl"><div class="seg thin" style="flex:1"><i class="cy" style="--v:41%"></i></div></div></div>
+    <div class="sw well"><div class="lab"><span class="led cy"></span><span class="tag">downloads</span></div><div class="val">bundle + tar.gz</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">reveal</button></div></div>
+    <div class="sw well"><div class="lab"><span class="led cy"></span><span class="tag">theme</span></div><div class="val">hackerman</div><div class="ctl"><button class="pbtn" style="padding:7px 12px;font-size:9.5px">next bg</button></div></div>
+  </div>
+</div>
+<script src="knot.js"></script>
+<script>
+drawKnot(document.getElementById('knot'), 17, 0.5);
+const km=document.getElementById('deckmark'); drawKnot(km,2,0.55); km.style.width='34px'; km.style.height='34px';
+(function(){
+  const svg=document.querySelector('.gaugewrap'), NS='http://www.w3.org/2000/svg';
+  const el=(t,a,txt)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;svg.appendChild(e);return e;};
+  const C=295;
+  for(let i=0;i<72;i++){
+    const a=i*5*Math.PI/180, maj=i%6===0, r1=maj?254:260, r2=272;
+    el('line',{x1:C+r1*Math.sin(a),y1:C-r1*Math.cos(a),x2:C+r2*Math.sin(a),y2:C-r2*Math.cos(a),
+      stroke:maj?'rgba(190,196,208,.5)':'rgba(190,196,208,.2)','stroke-width':maj?2.4:1.2});
+  }
+  [0,25,50,75].forEach(p=>{
+    const a=p*2*Math.PI/100-Math.PI/2;
+    el('text',{x:C+236*Math.cos(a),y:C+236*Math.sin(a)+4,'text-anchor':'middle',
+      'font':"11px 'Share Tech Mono'",fill:'#6d6f7c'},String(p*24/100));
+  });
+  const arc=(r,pct,cls,w,rot)=>{
+    const circ=2*Math.PI*r;
+    el('circle',{cx:C,cy:C,r:r,fill:'none',stroke:cls==='a'?'rgba(255,176,84,.14)':'rgba(92,224,212,.12)',
+      'stroke-width':w,transform:'rotate(-90 '+C+' '+C+')'});
+    el('circle',{cx:C,cy:C,r:r,fill:'none',stroke:cls==='a'?'var(--amber)':'var(--cyan)',
+      'stroke-width':w,'stroke-linecap':'round','stroke-dasharray':(circ*pct)+' '+(circ*(1-pct)),
+      transform:'rotate(-90 '+C+' '+C+')',
+      style:'filter:drop-shadow(0 0 7px '+(cls==='a'?'rgba(255,176,84,.4)':'rgba(92,224,212,.35)')+')'});
+  };
+  arc(246,0.32,'a',9);
+  arc(222,0.46,'c',5);
+})();
+</script>
+</body></html>

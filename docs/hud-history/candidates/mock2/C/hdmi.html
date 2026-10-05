@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" data-size="1920x1200"><head><meta charset="utf-8">
+<title>Workbench + Patch Bay · HDMI-A-3 · NEXUSLINK HUD v4 · C</title>
+<link rel="stylesheet" href="deck.css">
+<style>
+html,body{width:1920px;height:1200px}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;padding:16px 20px 18px}
+.head{display:flex;align-items:center;gap:18px;min-height:56px;padding:0 20px}
+.head .nameplate{font-size:16px;color:var(--ink)}
+.head .stamp{margin-left:6px}
+.headmeta{margin-left:auto;display:flex;gap:26px;align-items:center;font-family:'Share Tech Mono';font-size:12px;color:var(--ink2)}
+.headmeta .chip{display:flex;align-items:center;gap:8px}
+.cols{flex:1;display:grid;grid-template-columns:1032px 806px;gap:16px;min-height:0}
+.wb{display:flex;flex-direction:column;gap:13px;min-height:0}
+.mod .body{padding:13px 15px}
+/* workspaces */
+.wsrow{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.ws{padding:10px 11px 11px;display:flex;flex-direction:column;gap:8px}
+.ws-h{display:flex;align-items:center;gap:8px}
+.ws-h .tag{font-size:10px}
+.ws-h .mon{margin-left:auto;font-family:'Share Tech Mono';font-size:10.5px;color:var(--dim)}
+.wincard{display:flex;flex-direction:column;border-radius:7px;overflow:hidden;cursor:pointer;
+  background:linear-gradient(150deg,#232833,#191c23);
+  box-shadow:3px 3px 8px var(--sh-soft), -2px -2px 5px rgba(255,255,255,.03), inset 0 1px 0 var(--edge2)}
+.wincard:hover{filter:brightness(1.14)}
+.wintitle{display:flex;align-items:center;gap:7px;height:22px;padding:0 8px;
+  background:linear-gradient(180deg,#2c323e,#21252e)}
+.wintitle i{width:6px;height:6px;border-radius:50%;background:#3d4450;box-shadow:inset 0 1px 1px rgba(0,0,0,.5)}
+.wintitle span{font-size:10.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
+.winbody{height:31px;display:flex;flex-direction:column;gap:4px;padding:6px 9px;background:rgba(10,12,17,.5)}
+.winbody i{height:4px;border-radius:2px;background:rgba(190,200,215,.13)}
+.winbody i:nth-child(2){width:72%}
+.winbody i:nth-child(3){width:48%}
+.winbody.dev i{background:rgba(255,176,84,.14)}
+/* agents */
+.aggrid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}
+.agslot{display:flex;align-items:center;gap:8px;padding:8px 10px;min-width:0}
+.agslot .nm{font-family:'Share Tech Mono';font-size:11.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 0}
+.agslot.on .nm{color:var(--ink)}
+
+/* process ledger */
+.prow{display:grid;grid-template-columns:190px 1fr 118px;gap:14px;align-items:center;height:34px}
+.prow .nm{font-family:'Share Tech Mono';font-size:13px;color:var(--ink)}
+.prow .val{font-family:'Share Tech Mono';font-size:12px;color:var(--ink2);text-align:right;white-space:nowrap}
+.prow .val b{color:var(--amber);font-weight:400}
+</style></head><body></body></html>
+<style>
+/* repos + tokens */
+.reporow{display:grid;grid-template-columns:158px 148px 1fr 128px;gap:14px;align-items:center;height:38px}
+.reporow .nm{font-family:'Share Tech Mono';font-size:13px;color:var(--ink)}
+.reporow .br{font-family:'Share Tech Mono';font-size:10.5px;color:var(--etch);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reporow .st{font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reporow .st b{font-weight:400}
+.reporow .st .a{color:var(--amber)} .reporow .st .c{color:var(--cyan)} .reporow .st .g{color:var(--green)} .reporow .st .r{color:var(--red)}
+.ci{display:flex;align-items:center;gap:7px;font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);white-space:nowrap}
+.tokhead{display:grid;grid-template-columns:132px 1fr 1fr 1fr;gap:12px;padding:0 14px 8px;
+  font-family:'Tektur';font-size:9.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim)}
+.tokrow{display:grid;grid-template-columns:132px 1fr 1fr 1fr;gap:12px;align-items:center;height:30px;padding:0 14px}
+.tokrow .p{display:flex;align-items:center;gap:9px;font-family:'Share Tech Mono';font-size:12.5px;color:var(--ink)}
+.tokrow .v{font-family:'Share Tech Mono';font-size:12px;color:var(--ink2);white-space:nowrap}
+.tokrow .v em{font-style:normal;color:var(--etch)}
+.tokrow .v b{font-weight:400;color:var(--amber)}
+/* ---- patch bay ---- */
+.bay{position:relative;display:flex;flex-direction:column;gap:13px;min-height:0;padding:16px 16px 16px 44px}
+.baylabel{position:absolute;left:11px;top:16px;bottom:16px;width:20px;display:flex;align-items:center;justify-content:center}
+.baylabel span{writing-mode:vertical-rl;transform:rotate(180deg);font-family:'Tektur';font-size:10px;letter-spacing:.3em;color:var(--dim);text-transform:uppercase}
+#cables{position:absolute;inset:0;pointer-events:none;z-index:4}
+.grp{display:flex;flex-direction:column;gap:8px;padding:11px 13px}
+.grp-h{display:flex;align-items:center;gap:9px}
+.grp-h .nameplate{font-size:10.5px}
+.grp-h .sub{margin-left:auto;font-family:'Share Tech Mono';font-size:10.5px;color:var(--dim)}
+.jrow{display:grid;grid-template-columns:30px 1fr auto;gap:11px;align-items:center;height:34px}
+.jrow .lbl{font-family:'Share Tech Mono';font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jrow .lbl small{display:block;font-size:10px;color:var(--etch)}
+.jrow .st{font-family:'Share Tech Mono';font-size:11px;color:var(--ink2);white-space:nowrap}
+.jrow .st .a{color:var(--amber)} .jrow .st .c{color:var(--cyan)} .jrow .st .g{color:var(--green)} .jrow .st .r{color:var(--red)}
+.jrow.dead .lbl{color:var(--dim)}
+.vrow{display:grid;grid-template-columns:30px 1fr auto auto;gap:11px;align-items:center;height:34px}
+.knobwrap{display:flex;flex-direction:column;align-items:center;gap:2px;width:58px}
+.knobwrap small{font-family:'Share Tech Mono';font-size:9.5px;color:var(--etch)}
+.clip{display:flex;flex-direction:column;gap:6px}
+.clip .citem{display:flex;gap:10px;align-items:baseline;font-family:'Share Tech Mono';font-size:11.5px;color:var(--ink2);white-space:nowrap;overflow:hidden}
+.clip .citem i{flex:none;font-style:normal;color:var(--dim);font-size:10px}
+.clip .citem span{overflow:hidden;text-overflow:ellipsis}
+.sessrow{display:flex;gap:10px}
+.sessrow .pbtn{padding:11px 16px;font-size:11px}
+</style>
+<div class="fx-scan"></div><div class="fx-grain"></div>
+<div class="wrap">
+  <div class="head plate-raised">
+    <span class="scr tl"></span><span class="scr tr"></span>
+    <span class="nameplate">Workbench + Patch Bay</span>
+    <span class="stamp">HDMI-A-3 · left</span>
+    <div class="headmeta">
+      <span class="chip"><span class="led gr" style="width:7px;height:7px"></span>OmarchyLink up 1d 05h</span>
+      <span class="chip">load 7.70</span>
+      <span class="chip">Vienna 22°C ↖17</span>
+      <span class="chip readout cy" style="font-size:13px">17:42</span>
+    </div>
+  </div>
+  <div class="cols">
+    <div class="wb">
+      <div class="mod">
+        <div class="mod-h"><span class="led"></span><span class="nameplate">Workspaces</span><span class="sub">3 ws · 5 windows · expose ready</span></div>
+        <div class="wsrow">
+          <div class="ws plate-raised"><div class="ws-h"><span class="tag">ws 1</span><span class="mon">HDMI-A-3</span></div>
+            <div class="wincard"><div class="wintitle"><i></i><i></i><i></i><span>(600) Discord | @Aleks Z.</span></div><div class="winbody"><i></i><i></i><i></i></div></div>
+            <div class="wincard"><div class="wintitle"><i></i><i></i><i></i><span>NEXUS_AI_CENTER - Devin - Locating lost HUD rework session</span></div><div class="winbody dev"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="ws plate-raised"><div class="ws-h"><span class="tag">ws 4</span><span class="mon">DP-1</span></div>
+            <div class="wincard"><div class="wintitle"><i></i><i></i><i></i><span>October</span></div><div class="winbody"><i></i><i></i><i></i></div></div>
+          </div>
+          <div class="ws plate-raised"><div class="ws-h"><span class="tag">ws 7</span><span class="mon">DP-2</span></div>
+            <div class="wincard"><div class="wintitle"><i></i><i></i><i></i><span>Cal.com Video - Chromium</span></div><div class="winbody"><i></i><i></i><i></i></div></div>
+            <div class="wincard"><div class="wintitle"><i></i><i></i><i></i><span>PRIME-STATE (Workspace) - Devin</span></div><div class="winbody dev"><i></i><i></i><i></i></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="mod plate-raised">
+        <span class="scr tr"></span><span class="scr bl"></span>
+        <div class="mod-h" style="padding:13px 15px 0"><span class="led"></span><span class="nameplate">Agent Sessions</span><span class="sub">5 ACP live · 22 agent procs · 2 tmux</span></div>
+        <div class="aggrid" style="padding:0 15px 14px">
+          <div class="agslot well on" title="pid 1450589"><span class="led blink" style="width:7px;height:7px"></span><span class="nm">abrupt-howler</span></div>
+          <div class="agslot well" title="pid 2486895"><span class="led off" style="width:7px;height:7px"></span><span class="nm">atlantic-fanatic</span></div>
+          <div class="agslot well" title="pid 1682163"><span class="led off" style="width:7px;height:7px"></span><span class="nm">button-cook</span></div>
+          <div class="agslot well on" title="pid 1450384"><span class="led blink" style="width:7px;height:7px"></span><span class="nm">cottony-owner</span></div>
+          <div class="agslot well" title="pid 65506"><span class="led off" style="width:7px;height:7px"></span><span class="nm">dust-metal</span></div>
+          <div class="agslot well" title="pid 65506"><span class="led off" style="width:7px;height:7px"></span><span class="nm">exciting-advantage</span></div>
+          <div class="agslot well" title="pid 2486807"><span class="led off" style="width:7px;height:7px"></span><span class="nm">familiar-cuckoo</span></div>
+          <div class="agslot well" title="pid 2486807"><span class="led off" style="width:7px;height:7px"></span><span class="nm">forest-raincoat</span></div>
+          <div class="agslot well on" title="pid 1450589"><span class="led blink" style="width:7px;height:7px"></span><span class="nm">fossil-alarm</span></div>
+          <div class="agslot well" title="pid 2020981"><span class="led off" style="width:7px;height:7px"></span><span class="nm">furtive-roadrunner</span></div>
+          <div class="agslot well" title="pid 2486895"><span class="led off" style="width:7px;height:7px"></span><span class="nm">gentle-yogurt</span></div>
+          <div class="agslot well" title="pid 2047893"><span class="led off" style="width:7px;height:7px"></span><span class="nm">jasper-brain</span></div>
+        </div>
+      </div>
+      <div class="mod plate-raised">
+        <div class="mod-h" style="padding:13px 15px 0"><span class="led cy"></span><span class="nameplate">Process Ledger</span><span class="sub">units: % of one core</span></div>
+        <div style="padding:8px 15px 14px;display:flex;flex-direction:column;gap:6px">
+          <div class="prow"><span class="nm">devin</span><div class="seg"><i style="--v:86%"></i></div><span class="val"><b>216%</b> · acp</span></div>
+          <div class="prow"><span class="nm">quickshell</span><div class="seg"><i style="--v:56%"></i></div><span class="val"><b>141%</b> · hud host</span></div>
+          <div class="prow"><span class="nm">electron</span><div class="seg"><i style="--v:46%"></i></div><span class="val"><b>115%</b> · discord</span></div>
+          <div class="prow"><span class="nm">opencode</span><div class="seg"><i style="--v:39%"></i></div><span class="val"><b>97%</b> · tui</span></div>
+          <div class="prow"><span class="nm">october-desktop</span><div class="seg"><i style="--v:15%"></i></div><span class="val"><b>38%</b> · shell</span></div>
+          <div class="prow"><span class="nm">chromium</span><div class="seg"><i style="--v:7%"></i></div><span class="val"><b>18%</b> · cal.com</span></div>
+        </div>
+      </div>
+      <div class="mod plate-raised">
+        <div class="mod-h" style="padding:13px 15px 0"><span class="led"></span><span class="nameplate">Repos / CI</span><span class="sub">gh: nexuslinkproductions · 50 unread</span></div>
+        <div style="padding:8px 15px 12px;display:flex;flex-direction:column;gap:4px">
+          <div class="reporow"><span class="nm">astralmon</span><span class="br">bundle</span><span class="st"><b>744624d</b> core 1.7.7: sources recover from a stall</span><span class="ci"><span class="led gr" style="width:7px;height:7px"></span>clean · synced</span></div>
+          <div class="reporow"><span class="nm">haze</span><span class="br">v1.4.0-subagent-acp+comms</span><span class="st"><b class="a">M</b> package-lock.json · <b>c4975d44</b> docs: v1.4.0 user overview</span><span class="ci"><span class="led" style="width:7px;height:7px"></span>dirty · behind 1</span></div>
+          <div class="reporow"><span class="nm">cursor-plugins</span><span class="br">main</span><span class="st"><b class="c">??</b> pstack/.devin-plugin/ · <b>ecc249f</b> Merge PR #439</span><span class="ci"><span class="led" style="width:7px;height:7px"></span>untracked</span></div>
+          <div class="reporow"><span class="nm">AURICLE</span><span class="br">remote activity</span><span class="st">6 pushes today · newest 3.3 h ago</span><span class="ci"><span class="led cy" style="width:7px;height:7px"></span>watching</span></div>
+        </div>
+      </div>
+      <div class="mod plate-raised">
+        <div class="mod-h" style="padding:13px 15px 0"><span class="led cy"></span><span class="nameplate">Token Ledger</span><span class="sub">tokens in / out · cost</span></div>
+        <div style="padding:10px 0 13px">
+          <div class="tokhead"><span>provider</span><span>day</span><span>week</span><span>month</span></div>
+          <div class="tokrow well" style="margin:0 8px"><span class="p"><span class="led gr" style="width:7px;height:7px"></span>devin</span><span class="v"><b>159.9M</b> / 35.9M</span><span class="v"><em>same</em></span><span class="v">169.5M / 37.7M</span></div>
+          <div class="tokrow" style="margin:0 8px"><span class="p"><span class="led gr" style="width:7px;height:7px"></span>opencode</span><span class="v"><b>29.5M</b> / 442K · <b>$0.22</b></span><span class="v">29.5M / 442K</span><span class="v">45.1M / 727K · <b>$0.36</b></span></div>
+          <div class="tokrow well" style="margin:0 8px"><span class="p"><span class="led cy" style="width:7px;height:7px"></span>haze team</span><span class="v"><em>—</em></span><span class="v"><em>—</em></span><span class="v">489.3M / 2.1M · 73 msgs</span></div>
+          <div class="tokrow" style="margin:0 8px"><span class="p"><span class="led rd" style="width:7px;height:7px"></span>claude</span><span class="v"><em>waiting for auth</em></span><span class="v"><em>—</em></span><span class="v"><em>—</em></span></div>
+          <div class="tokrow well" style="margin:0 8px"><span class="p"><span class="led off" style="width:7px;height:7px"></span>fireworks</span><span class="v"><em>unavailable</em></span><span class="v"><em>—</em></span><span class="v"><em>—</em></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="bay well">
+      <div class="baylabel"><span>Patch Bay</span></div>
+      <svg id="cables"></svg>
+      <span class="scr tr"></span><span class="scr br"></span>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led gr"></span><span class="nameplate">Network</span><span class="sub">enp15s0 carrier</span></div>
+        <div class="jrow"><span class="jack patched"></span><span class="lbl">enp15s0<small>Realtek RTL8125 2.5GbE · r8169</small></span><span class="st"><span class="g">UP</span> · 192.168.0.112/24 · 43°C</span></div>
+        <div class="jrow dead"><span class="jack"></span><span class="lbl">wlp16s0<small>MediaTek MT7922 Wi-Fi 6E</small></span><span class="st">DOWN · rf-soft</span></div>
+        <div class="jrow"><span class="jack patched cy"></span><span class="lbl">lo<small>loopback</small></span><span class="st">UP · 127.0.0.1</span></div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led"></span><span class="nameplate">Audio Routes</span><span class="sub">pipewire · default: corsair</span></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">Corsair Slipstream<small>sink · analog-stereo · default</small></span><span class="st"><span class="a">95%</span></span><div class="knobwrap"><div class="knob" style="--deg:121deg"></div><small>95</small></div></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">Ryzen HD analog<small>sink · 14:00.6</small></span><span class="st">standby</span><div class="knobwrap"><div class="knob" style="--deg:-135deg"></div><small>—</small></div></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">B580 HDMI out<small>sink · LC27G7xT</small></span><span class="st">standby</span><div class="knobwrap"><div class="knob" style="--deg:-135deg"></div><small>—</small></div></div>
+        <div class="vrow"><span class="jack patched cy"></span><span class="lbl">Corsair mic<small>source · mono-fallback · live</small></span><span class="st"><span class="g">OPEN</span> 100%</span><div class="knobwrap"><div class="knob" style="--deg:135deg"></div><small>100</small></div></div>
+        <div class="vrow dead"><span class="jack"></span><span class="lbl">Razer Kiyo mic<small>source · analog-stereo</small></span><span class="st">idle</span><div class="knobwrap"><div class="knob" style="--deg:-135deg"></div><small>—</small></div></div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led cy"></span><span class="nameplate">Bluetooth</span><span class="sub">hci0 · MT7922</span></div>
+        <div class="jrow"><span class="jack patched cy"></span><span class="lbl">hci0 controller<small>Powered: yes · discoverable: no</small></span><span class="st">0 paired · 0 connected</span></div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led"></span><span class="nameplate">Peripherals</span><span class="sub">usb tree · 4 endpoints</span></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">G502 X PLUS<small>Logitech receiver 6-6.3 · hidpp</small></span><span class="st"><span class="a">94%</span> · discharging</span><div class="knobwrap"><span class="readout" style="font-size:17px">94</span><small>batt</small></div></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">ASUS TUF K7<small>wired · 6-6.4 · event13/14</small></span><span class="st">us · layout</span><div class="knobwrap"><span class="readout cy" style="font-size:17px">US</span><small>keymap</small></div></div>
+        <div class="vrow"><span class="jack patched"></span><span class="lbl">Corsair Slipstream<small>receiver 6-6.2 · kbd+mouse</small></span><span class="st">event6-10</span><div class="knobwrap"><span class="readout" style="font-size:17px">2.4</span><small>ghz</small></div></div>
+        <div class="vrow"><span class="jack patched cy"></span><span class="lbl">Razer Kiyo<small>camera 6-6.1 · uvc + audio</small></span><span class="st">idle · 480M</span><div class="knobwrap"><span class="readout cy" style="font-size:17px">720</span><small>p</small></div></div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led gr"></span><span class="nameplate">Clipboard Recents</span><span class="sub">31 entries</span></div>
+        <div class="clip">
+          <div class="citem"><i>16:58</i><span>udevadm info -q path /devices/pci0000:00/0000:07:0c.0/usb6/6-6</span></div>
+          <div class="citem"><i>15:44</i><span>omarchy-shell nexuslink.hud status</span></div>
+          <div class="citem"><i>14:02</i><span>wl-copy $(hyprctl activewindow -j | jq -r .title)</span></div>
+        </div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led cy"></span><span class="nameplate">Downloads</span><span class="sub">~/Downloads · newest first</span></div>
+        <div class="clip">
+          <div class="citem"><i> bundle</i><span>astralmon-main.bundle · 1.4 MB</span></div>
+          <div class="citem"><i> tar.gz</i><span>Devin-linux-x64-3.10.35.tar.gz · 363 MB</span></div>
+        </div>
+      </div>
+      <div class="grp plate-raised">
+        <div class="grp-h"><span class="led gr"></span><span class="nameplate">Session</span><span class="sub">unlocked · profile: performance · ddc 50</span></div>
+        <div class="sessrow">
+          <button class="pbtn">Lock</button><button class="pbtn">Suspend</button><button class="pbtn">Reboot</button>
+          <button class="pbtn sel">Performance</button><button class="pbtn">Night Light</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  const svg=document.getElementById('cables'), bay=svg.parentElement;
+  const br=bay.getBoundingClientRect();
+  svg.setAttribute('width',br.width); svg.setAttribute('height',br.height);
+  svg.setAttribute('viewBox','0 0 '+br.width+' '+br.height);
+  const NS='http://www.w3.org/2000/svg';
+  bay.querySelectorAll('.jack.patched').forEach(j=>{
+    const r=j.getBoundingClientRect();
+    const x=r.left-br.left+9, y=r.top-br.top+9, ch=14;
+    const d='M '+ch+' '+y+' C '+(ch+(x-ch)*0.35)+' '+(y+16)+', '+(x-22)+' '+y+', '+x+' '+y;
+    const p=document.createElementNS(NS,'path');
+    p.setAttribute('d', d); p.setAttribute('fill','none');
+    const cy=j.classList.contains('cy');
+    p.setAttribute('stroke', cy?'rgba(92,224,212,.5)':'rgba(255,176,84,.46)');
+    p.setAttribute('stroke-width','3.4'); p.setAttribute('stroke-linecap','round');
+    p.setAttribute('stroke-dasharray','7 9');
+    const an=document.createElementNS(NS,'animate');
+    an.setAttribute('attributeName','stroke-dashoffset'); an.setAttribute('from','64'); an.setAttribute('to','0');
+    an.setAttribute('dur','2.4s'); an.setAttribute('repeatCount','indefinite');
+    p.appendChild(an); svg.appendChild(p);
+  });
+})();
+</script>
+</body></html>

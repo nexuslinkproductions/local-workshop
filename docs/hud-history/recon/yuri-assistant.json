@@ -1,0 +1,217 @@
+{
+  "recon_date": "2026-09-30",
+  "scope": "READ-ONLY inventory of YURI-OS-MUSUBI + LOCAL AI LAB + Hermes yuri artifacts for an always-on local assistant assessment. Haze excluded by instruction.",
+  "paths": {
+    "launch_folder": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/PROJECTS/YURI-OS-MUSUBI",
+    "real_repo": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/04_PROJECTS/YURI-OS-MUSUBI",
+    "local_ai_lab": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB",
+    "hermes_personality_live": "/home/nexuslink/.hermes/personalities/yuri.txt",
+    "hermes_profile_live": "/home/nexuslink/.hermes/profiles/yuri",
+    "hermes_overlay_archive": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/02_HERMES",
+    "credentials_yuri": "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/01_CREDENTIALS/config_misc/yuri/env.sh",
+    "remotion_folders": [
+      "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/04_PROJECTS/October/yuri-os-musubi-46526cef-remotion",
+      "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/04_PROJECTS/October/yuri-os-musubi-92e3ac95-remotion",
+      "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/04_PROJECTS/October/yuri-os-musubi-d886c2a1-remotion"
+    ]
+  },
+  "a_what_it_is": {
+    "summary": "YURI-OS-MUSUBI is a governance/control-plane monorepo for AI-assisted work ('deterministic gateway for AI') with a real Express+React app inside. It is NOT a personal voice assistant. PROJECTS/YURI-OS-MUSUBI is a 2-file launch folder; the real repo is the dirty Mac-migration snapshot under 04_PROJECTS.",
+    "structure": {
+      "_SYSTEM/": "control plane: backend, frontend, 712 scripts, memory, mure fleet, docs, labs",
+      "_SYSTEM/backend/": "Express 5 + TypeScript API, better-sqlite3, data/yuri.db, PM2 port 3004",
+      "_SYSTEM/src/": "Vite/React operator/portfolio shell (NOT a chat app), port 5173",
+      "_SYSTEM/Scripts/": "712 files: memory-kernel.mjs, ollama lanes, autonomy runner, workcell, voice/",
+      "_SYSTEM/memory/": "markdown index; real DBs in _SYSTEM/OS_KERNEL/ (memory.db, memory-cold.db, search-index.db)",
+      "_SYSTEM/mure/": "20-role agent fleet (ceo.mjs, company.mjs, goal-engine.mjs)",
+      "skills/": "178 governed skill dirs",
+      "integrations/": "agent-native, framer-mcp, spec-kit"
+    },
+    "loc": {
+      "method": "git ls-files + wc -l, excluding node_modules/dist/locks",
+      "by_language": {
+        "mjs": {"files": 1127, "lines": 319345},
+        "json": {"files": 300, "lines": 231454},
+        "markdown": {"files": 3169, "lines": 147462},
+        "python": {"files": 183, "lines": 41360},
+        "html": {"files": 64, "lines": 40652},
+        "ts": {"files": 182, "lines": 38174},
+        "tsx": {"files": 126, "lines": 29009},
+        "rust": {"files": 47, "lines": 12557},
+        "js": {"files": 72, "lines": 11865},
+        "css": {"files": 16, "lines": 10397},
+        "shell": {"files": 78, "lines": 4891},
+        "other": {"files": 18, "lines": 6658}
+      }
+    },
+    "does_it_run": {
+      "verdict": "Not as-is, and not on Linux without porting.",
+      "node_modules_installed": false,
+      "npm_run_dev": "starts only the Vite operator site on 5173",
+      "backend": "ts-node src/server.ts / PM2 dist/server.js on 3004; requires npm install + build",
+      "macos_coupling": [
+        "ecosystem.config.js hardcodes /Users/marcelspatz/.pm2/logs/",
+        "_SYSTEM/launchd/*.plist (7) + backend-operation-lock.plist",
+        "_SYSTEM/Scripts/llm-compat.sh uses macOS security find-generic-password",
+        "backend-volume-broker.swift, ollama-kv-launchd.mjs, yuri-session-launchd.mjs",
+        "voice stack is Apple-Silicon MLX only"
+      ],
+      "git": {"branch": "main", "last_commit": "2026-08-10 fix(gitnexus-mcp): harden wrapper lifecycle", "dirty": true, "untracked": 155, "modified": 17, "type_changed": 16, "deleted": 2}
+    },
+    "remotion_folders_verdict": "Unrelated Remotion video projects (NEXUS LINK promo recut, out/nexus-demo-15s.mp4). Named after workspace hash, not the assistant. Not assistant code."
+  },
+  "b_what_is_built": {
+    "persona": {
+      "repo": ["_SYSTEM/persona.md (full Yuri identity)", "SOUL.md (injection anchor)", "persona.template.md (sanitized template, Rick overlay gated by YURI_PRIVATE_RICK_OVERLAY=1)"],
+      "hermes_personality": "~/.hermes/personalities/yuri.txt byte-identical to 02_HERMES overlay (18126 bytes, 146 lines): Hermes embodying Yuri, decode pipeline, five-state thought router, binding floor",
+      "hermes_profile": "~/.hermes/profiles/yuri/: config.yaml (provider cursor, cursor/grok-4.6, http://127.0.0.1:10100/v1, xhigh), SOUL.md (conductor of levi/itachi/roger/zenitsu/atlas fleet), state.db 13MB, projects.db, memories",
+      "credentials": "01_CREDENTIALS/config_misc/yuri/env.sh = macOS-keychain pointer file, no plaintext, dead mechanism on Linux"
+    },
+    "memory_recall": {
+      "kernel": "_SYSTEM/Scripts/memory-kernel.mjs: lexical/embedding/MSA recall, propose->decide->promote, JSONL audit, protected-path guards",
+      "encoder": "_SYSTEM/Scripts/static-encoder.mjs: deterministic 256-dim sha256 encoder, zero-infra cosine recall",
+      "architecture": "_SYSTEM/MEMORY_ARCHITECTURE.md: Track A memory.db, Track B behavioral markdown via claude-memory-write.mjs, FTS5 cold store _SYSTEM/OS_KERNEL/memory-cold.db",
+      "rag": "_SYSTEM/backend/src/services/vectorSearchService.ts + hybridSearchService.ts (sqlite FTS5 + semantic hybrid), notebookRagService.ts, *:rag ingest scripts, .smart-env/",
+      "scripts": ["yuri-total-recall.mjs", "yuri-recall.mjs", "spreading-activation-memory.mjs", "kagami-memory-pipeline.mjs"]
+    },
+    "tools_executor": {
+      "backend_executor": "_SYSTEM/backend/src/services/executor.ts: allowlisted commands (GITNEXUS_ANALYZE, PALACE_REBUILD, VAULT_INGEST, SYSTEM_UPDATE, PLANE_SYNC, OUTLOOK_SYNC, OPEN_IMAGES_FOLDER), spawn, sqlite-logged",
+      "guarded": "_SYSTEM/Scripts/yuri-guarded-executor.mjs (policy-gated, readonly policy JSON)",
+      "autonomy": "_SYSTEM/Scripts/yuri-autonomy-runner.mjs (dry-run-first L0-L4)",
+      "workcell": "_SYSTEM/Scripts/yuri-workcell.mjs (DAG-validated, yuri-patch-v0)",
+      "services": ["browserAutomation.ts (Puppeteer)", "fileSystem.ts", "outlookIcs.ts (calendar)", "planeSync.ts", "vaultIngestion.ts/vaultWatcher.ts (Obsidian)", "swarmOrchestrator.ts"]
+    },
+    "channels": {
+      "voice_repo_mac_only": "_SYSTEM/Scripts/voice/: bot.py (Pipecat: Silero VAD -> MLX Whisper -> Claude Code tmux brain-proxy -> Marvis/Kokoro TTS Rick clone, barge-in), parakeet-listen.py, kokoro_tts.py, marvis_tts.py, orchestrator.mjs, voice-speak.sh (macOS say fallback), voxkey PTT. NO wake word anywhere (PTT/always-on VAD).",
+      "chat_ui": "none (Vite app is operator shell; yuri-os-dashboard.html is status; observatory-ui is trading)",
+      "terminal": "_SYSTEM/Scripts/yuri-repl.mjs (DeepSeek HUD REPL)",
+      "messaging_bots": "none"
+    },
+    "model_backends_repo": {
+      "ollama_lanes": "_SYSTEM/Scripts/ollama-lane.mjs + ollama-adapter.mjs (local + Ollama Cloud, token ledger)",
+      "policy": ".claude/config/models.json: Qwen3.5-9B-GLM5.1-Distill Q5_K_M primary, gemma4:12b-it-qat fallback/multimodal, nomic-embed-text embeddings (M2 Pro 16GB hardware)",
+      "registry": "_SYSTEM/model-registry.md: one-model-at-a-time local + DeepSeek V4 router lanes + OpenRouter free lane",
+      "cloud_sdks": ["openai", "@anthropic-ai/sdk", "@google/generative-ai"],
+      "llama_cpp_direct": false
+    },
+    "local_ai_lab": {
+      "readme": "LOCAL AI LAB/README.md (2026-09-27): Local AI on Intel Arc B580 12GB, no cloud, no NVIDIA",
+      "chat_scripts": [
+        {
+          "script": "LOCAL AI LAB/chat-bonsai.sh",
+          "binary": "LOCAL AI LAB/llm/llama.cpp-prism/build/bin/llama-server",
+          "server": "llama.cpp llama-server (NOT ollama)",
+          "model": "LOCAL AI LAB/models/llm/bonsai/Ternary-Bonsai-2-27B-PQ2_0.gguf",
+          "model_size": "6.8G",
+          "quant": "PQ2_0 ternary (PrismML-only, ggml type 142)",
+          "mmproj": "LOCAL AI LAB/models/llm/bonsai/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf (601M, vision)",
+          "port": 8082,
+          "endpoint": "http://127.0.0.1:8082/v1 (OpenAI-compatible) + built-in web UI",
+          "flags": "-ngl 99 (full GPU), -fa on, -c 32768, --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.05, --jinja, --device Vulkan0",
+          "character": "multimodal reasoning model, thinks by default (xhigh), no system prompt set"
+        },
+        {
+          "script": "LOCAL AI LAB/chat-bonsai-abliterated.sh",
+          "binary": "LOCAL AI LAB/llm/llama.cpp-prism/build/bin/llama-server",
+          "model": "LOCAL AI LAB/models/llm/bonsai-abliterated/Ternary-Bonsai-2-27B-Abliterated-PQ2_0.gguf",
+          "model_size": "6.8G",
+          "quant": "PQ2_0",
+          "mmproj": "shared bonsai mmproj Q8_0",
+          "port": 8083,
+          "endpoint": "http://127.0.0.1:8083/v1",
+          "flags": "identical to chat-bonsai.sh",
+          "character": "same + refusal weights removed"
+        },
+        {
+          "script": "LOCAL AI LAB/chat-obliterated.sh",
+          "binary": "LOCAL AI LAB/llm/llama.cpp/build/bin/llama-server (stock)",
+          "model": "LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf",
+          "model_size": "15G",
+          "quant": "IQ4_XS",
+          "mmproj": "mmproj-model-bf16.gguf (889M) with --no-mmproj-offload (CPU)",
+          "chat_template": "chat_template.jinja, --chat-template-kwargs '{\"enable_thinking\":false}'",
+          "port": 8081,
+          "endpoint": "http://127.0.0.1:8081/v1",
+          "flags": "-ngl 40 (verified max w/ vision; 48 OOMs), -fa on, -c 16384, --temp 0, --repeat-penalty 1.15, --jinja, --device Vulkan0",
+          "character": "uncensored, greedy; NO system prompt allowed (reintroduces refusals); ~7 tok/s partial offload"
+        }
+      ],
+      "models_inventory": {
+        "total_size": "55G",
+        "llm": [
+          "models/llm/bonsai/Ternary-Bonsai-2-27B-PQ2_0.gguf (6.8G)",
+          "models/llm/bonsai/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf (601M)",
+          "models/llm/bonsai-abliterated/Ternary-Bonsai-2-27B-Abliterated-PQ2_0.gguf (6.8G)",
+          "models/llm/bonsai-abliterated/Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf (601M)",
+          "models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf (15G)",
+          "models/llm/Qwen3.8-27B-OBLITERATED/mmproj-model-bf16.gguf (889M)"
+        ],
+        "arch_note": "all qwen35 arch (hybrid linear-attention 3:1 Gated-DeltaNet:full-attn, 64 layers, native 262144 ctx) per notes/LLM.md",
+        "image": [
+          "models/image/diffusion_models/qwen-image-2.1-UC-Q5_K_M.gguf (4.9G)",
+          "models/image/text_encoders/qwen3.5_9b_qwen_image_2.1_pe_t2i.int8_convrot.safetensors (8.9G)",
+          "models/image/text_encoders/qwen3vl_8b_int8_convrot.safetensors (8.8G)",
+          "models/image/vae/qwen_image_2.1_vae_bf16.safetensors (645M)",
+          "models/image/loras/turbo8_lora_step2500.safetensors (1.3G)",
+          "models/image/loras/Qwen-Image-2.1-Fun-Acc-4Step.safetensors (330M)"
+        ],
+        "image_license": "Qwen Research License - non-commercial only"
+      },
+      "llama_cpp_builds": {
+        "stock": {"path": "LOCAL AI LAB/llm/llama.cpp", "version": "0.5.0-dev build 11222 commit a97cce86a (2026-09-27)", "vulkan": "libggml-vulkan.so.0.25.3", "binaries": "full set incl llama-server, llama-cli, llama-bench, llama-tts, llama-embedding; NO whisper binary"},
+        "prism": {"path": "LOCAL AI LAB/llm/llama.cpp-prism", "remote": "github.com/PrismML-Eng/llama.cpp branch prism", "version": "0.2.0-dev build 10743 commit adfffbe41", "vulkan": "libggml-vulkan.so.0.21.0", "purpose": "PQ2_0/PTQ1_0 ternary quant support; must build from source (PR #238 CPU-fallback fix)"},
+        "build_report": "LOCAL AI LAB/llm/BUILD-REPORT.txt: Vulkan0=B580 12216MiB (9732 free) ANV 26.2.2, Vulkan1=Ryzen iGPU RADV; Bonsai measured prompt 32.89 t/s gen 24.46 t/s; llama-bench pp128 278.48 t/s tg32 26.03 t/s; OBLITERATED -ngl 99 OOM, -ngl 48 ceiling",
+        "setup_script": "LOCAL AI LAB/llm/setup-llm.sh: idempotent cmake -DGGML_VULKAN=ON -DGGML_NATIVE=ON Ninja build + test-load + bench pipeline"
+      },
+      "imagegen": "LOCAL AI LAB/imagegen/ComfyUI 0.37.0, torch 2.14.0+xpu, working .venv + main.py + extra_model_paths.yaml, UI :8188, workflows: image_qwen_image_2_1_t2i.json, turbo8_t2i.json",
+      "voice_in_lab": "NONE - no whisper/piper/vosk/openwakeword installs or mic config; only unused llama-tts binary (no model)"
+    }
+  },
+  "c_missing_for_always_on": {
+    "machine_verified": "2026-09-30",
+    "done": {
+      "gpu_inference": "B580 Vulkan0 via ANV 26.2.2, KHR_coopmat active (BUILD-REPORT.txt)",
+      "model_fit": "Bonsai PQ2_0 6.8GiB full offload -ngl 99 ~26 t/s; Bonsai-Abliterated same; OBLITERATED 14.4GiB does NOT fit (partial -ngl 40, ~7 t/s)",
+      "openai_endpoint": "127.0.0.1:8081/8082/8083 /v1 via llama-server",
+      "vision": "mmproj wired in all three scripts",
+      "pipewire_mic": "PipeWire 1.6.8 live; sources: CORSAIR Slipstream Mono (default), Kiyo webcam, Ryzen analog; pipewire-pulse installed",
+      "audio_out": "sinks: CORSAIR (default), HDMI, Ryzen analog",
+      "ram_headroom": "61GiB total, 37GiB available"
+    },
+    "missing": {
+      "wake_word": "openwakeword absent: no binary, no python package, no onnxruntime",
+      "asr": "no whisper/faster-whisper/vosk binary or package; no whisper.cpp build",
+      "tts": "REAL piper-TTS absent. /usr/bin/piper (pacman piper 0.8-5) is the mouse-config GUI (org.freedesktop.Piper), NOT TTS. No espeak-ng/mimic. qt6-speech installed but no engine backend",
+      "daemon": "no systemd user unit, no llama-server autostart; no llama-server running now; ports 8081/8082/8083/8188 closed",
+      "assistant_loop": "repo loop (_SYSTEM/Scripts/voice/bot.py) is MLX/macOS-only",
+      "memory_wired_to_lab": "repo memory kernel targets Mac paths/Ollama; nothing connected to :8082",
+      "linux_keys": "env.sh points at macOS keychain; Hermes profile uses local cursor relay 127.0.0.1:10100 (cloud-dependent)"
+    }
+  },
+  "d_verdict": {
+    "reuse_as_is": [
+      "LOCAL AI LAB wholesale: Vulkan llama.cpp builds, 3 chat scripts, model set, measured perf",
+      "Bonsai-Abliterated PQ2_0 on :8083 as the assistant brain (full VRAM fit, ~26 t/s, vision, no refusals)",
+      "Yuri persona ~/.hermes/personalities/yuri.txt as system prompt (Bonsai accepts one)",
+      "PipeWire mic/sink routing (already working)"
+    ],
+    "reuse_with_surgery": [
+      "Memory kernel recall core (memory-kernel.mjs + static-encoder.mjs): portable zero-infra Node ESM, but extract from _SYSTEM/state/ path coupling",
+      "Guarded-executor pattern (yuri-guarded-executor.mjs, executor.ts): reimplement the small allowlist-and-log pattern, don't port Mac-coupled files",
+      "Voice loop architecture (voice/bot.py): reuse the VAD->STT->brain->TTS barge-in shape; rewrite all code (Pipecat/MLX/Kokoro are Apple-only)"
+    ],
+    "rebuild_or_leave": [
+      "The YURI-OS-MUSUBI monorepo itself: 319k lines governance .mjs, no node_modules, dirty mid-migration, launchd/keychain/MLX coupling, no chat UI, no wake word - a coding-AI control plane, not an assistant runtime",
+      "MLX voice stack, launchd plists, keychain env.sh, Vite operator site, remotion folders"
+    ],
+    "minimal_plan_hey_nexus": [
+      "1. systemd user unit running chat-bonsai-abliterated.sh (port 8083, full VRAM; one chat model at a time per documented VRAM rule)",
+      "2. openwakeword (pip, onnxruntime CPU) with trained 'hey nexus' model, reading default PipeWire source via sounddevice/pw-cat at 16kHz",
+      "3. faster-whisper (CTranslate2 CPU int8, small/base.en) VAD-gated ASR; barge-in = stop TTS on new speech",
+      "4. Brain: POST http://127.0.0.1:8083/v1/chat/completions with yuri.txt system prompt + rolling history; tool calls = small allowlisted action map (guarded-executor pattern), sqlite-logged",
+      "5. TTS: real piper-tts (pip piper-tts or AUR; NOT the pacman piper mouse GUI) en_US onnx voice to default PipeWire sink, ~100ms first-audio on CPU",
+      "6. Memory later: extract static-encoder.mjs cosine recall into sidecar; append-only JSONL first"
+    ],
+    "effort_estimate": "One ~400-line Python/Node daemon + 4 new packages (openwakeword, faster-whisper, piper-tts, sounddevice). Zero monorepo porting."
+  }
+}

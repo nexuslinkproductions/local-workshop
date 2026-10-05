@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DP-2 · BOARD SCHEMATIC · CHROME CYBERCORE</title>
+<link rel="stylesheet" href="core.css">
+<style>
+body{width:1920px;height:1200px}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;padding:20px 24px 16px}
+.mast{height:56px;flex:none;display:flex;align-items:center;gap:22px;padding:0 20px}
+.mast h1{font-size:15px;letter-spacing:.34em}
+.mast h1 b{font-weight:400;color:var(--acid)}
+.mast .sub{font-size:9.5px;letter-spacing:.2em;color:var(--t55)}
+.mast .sp{flex:1}
+/* lens toggle: two embossed keys, one pressed */
+.lens{display:flex;gap:8px;align-items:center}
+.lens .lk{font-size:9px;letter-spacing:.18em;color:var(--t55);margin-right:4px}
+.lkey{font-family:var(--disp);font-size:9.5px;letter-spacing:.22em;padding:7px 16px;cursor:pointer;color:var(--t70)}
+.lkey.on{background-color:#0d0f13;background-image:linear-gradient(180deg,#0a0c0f,#101318);box-shadow:inset 0 2px 6px rgba(0,0,0,.75),inset 0 -1px 0 rgba(235,245,252,.08);color:var(--acid)}
+.legend{display:flex;gap:14px;align-items:center;font-size:9.5px;color:var(--t55);margin-left:18px}
+.legend i{width:22px;height:4px;border-radius:2px;display:inline-block;vertical-align:middle;margin-right:5px}
+
+.board{flex:1;position:relative;margin-top:12px;min-height:0}
+.links{position:absolute;inset:0;width:100%;height:100%}
+.links path{fill:none;stroke:rgba(127,216,255,.30);stroke-width:1.6}
+.links path.hot{stroke:rgba(200,255,0,.45)}
+.links .flow{fill:var(--acid)}
+.links .flow.ice{fill:var(--ice)}
+
+.node{position:absolute;padding:7px 10px 6px;min-width:0}
+.node .nn{font-family:var(--disp);font-size:9px;letter-spacing:.14em;color:var(--txt);white-space:nowrap}
+.node .nv{font-size:10px;color:var(--t70);margin-top:3px;white-space:nowrap}
+.node .nv b{color:var(--acid);font-weight:600}.node .nv .i{color:var(--ice)}
+.node .ns{font-size:8.5px;color:var(--t40);margin-top:2px;white-space:nowrap}
+.node.leaf{padding:5px 9px 4px}
+.node.leaf .nn{font-size:8.5px}
+.node.leaf .nv{font-size:9px;margin-top:2px}
+.node.bridge{padding:5px 9px 4px}
+.node.bridge .nn{font-size:8px;color:var(--ice)}
+.node.bridge .nv{font-size:9px;margin-top:2px}
+
+/* CPU package: 12 cores / 24 threads under two CCDs */
+.node.pkg{padding:12px 14px}
+.node.pkg .nn{font-size:11px;letter-spacing:.2em}
+.node.pkg .nv{font-size:11px}
+.ccdrow{display:flex;gap:10px;margin-top:9px}
+.ccd{flex:1;padding:7px 9px}
+.ccd .cn{font-size:8.5px;letter-spacing:.12em;color:var(--t55);white-space:nowrap}
+.cores{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:6px}
+.core{display:flex;flex-direction:column;gap:2px}
+.core .cl{font-size:7.5px;color:var(--t40);text-align:center;letter-spacing:.04em}
+.th{display:flex;gap:2px;height:22px}
+.th i{flex:1;border-radius:1px;background:linear-gradient(180deg,#232830,#14171c);box-shadow:inset 0 1px 0 rgba(235,245,252,.18);position:relative}
+.th i b{position:absolute;left:0;bottom:0;right:0;border-radius:1px;background:linear-gradient(0deg,var(--ice),var(--acid));display:block}
+
+/* power/thermal lens: re-tint nodes by temperature */
+.heat .node{transition:box-shadow .2s,background-color .2s}
+.heat .node[data-t]{
+  background-color:rgb(calc(22 + var(--heat,0)*46),calc(26 - var(--heat,0)*6),calc(32 - var(--heat,0)*18));
+  box-shadow:inset 0 1px 0 rgba(235,245,252,.2),inset 0 -1px 0 rgba(0,0,0,.65),0 2px 5px rgba(0,0,0,.5),0 0 calc(var(--heat,0)*26px) rgba(255,calc(180 - var(--heat,0)*120),0,calc(var(--heat,0)*.55))}
+.heat .node[data-t] .nv b{color:var(--amber)}
+.heat .links path{stroke:rgba(127,216,255,.14)}
+.heat .links path.hot{stroke:rgba(255,179,0,.30)}
+
+/* hover bandwidth readout */
+.tip{position:absolute;display:none;z-index:40;padding:9px 13px;pointer-events:none;white-space:nowrap}
+.tip .tt{font-family:var(--disp);font-size:9px;letter-spacing:.2em;color:var(--ice)}
+.tip .tv{font-size:11.5px;color:var(--txt);margin-top:3px}
+.tip .tv b{color:var(--acid)}
+
+.shelf{flex:none;height:84px;margin-top:12px;display:flex;gap:14px;align-items:stretch;padding:12px 16px}
+.shelf .sl{flex:1;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:6px 12px}
+.shelf .sk{font-size:8.5px;letter-spacing:.2em;color:var(--t55)}
+.shelf .sv{font-size:11px;color:var(--txt)}
+.shelf .sv b{color:var(--acid)}.shelf .sv .i{color:var(--ice)}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="wrap">
+  <header class="mast bevel holo">
+    <h1 class="disp">BOARD<b>SCHEMATIC</b></h1>
+    <div class="sub">DP-2 · 1920×1200 · 84 NODES · REAL INVENTORY</div>
+    <div class="sp"></div>
+    <div class="legend" id="heatlegend" style="display:none"><span><i style="background:linear-gradient(90deg,#1a6a7a,#ffb300,#ff4a3d)"></i>COOL → HOT</span></div>
+    <div class="lens">
+      <span class="lk">LENS</span>
+      <div class="lkey emboss on" id="lflow">FLOW</div>
+      <div class="lkey emboss" id="lheat">POWER / THERMAL</div>
+    </div>
+  </header>
+
+  <div class="board" id="board">
+    <svg class="links" id="links" viewBox="0 0 1872 1004" preserveAspectRatio="none"></svg>
+
+    <!-- ===== CPU package: 12 cores / 24 threads, CCD0 + CCD1 ===== -->
+    <div class="node pkg emboss" data-t="83" style="left:24px;top:24px;width:560px">
+      <div class="nn">AMD RYZEN 9 7900X · 12C/24T</div>
+      <div class="nv num">Tctl <b>83°</b> · 5169 MHz avg · load1 5.30 · PSI cpu 0.00</div>
+      <div class="ccdrow">
+        <div class="ccd recess">
+          <div class="cn">CCD0 · Tccd1 <span class="t-amber">79°</span> · cpu0-5 / 12-17</div>
+          <div class="cores num" id="ccd0"></div>
+        </div>
+        <div class="ccd recess">
+          <div class="cn">CCD1 · Tccd2 <span class="t-amber">82°</span> · cpu6-11 / 18-23</div>
+          <div class="cores num" id="ccd1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- memory complex -->
+    <div class="node emboss" data-t="54" style="left:24px;top:330px;width:180px">
+      <div class="nn">DATA FABRIC</div>
+      <div class="nv num">00:18.0-7 · k10temp</div>
+      <div class="ns">PSI io 0.21 · mem 0.00</div>
+    </div>
+    <div class="node emboss" data-t="54" style="left:24px;top:436px;width:180px">
+      <div class="nn">DDR5 · 64.85 GB</div>
+      <div class="nv num">avail <b>34.0G</b> · zram 1.8×</div>
+      <div class="ns">2× SPD5118 on i2c-20</div>
+    </div>
+    <div class="node leaf emboss" data-t="54" style="left:24px;top:540px;width:180px">
+      <div class="nn">DIMM 0</div>
+      <div class="nv num"><b>54°</b> · 20-0051</div>
+    </div>
+    <div class="node leaf emboss" data-t="53" style="left:24px;top:612px;width:180px">
+      <div class="nn">DIMM 1</div>
+      <div class="nv num"><b>53°</b> · 20-0053</div>
+    </div>
+
+    <!-- FCH / PSP / SMBus column -->
+    <div class="node leaf emboss" style="left:24px;top:730px;width:180px">
+      <div class="nn">FCH SMBus</div>
+      <div class="nv num">00:14.0 · i2c-20</div>
+    </div>
+    <div class="node leaf emboss" style="left:24px;top:800px;width:180px">
+      <div class="nn">AMD PSP / CCP</div>
+      <div class="nv num">14:00.2 · idle</div>
+    </div>
+    <div class="node leaf emboss" style="left:24px;top:870px;width:180px">
+      <div class="nn">BT · hci0 MT7922</div>
+      <div class="nv num">powered · <span class="i">0 paired</span></div>
+    </div>
+
+    <!-- ===== PCIe root complex ===== -->
+    <div class="node emboss" style="left:300px;top:240px;width:210px">
+      <div class="nn">PCIe ROOT</div>
+      <div class="nv">Raphael/Granite Ridge</div>
+      <div class="ns">0000:00 · 6 bridges populated</div>
+    </div>
+
+    <!-- root bridges (junction nodes with link labels) -->
+    <div class="node bridge recess" style="left:596px;top:60px;width:150px">
+      <div class="nn">BR 00:01.1</div>
+      <div class="nv num">x8@16.0 · max x16@32</div>
+    </div>
+    <div class="node bridge recess" style="left:596px;top:210px;width:150px">
+      <div class="nn">BR 00:01.2</div>
+      <div class="nv num">x4@16.0</div>
+    </div>
+    <div class="node bridge recess" style="left:596px;top:330px;width:150px">
+      <div class="nn">BR 00:02.1</div>
+      <div class="nv num">x4@16.0</div>
+    </div>
+    <div class="node bridge recess" style="left:596px;top:560px;width:150px">
+      <div class="nn">BR 00:02.2</div>
+      <div class="nv num">x4@16.0</div>
+    </div>
+    <div class="node bridge recess" style="left:596px;top:680px;width:150px">
+      <div class="nn">BR 00:08.1</div>
+      <div class="nv num">x16@16.0</div>
+    </div>
+    <div class="node bridge recess" style="left:596px;top:930px;width:150px">
+      <div class="nn">BR 00:08.3</div>
+      <div class="nv num">x16@16.0</div>
+    </div>
+
+    <!-- Intel switch behind 00:01.1 -->
+    <div class="node bridge recess" style="left:830px;top:30px;width:160px">
+      <div class="nn">INTEL SW UP 01:00.0</div>
+      <div class="nv num">8086:e2ff</div>
+    </div>
+    <div class="node bridge recess" style="left:830px;top:100px;width:160px">
+      <div class="nn">SW DN 02:01.0 / 02:02.0</div>
+      <div class="nv num">→ gpu · hdmi audio</div>
+    </div>
+
+    <!-- Arc B580 + displays -->
+    <div class="node emboss" data-t="50" style="left:1076px;top:24px;width:300px">
+      <div class="nn">INTEL ARC B580 · xe</div>
+      <div class="nv num">pkg <b>50°</b> · VRAM 52° · <b>53 W</b> / 200 W</div>
+      <div class="ns">03:00.0 · fan 985 rpm · x8@16.0</div>
+    </div>
+    <div class="node leaf glass" style="left:1462px;top:16px;width:240px">
+      <div class="nn t-ice">DP-1 · LC27G7xT</div>
+      <div class="nv num">2560×1440 @0,0 · connected</div>
+    </div>
+    <div class="node leaf glass" style="left:1462px;top:84px;width:240px">
+      <div class="nn t-ice">DP-2 · HP E24i G4</div>
+      <div class="nv num">1920×1200 @2560,0 · connected</div>
+    </div>
+    <div class="node leaf glass" style="left:1462px;top:152px;width:240px">
+      <div class="nn t-ice">HDMI-A-3 · Z24n G3</div>
+      <div class="nv num">1920×1200 @-1920,0 · connected</div>
+    </div>
+    <div class="node leaf emboss" style="left:1462px;top:230px;width:240px">
+      <div class="nn">B580 HDMI/DP AUDIO</div>
+      <div class="nv num">card 1 · sink LC27G7xT <span class="i">40%</span></div>
+    </div>
+
+    <!-- NVMe drives -->
+    <div class="node emboss" data-t="45" style="left:830px;top:190px;width:280px">
+      <div class="nn">KINGSTON SNV3S2000G 2TB</div>
+      <div class="nv num">nvme0 · 05:00.0 · <b>45°</b> / 57°</div>
+      <div class="ns">p3 NTFS 71% · rd 46 KB/s</div>
+    </div>
+    <div class="node emboss" data-t="46" style="left:830px;top:540px;width:280px">
+      <div class="nn">SAMSUNG 980 PRO 2TB</div>
+      <div class="nv num">nvme1 · 13:00.0 · <b>46°</b> / 55°</div>
+      <div class="ns">DATA 0% · wr 8.5 MB/s</div>
+    </div>
+
+    <!-- chipset switch + ports -->
+    <div class="node bridge recess" style="left:830px;top:310px;width:170px">
+      <div class="nn">CHIPSET SW 06:00.0</div>
+      <div class="nv num">1022:43f4</div>
+    </div>
+    <div class="node bridge recess" style="left:1080px;top:290px;width:130px">
+      <div class="nn">PORT 07:0a.0</div>
+      <div class="nv num">→ nic</div>
+    </div>
+    <div class="node bridge recess" style="left:1080px;top:360px;width:130px">
+      <div class="nn">PORT 07:0b.0</div>
+      <div class="nv num">→ wifi</div>
+    </div>
+    <div class="node bridge recess" style="left:1080px;top:430px;width:130px">
+      <div class="nn">PORT 07:0c.0</div>
+      <div class="nv num">→ xhci</div>
+    </div>
+    <div class="node bridge recess" style="left:1080px;top:500px;width:130px">
+      <div class="nn">PORT 07:0d.0</div>
+      <div class="nv num">→ sata</div>
+    </div>
+
+    <!-- NICs -->
+    <div class="node emboss" data-t="44" style="left:1290px;top:280px;width:250px">
+      <div class="nn">RTL8125 2.5GbE · r8169</div>
+      <div class="nv num">enp15s0 <b>UP</b> 192.168.0.112/24</div>
+      <div class="ns">rx 52.6 GiB · tx 7.1 GiB</div>
+    </div>
+    <div class="node emboss" data-t="41" style="left:1290px;top:368px;width:250px">
+      <div class="nn">MT7922 WI-FI 6E · mt7921e</div>
+      <div class="nv num">wlp16s0 <span class="i">DOWN</span> · no link</div>
+      <div class="ns">10:00.0 · phy 41°</div>
+    </div>
+
+    <!-- SATA -->
+    <div class="node leaf emboss" style="left:1290px;top:490px;width:250px">
+      <div class="nn">SATA · ahci 12:00.0</div>
+      <div class="nv num">600-series · idle</div>
+    </div>
+
+    <!-- ===== APU complex behind 00:08.1 ===== -->
+    <div class="node emboss" data-t="52" style="left:830px;top:660px;width:280px">
+      <div class="nn">AMD RAPHAEL iGPU · amdgpu</div>
+      <div class="nv num"><b>0%</b> util · 600 MHz · <b>28 W</b> PPT</div>
+      <div class="ns">14:00.0 · VRAM 15 / 512 MB</div>
+    </div>
+    <div class="node leaf emboss" style="left:1190px;top:640px;width:230px">
+      <div class="nn">RADEON HD AUDIO 14:00.1</div>
+      <div class="nv num">card 2 · <span class="i">no sink routed</span></div>
+    </div>
+    <div class="node emboss" data-t="44" style="left:1190px;top:712px;width:230px">
+      <div class="nn">RYZEN HD AUDIO 14:00.6</div>
+      <div class="nv num">card 3 · analog sink <b>60%</b></div>
+      <div class="ns">src analog-stereo ready</div>
+    </div>
+
+    <!-- ===== USB tree: 4 xHCI, 2 hubs, devices ===== -->
+    <div class="node emboss" data-t="43" style="left:1290px;top:560px;width:250px">
+      <div class="nn">xHCI 11:00.0 · 800-SERIES</div>
+      <div class="nv num">usb6 480M · usb7 10G</div>
+      <div class="ns">via port 07:0c.0</div>
+    </div>
+    <div class="node leaf emboss" style="left:830px;top:790px;width:170px">
+      <div class="nn">xHCI 14:00.3</div>
+      <div class="nv num">usb1/usb2 · empty</div>
+    </div>
+    <div class="node leaf emboss" style="left:830px;top:858px;width:170px">
+      <div class="nn">xHCI 14:00.4</div>
+      <div class="nv num">usb3/usb4 · empty</div>
+    </div>
+    <div class="node leaf emboss" style="left:830px;top:930px;width:170px">
+      <div class="nn">xHCI 15:00.0</div>
+      <div class="nv num">usb5 · empty</div>
+    </div>
+
+    <!-- usb6 branch -->
+    <div class="node bridge recess" style="left:1580px;top:540px;width:130px">
+      <div class="nn">usb6 ROOT</div>
+      <div class="nv num">480M</div>
+    </div>
+    <div class="node bridge recess" style="left:1730px;top:470px;width:120px">
+      <div class="nn">ASM107x 6-6</div>
+      <div class="nv num">hub · 480M</div>
+    </div>
+    <div class="node leaf emboss" style="left:1730px;top:560px;width:130px">
+      <div class="nn">Razer Kiyo 6-6.1</div>
+      <div class="nv num">cam + mic src</div>
+    </div>
+    <div class="node leaf emboss" style="left:1730px;top:626px;width:130px">
+      <div class="nn">Slipstream 6-6.2</div>
+      <div class="nv num">sink <b>95%</b> · mic <b>LIVE</b></div>
+    </div>
+    <div class="node leaf emboss" style="left:1730px;top:692px;width:130px">
+      <div class="nn">G502 rcvr 6-6.3</div>
+      <div class="nv num">batt <b>94%</b></div>
+    </div>
+    <div class="node leaf emboss" style="left:1730px;top:758px;width:130px">
+      <div class="nn">ASUS K7 6-6.4</div>
+      <div class="nv num">kbd · EN-US</div>
+    </div>
+    <div class="node leaf emboss" style="left:1580px;top:640px;width:130px">
+      <div class="nn">MYSTIC LIGHT 6-7</div>
+      <div class="nv num">rgb controller</div>
+    </div>
+    <div class="node leaf emboss" style="left:1580px;top:706px;width:130px">
+      <div class="nn">MT7922 BT 6-8</div>
+      <div class="nv num">btusb · hci0</div>
+    </div>
+
+    <!-- usb7 branch -->
+    <div class="node bridge recess" style="left:1460px;top:770px;width:130px">
+      <div class="nn">usb7 ROOT</div>
+      <div class="nv num">10G</div>
+    </div>
+    <div class="node bridge recess" style="left:1460px;top:838px;width:120px">
+      <div class="nn">ASM107x 7-6</div>
+      <div class="nv num">hub · 5G</div>
+    </div>
+    <div class="node leaf emboss" style="left:1460px;top:906px;width:180px">
+      <div class="nn">DataTraveler 3.0 · 7-3</div>
+      <div class="nv num">sda · OMARCHY_202609 <b>100%</b></div>
+    </div>
+
+    <!-- audio leaf nodes (PipeWire) -->
+    <div class="node leaf emboss" style="left:1190px;top:790px;width:230px">
+      <div class="nn">PW SINK · Corsair ★default</div>
+      <div class="nv num"><b>95%</b> · analog-stereo</div>
+    </div>
+    <div class="node leaf emboss" style="left:1190px;top:856px;width:230px">
+      <div class="nn">PW SRC · Corsair mono</div>
+      <div class="nv num"><b>LIVE</b> 100%</div>
+    </div>
+    <div class="node leaf emboss" style="left:1190px;top:922px;width:230px">
+      <div class="nn">PW SRC · Razer Kiyo</div>
+      <div class="nv num">analog-stereo · ready</div>
+    </div>
+
+    <div class="tip glass" id="tip">
+      <div class="tt" id="tipt">LINK</div>
+      <div class="tv num" id="tipv">—</div>
+    </div>
+  </div>
+
+  <footer class="shelf bevel holo-b">
+    <div class="sl recess"><span class="sk">ROOT BRIDGES</span><span class="sv num">00:01.1 x8@16 · 00:01.2 / 00:02.1 / 00:02.2 x4@16 · 00:08.1 / 00:08.3 x16@16</span></div>
+    <div class="sl recess"><span class="sk">INTEL SWITCH</span><span class="sv num">01:00.0 up · 02:01.0 → B580 · 02:02.0 → hdmi audio</span></div>
+    <div class="sl recess"><span class="sk">CHIPSET SWITCH</span><span class="sv num">06:00.0 → 07:0a/0b/0c/0d → NICs · xHCI · SATA</span></div>
+    <div class="sl recess"><span class="sk">FLOWS</span><span class="sv num"><b>11</b> hot links · net/disk/gpu/mem live · usb 8 devices</span></div>
+  </footer>
+</div>
+<div class="scan"></div>
+
+<script>
+/* =============== CPU threads: real per-cpu sample (batch 1, 3 s stream) =============== */
+const THR={
+ ccd0:[[0,24],[1,22],[2,22],[3,31],[4,27],[5,23]],   /* physical cpu0-5 */
+ ccd0s:[[12,32],[13,68],[14,71],[15,37],[16,24],[17,22]], /* siblings cpu12-17 */
+ ccd1:[[6,23],[7,22],[8,21],[9,27],[10,20],[11,18]],
+ ccd1s:[[18,33],[19,31],[20,25],[21,38],[22,20],[23,16]]};
+function fillCcd(el,phys,sib){
+  const host=document.getElementById(el);
+  for(let i=0;i<6;i++){
+    const d=document.createElement('div');d.className='core';
+    d.innerHTML=`<div class="th"><i><b style="height:${phys[i][1]}%"></b></i><i><b style="height:${sib[i][1]}%"></b></i></div><div class="cl">c${phys[i][0]}·${sib[i][0]}</div>`;
+    host.appendChild(d);
+  }
+}
+fillCcd('ccd0',THR.ccd0,THR.ccd0s);
+fillCcd('ccd1',THR.ccd1,THR.ccd1s);
+
+/* =============== links: every wire connects two real nodes (devices-bus.json ancestry) =============== */
+const NS='http://www.w3.org/2000/svg',svg=document.getElementById('links');
+/* [x0,y0,x1,y1,hot,label,value] — coordinates in 1872x1004 space */
+const L=[
+ /* cpu -> fabric -> memory */
+ [300,164,120,331,1,'CPU PKG → DATA FABRIC','00:18.0-7 · load1 5.30 · 22% of 24T'],
+ [114,391,114,438,0,'FABRIC → DDR5','avail 34.0G / 64.85G'],
+ [114,498,114,542,0,'DDR5 → DIMM0','SPD5118 20-0051 · 54°'],
+ [114,498,140,614,0,'DDR5 → DIMM1','SPD5118 20-0053 · 53°'],
+ /* root complex */
+ [300,270,596,90,1,'ROOT → BR 00:01.1','x8@16.0 (max x16@32.0)'],
+ [510,280,596,240,1,'ROOT → BR 00:01.2','x4@16.0'],
+ [510,300,596,360,1,'ROOT → BR 00:02.1','x4@16.0'],
+ [510,290,596,581,1,'ROOT → BR 00:02.2','x4@16.0'],
+ [510,295,596,702,0,'ROOT → BR 00:08.1','x16@16.0'],
+ [510,300,596,953,0,'ROOT → BR 00:08.3','x16@16.0'],
+ /* intel switch chain */
+ [746,80,830,60,0,'00:01.1 → INTEL SW 01:00.0','upstream 8086:e2ff'],
+ [746,100,830,130,0,'01:00.0 → SW DN 02:01/02','downstream ports'],
+ [990,120,1076,60,1,'02:01.0 → ARC B580','x8@16.0 · 53 W / 200 W cap'],
+ [1376,50,1462,40,1,'B580 → DP-1','2560×1440@165 · connected'],
+ [1376,80,1462,110,0,'B580 → DP-2','1920×1200@60 · connected'],
+ [1376,80,1462,172,0,'B580 → HDMI-A-3','1920×1200@60 · connected'],
+ [1376,84,1462,250,0,'02:02.0 → B580 HDMI AUDIO','card 1 · sink LC27G7xT 40%'],
+ /* nvme */
+ [746,230,830,220,1,'00:01.2 → NVME0 KINGSTON','x4@16.0 · rd 46 KB/s · 45°'],
+ [746,580,830,570,1,'00:02.2 → NVME1 SAMSUNG','x4@16.0 · wr 8.5 MB/s · 46°'],
+ /* chipset switch */
+ [746,350,830,330,0,'00:02.1 → CHIPSET SW 06:00.0','1022:43f4'],
+ [1000,330,1080,310,0,'06:00.0 → PORT 07:0a.0','nic lane'],
+ [1000,345,1080,380,0,'06:00.0 → PORT 07:0b.0','wifi lane'],
+ [1000,340,1080,451,0,'06:00.0 → PORT 07:0c.0','xhci lane'],
+ [1000,349,1080,521,0,'06:00.0 → PORT 07:0d.0','sata lane'],
+ [1210,310,1290,310,1,'07:0a.0 → RTL8125','enp15s0 rx 52.6 GiB total'],
+ [1210,380,1290,398,0,'07:0b.0 → MT7922 WIFI','wlp16s0 DOWN'],
+ [1210,450,1290,590,0,'07:0c.0 → xHCI 11:00.0','usb6 480M · usb7 10G'],
+ [1210,520,1290,515,0,'07:0d.0 → SATA 12:00.0','ahci 600-series · idle'],
+ /* apu complex */
+ [746,700,830,690,0,'00:08.1 → RAPHAEL iGPU','x16@16.0 · PPT 28 W'],
+ [1110,680,1190,665,0,'iGPU → RADEON HD AUDIO','14:00.1 · card 2'],
+ [1110,710,1190,742,0,'00:08.1 → RYZEN HD AUDIO','14:00.6 · analog sink 60%'],
+ [746,710,830,812,0,'00:08.1 → xHCI 14:00.3','usb1/usb2 · empty'],
+ [746,720,830,880,0,'00:08.1 → xHCI 14:00.4','usb3/usb4 · empty'],
+ [746,950,830,955,0,'00:08.3 → xHCI 15:00.0','usb5 · empty'],
+ /* usb6 tree */
+ [1540,580,1580,570,0,'xHCI → usb6 ROOT','480M roothub'],
+ [1710,540,1730,500,0,'usb6 → ASM107x 6-6','hub 480M · 4 devices'],
+ [1850,500,1795,562,0,'hub → Razer Kiyo 6-6.1','uvcvideo + usb-audio src'],
+ [1850,505,1795,648,1,'hub → Slipstream 6-6.2','sink 95% · mic LIVE 100%'],
+ [1850,510,1795,714,0,'hub → G502 rcvr 6-6.3','hidpp battery 94%'],
+ [1850,510,1795,780,0,'hub → ASUS K7 6-6.4','kbd event13/14'],
+ [1645,580,1645,643,0,'usb6 → MYSTIC LIGHT 6-7','rgb controller'],
+ [1645,580,1645,709,0,'usb6 → MT7922 BT 6-8','btusb · hci0 powered'],
+ /* usb7 tree */
+ [1540,615,1525,770,0,'xHCI → usb7 ROOT','10G roothub'],
+ [1525,808,1520,838,0,'usb7 → ASM107x 7-6','hub 5G'],
+ [1520,876,1550,906,0,'usb7 → DataTraveler 7-3','sda · OMARCHY_202609 100%'],
+ /* pipewire leaves */
+ [1420,745,1330,790,0,'RYZEN AUDIO → PW SINK Corsair','default · 95%'],
+ [1420,770,1330,856,0,'SLIPSTREAM → PW SRC mono','LIVE 100%'],
+ [1420,920,1330,922,0,'KIYO → PW SRC analog','ready'],
+ /* fch / psp / bt */
+ [300,290,204,730,0,'ROOT → FCH SMBus','i2c-20 · DIMM sensor poll 1 s'],
+ [746,702,204,822,0,'00:08.1 → PSP / CCP','14:00.2 crypto idle'],
+ [1580,740,204,870,0,'BT RADIO 6-8 → hci0','btusb · powered · 0 paired']];
+const frag=document.createDocumentFragment();
+const paths=[];
+for(const[x0,y0,x1,y1,hot]of L){
+  const mx=(x0+x1)/2;
+  const d=`M ${x0} ${y0} C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+  const p=document.createElementNS(NS,'path');
+  p.setAttribute('d',d);
+  if(hot)p.setAttribute('class','hot');
+  frag.appendChild(p);paths.push(p);
+  /* animated flow particles: 2 per hot link, 1 per cold */
+  const n=hot?2:1;
+  for(let k=0;k<n;k++){
+    const c=document.createElementNS(NS,'circle');
+    c.setAttribute('r',hot?3:2.2);
+    c.setAttribute('class','flow'+(hot?'':' ice'));
+    const a=document.createElementNS(NS,'animateMotion');
+    a.setAttribute('dur',(hot?2.2:4.5)+'s');
+    a.setAttribute('begin',(k*1.1)+'s');
+    a.setAttribute('repeatCount','indefinite');
+    a.setAttribute('path',d);
+    c.appendChild(a);frag.appendChild(c);
+  }
+}
+svg.appendChild(frag);
+
+/* hover bandwidth readout */
+const tip=document.getElementById('tip'),tt=document.getElementById('tipt'),tv=document.getElementById('tipv');
+const board=document.getElementById('board');
+paths.forEach((p,i)=>{
+  p.style.pointerEvents='stroke';p.style.cursor='crosshair';
+  p.addEventListener('mouseenter',()=>{
+    tt.textContent=L[i][5];tv.innerHTML='<b>'+L[i][6]+'</b>';
+    tip.style.display='block';p.style.strokeWidth='3';
+  });
+  p.addEventListener('mousemove',e=>{
+    const r=board.getBoundingClientRect();
+    tip.style.left=Math.min(e.clientX-r.left+16,r.width-320)+'px';
+    tip.style.top=Math.max(e.clientY-r.top-54,4)+'px';
+  });
+  p.addEventListener('mouseleave',()=>{tip.style.display='none';p.style.strokeWidth='1.6'});
+});
+
+/* power/thermal lens toggle: visibly re-tints nodes */
+const lf=document.getElementById('lflow'),lh=document.getElementById('lheat'),hl=document.getElementById('heatlegend');
+function lens(heat){
+  document.body.classList.toggle('heat',heat);
+  lf.classList.toggle('on',!heat);lh.classList.toggle('on',heat);
+  hl.style.display=heat?'flex':'none';
+  document.querySelectorAll('.node[data-t]').forEach(n=>{
+    const t=+n.dataset.t;n.style.setProperty('--heat',Math.max(0,Math.min(1,(t-40)/50)).toFixed(2));
+  });
+}
+lf.onclick=()=>lens(false);lh.onclick=()=>lens(true);
+</script>
+</body>
+</html>

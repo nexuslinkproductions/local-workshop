@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "nexuslink.medianotch",
+  "name": "NEXUS Media Notch",
+  "version": "1.0.0",
+  "author": "nexuslink",
+  "description": "Dynamic-island style now-playing notch, top-center of the Samsung monitor",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Notch.qml" }
+}

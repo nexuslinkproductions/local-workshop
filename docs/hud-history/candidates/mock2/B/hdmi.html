@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HDMI-A-3 · WORKBENCH + PATCH BAY · CHROME CYBERCORE</title>
+<link rel="stylesheet" href="core.css">
+<style>
+body{width:1920px;height:1200px}
+.wrap{position:absolute;inset:0;display:flex;flex-direction:column;padding:20px 24px 16px}
+.mast{height:56px;flex:none;display:flex;align-items:center;gap:22px;padding:0 20px}
+.mast h1{font-size:15px;letter-spacing:.3em}
+.mast h1 b{font-weight:400;color:var(--acid)}
+.mast .sub{font-size:9.5px;letter-spacing:.2em;color:var(--t55)}
+.mast .sp{flex:1}
+.mast .clock{font-size:18px;color:var(--ice)}
+
+.grid{flex:1;display:grid;grid-template-columns:1.25fr 1fr;gap:16px;margin-top:14px;min-height:0}
+.col{display:flex;flex-direction:column;gap:14px;min-height:0;overflow:hidden}
+.panel{padding:13px 16px 11px;display:flex;flex-direction:column;min-height:0}
+.panel .ph{display:flex;align-items:center;gap:10px;flex:none;margin-bottom:9px}
+.panel .pt{font-family:var(--disp);font-size:10px;letter-spacing:.28em;color:var(--txt)}
+.panel .pk{font-size:9px;color:var(--t40);margin-left:auto;letter-spacing:.12em}
+.panel .pb{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+
+/* window cards */
+.wcard{display:flex;align-items:center;gap:12px;padding:8px 12px;flex:none}
+.wcard .thumb{width:64px;height:40px;flex:none;position:relative;overflow:hidden}
+.wcard .thumb i{position:absolute;background:rgba(127,216,255,.35)}
+.wcard .thumb .tl{left:6%;top:10%;width:56%;height:30%}
+.wcard .thumb .bl{left:6%;top:48%;width:80%;height:8%}
+.wcard .thumb .bl2{left:6%;top:64%;width:64%;height:8%}
+.wcard .wi{flex:1;min-width:0}
+.wcard .wt{font-size:11.5px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcard .wm{font-size:9.5px;color:var(--t55);margin-top:2px}
+.wcard .ws{font-family:var(--disp);font-size:12px;color:var(--acid);flex:none;width:34px;text-align:center}
+.wcard .mon{font-size:9px;color:var(--t40);flex:none;width:64px;text-align:right}
+
+/* agent rows */
+.arow{display:grid;grid-template-columns:110px 60px 70px 1fr;gap:10px;align-items:center;padding:6px 12px;flex:none;font-size:11px}
+.arow .an{color:var(--txt);font-weight:600}
+.arow .st{font-size:9px;letter-spacing:.1em;padding:2px 8px;border-radius:10px;text-align:center}
+.st.live{color:var(--acid)} .st.idle{color:var(--t55)} .st.wait{color:var(--amber)}
+.arow .cpu{text-align:right;color:var(--ice)}
+.arow .la{color:var(--t55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* process ledger */
+.prow{display:grid;grid-template-columns:1fr 90px 120px;gap:10px;align-items:center;padding:4px 12px;flex:none;font-size:11px}
+.prow .pn{color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .pv{text-align:right;color:var(--acid);font-weight:600}
+.prow .pb2{height:5px;border-radius:2px;background:#0a0c0f;box-shadow:inset 0 1px 2px rgba(0,0,0,.8)}
+.prow .pb2 i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--ice),var(--acid))}
+
+/* repos */
+.rrow{display:grid;grid-template-columns:1fr 86px 90px 76px;gap:10px;align-items:center;padding:5px 12px;flex:none;font-size:11px}
+.rrow .rn{color:var(--txt)}
+.rrow .dirty{color:var(--amber)} .rrow .clean{color:var(--t55)}
+.rrow .ci{color:var(--acid)} .rrow .ci.fail{color:var(--alert)}
+.rrow .ah{color:var(--t55);text-align:right}
+
+/* tokens */
+.tok{display:flex;flex-direction:column;gap:5px}
+.trow{display:grid;grid-template-columns:96px 1fr 1fr 1fr;gap:8px;font-size:10.5px;padding:4px 12px;flex:none;align-items:center}
+.trow .tp{color:var(--txt);font-weight:600}
+.trow span{color:var(--t70)} .trow b{color:var(--acid);font-weight:600}
+.trow .hd{color:var(--t40);font-size:8.5px;letter-spacing:.16em}
+
+/* patch bay */
+.jack{display:flex;align-items:center;gap:10px;padding:6px 12px;flex:none;font-size:11px}
+.jack .port{width:12px;height:12px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,#2a3038,#0c0e11);box-shadow:inset 0 1px 2px rgba(0,0,0,.9),0 1px 0 rgba(235,245,252,.15)}
+.jack .port.up{box-shadow:inset 0 1px 2px rgba(0,0,0,.9),0 0 8px var(--acid-dim);background:radial-gradient(circle at 35% 30%,#3a4a20,#141a08)}
+.jack .jn{color:var(--txt);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jack .jv{color:var(--ice);flex:none}
+.jack .js{color:var(--t40);flex:none;font-size:9.5px}
+.vol{flex:none;width:110px;height:5px;border-radius:2px;background:#0a0c0f;box-shadow:inset 0 1px 2px rgba(0,0,0,.8)}
+.vol i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--ice),var(--acid))}
+.clip{font-size:10.5px;color:var(--t70);padding:4px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
+.clip b{color:var(--ice);font-weight:400;margin-right:8px}
+</style>
+</head>
+<body>
+<div class="field"></div>
+<div class="wrap">
+  <header class="mast bevel holo">
+    <h1 class="disp">WORKBENCH<b>+PATCH BAY</b></h1>
+    <div class="sub">HDMI-A-3 · 1920×1200 · OPERATIONS LEDGER</div>
+    <div class="sp"></div>
+    <div class="sub">3 WS · 5 WINDOWS · 5 AGENT CLASSES</div>
+    <div class="clock disp num">16:47:31</div>
+  </header>
+
+  <div class="grid">
+    <!-- ================= LEFT : WORKBENCH ================= -->
+    <div class="col">
+      <div class="panel bevel" style="flex:1.7">
+        <div class="ph"><span class="tick"></span><span class="pt">WINDOWS / WORKSPACES</span><span class="pk">hypr · focus = click</span></div>
+        <div class="pb">
+          <div class="wcard emboss"><div class="thumb recess"><i class="tl"></i><i class="bl"></i><i class="bl2"></i></div>
+            <div class="wi"><div class="wt">Cal.com Video - Chromium</div><div class="wm">chromium · 0x56b6…3180</div></div>
+            <div class="ws">1</div><div class="mon">HDMI-A-3</div></div>
+          <div class="wcard emboss"><div class="thumb recess"><i class="tl"></i><i class="bl"></i><i class="bl2"></i></div>
+            <div class="wi"><div class="wt">NEXUS_AI_CENTER - Devin - Locating lost HUD rework session</div><div class="wm">devin-desktop · 0x56b6…c5d0</div></div>
+            <div class="ws">1</div><div class="mon">HDMI-A-3</div></div>
+          <div class="wcard emboss"><div class="thumb recess"><i class="tl"></i><i class="bl"></i><i class="bl2"></i></div>
+            <div class="wi"><div class="wt">October · (600) Discord | @Aleks Z.</div><div class="wm">ws 4 DP-1 · ws 7 DP-2</div></div>
+            <div class="ws">4·7</div><div class="mon">DP-1/2</div></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:1">
+        <div class="ph"><span class="tick"></span><span class="pt">AGENT SESSIONS</span><span class="pk">state · cpu</span></div>
+        <div class="pb">
+          <div class="arow emboss"><span class="an">devin</span><span class="st live recess">LIVE ×5</span><span class="cpu num">237%</span><span class="la">4 live locks · abrupt-howler…</span></div>
+          <div class="arow emboss"><span class="an">opencode + october</span><span class="st live recess">LIVE ×13</span><span class="cpu num">119%</span><span class="la">hud lane B · desktop ws 4</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.9">
+        <div class="ph"><span class="tick"></span><span class="pt">PROCESS LEDGER</span><span class="pk">% of one core</span></div>
+        <div class="pb">
+          <div class="prow"><span class="pn">electron · devin-desktop</span><span class="pv num">99%</span><span class="pb2"><i style="width:49%"></i></span></div>
+          <div class="prow"><span class="pn">quickshell</span><span class="pv num">89%</span><span class="pb2"><i style="width:44%"></i></span></div>
+          <div class="prow"><span class="pn">electron · renderer</span><span class="pv num">70%</span><span class="pb2"><i style="width:35%"></i></span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.9">
+        <div class="ph"><span class="tick"></span><span class="pt">REPOS / CI</span><span class="pk">dirty · ahead · ci</span></div>
+        <div class="pb">
+          <div class="rrow"><span class="rn">haze</span><span class="dirty">dirty ×2</span><span class="ci fail">✗ Security 14:07Z</span><span class="ah num">behind 1</span></div>
+          <div class="rrow"><span class="rn">cursor-plugins</span><span class="dirty">dirty ×1</span><span class="ci">— no ci</span><span class="ah num">0/0</span></div>
+          <div class="rrow"><span class="rn">AURICLE</span><span class="clean">clean</span><span class="ci">✓ push 3h30m</span><span class="ah num">main</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:1">
+        <div class="ph"><span class="tick"></span><span class="pt">TOKEN LEDGER</span><span class="pk">day / week / month</span></div>
+        <div class="pb tok">
+          <div class="trow"><span class="tp hd">PROVIDER</span><span class="hd">DAY</span><span class="hd">WEEK</span><span class="hd">MONTH</span></div>
+          <div class="trow recess"><span class="tp">devin</span><span class="num">in <b>160.6M</b> out 36.2M</span><span class="num">160.6M / 36.2M</span><span class="num">170.1M / 38.0M</span></div>
+          <div class="trow recess"><span class="tp">opencode</span><span class="num">in <b>52.3M</b> · $0.23</span><span class="num">52.3M · $0.23</span><span class="num">65.5M · $0.37</span></div>
+          <div class="trow recess"><span class="tp">haze team</span><span class="num">0</span><span class="num">0</span><span class="num">489.3M / 2.1M · 73 msg</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.9">
+        <div class="ph"><span class="tick"></span><span class="pt">DEV SERVERS</span><span class="pk">12 listening sockets</span></div>
+        <div class="pb">
+          <div class="prow"><span class="pn">next-server v15.5.25 · :3000</span><span class="pv num">6%</span><span class="pb2"><i style="width:6%"></i></span></div>
+          <div class="prow"><span class="pn">october-core · :34441/:38463</span><span class="pv num">—</span><span class="pb2"><i style="width:2%"></i></span></div>
+          <div class="prow"><span class="pn">devin acp · 127.0.0.1:36767</span><span class="pv num">—</span><span class="pb2"><i style="width:2%"></i></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= RIGHT : PATCH BAY ================= -->
+    <div class="col">
+      <div class="panel bevel" style="flex:.85">
+        <div class="ph"><span class="tick"></span><span class="pt">NETWORK INTERFACES</span><span class="pk">/proc/net/dev</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">enp15s0 · RTL8125 2.5GbE</span><span class="jv num">1.2 MB/s rx</span><span class="js">192.168.0.112</span></div>
+          <div class="jack emboss"><span class="port"></span><span class="jn">wlp16s0 · MT7922 Wi-Fi 6E</span><span class="jv num">DOWN</span><span class="js">no link</span></div>
+          <div class="jack emboss"><span class="port"></span><span class="jn">lo · loopback</span><span class="jv num">—</span><span class="js">127.0.0.1</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:1.05">
+        <div class="ph"><span class="tick"></span><span class="pt">AUDIO ROUTES</span><span class="pk">PipeWire · wpctl</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">Corsair Slipstream sink ★default</span><span class="vol"><i style="width:95%"></i></span><span class="jv num">95%</span></div>
+          <div class="jack emboss"><span class="port"></span><span class="jn">Ryzen analog 60% · LC27G7xT HDMI 40%</span><span class="vol"><i style="width:60%"></i></span><span class="jv num">2 sinks</span></div>
+          <div class="jack emboss"><span class="port up"></span><span class="jn">Corsair mic mono · LIVE</span><span class="vol"><i style="width:100%"></i></span><span class="jv num">100%</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.8">
+        <div class="ph"><span class="tick"></span><span class="pt">BLUETOOTH + PERIPHERALS</span><span class="pk">battery</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">hci0 MT7922 · powered · 0 paired</span><span class="js">OmarchyLink</span></div>
+          <div class="jack emboss"><span class="port up"></span><span class="jn">G502 X PLUS 94% · K7 + Kiyo on usb6</span><span class="vol"><i style="width:94%"></i></span><span class="jv num">94%</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.9">
+        <div class="ph"><span class="tick"></span><span class="pt">CLIPBOARD RECENTS</span><span class="pk">31 deep</span></div>
+        <div class="pb">
+          <div class="clip emboss"><b>01</b>udevadm info -a /dev/bus/usb/006/003 | less</div>
+          <div class="clip emboss"><b>02</b>omarchy-shell nexuslink.hud panels</div>
+          <div class="clip emboss"><b>03</b>/run/media/nexuslink/82CC5F65CC5F5311 · git -C ~/projects/haze status</div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.75">
+        <div class="ph"><span class="tick"></span><span class="pt">DOWNLOADS + TRASH</span><span class="pk">recent</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">astralmon-main.bundle · Devin 3.10.35 ×2</span><span class="js">today</span></div>
+          <div class="jack emboss"><span class="port"></span><span class="jn">trash · easyeffects dirs</span><span class="jv num">5 items</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.85">
+        <div class="ph"><span class="tick"></span><span class="pt">SYSTEMD · HERMES · MCP</span><span class="pk">user services</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">systemd --user · 15 running · 0 failed</span><span class="jv">crash-watch</span></div>
+          <div class="jack emboss"><span class="port"></span><span class="jn">hermes cron · 3 jobs disabled</span><span class="js">last ok</span></div>
+          <div class="jack emboss"><span class="port up"></span><span class="jn">mcp · hermes 9 + claude/codex bus</span><span class="js">opencode: none</span></div>
+        </div>
+      </div>
+
+      <div class="panel bevel" style="flex:.75">
+        <div class="ph"><span class="tick"></span><span class="pt">DISPLAY + POWER</span><span class="pk">ddc · profile</span></div>
+        <div class="pb">
+          <div class="jack emboss"><span class="port up"></span><span class="jn">brightness DP-2 · ddcutil vcp 10</span><span class="vol"><i style="width:50%"></i></span><span class="jv num">50</span></div>
+          <div class="jack emboss"><span class="port up"></span><span class="jn">power profile · AC · tailscale absent</span><span class="jv">performance</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="scan"></div>
+</body>
+</html>
