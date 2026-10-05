@@ -45,6 +45,17 @@ Bucket semantics:
 - `msgs` (optional): message/call count in the window.
 - `total` (optional): reporter-native combined total — present on
   snapshot-sourced providers. **`total` may overlap `in`+`out`; never sum both.**
+- Two-lane providers (`claude`, `codex`): the omarchy snapshot and Hermes
+  state.db feed one row. `in`/`out`/`cost` then carry the **Hermes event
+  lane only** (`session_model_usage`, providers `anthropic`/`openai-codex`);
+  `total` carries the **snapshot lane only** (Codex CLI / Claude Code
+  rollup). The two lanes measure disjoint traffic — the snapshot collectors
+  never scan Hermes paths — so they are neither duplicates nor a single
+  quantity: render them separately, never add `total` into `in`+out, and
+  never treat one as a corrected version of the other. `build()`'s
+  snapshot-only nulling (`in: null, out: null`) no longer applies to a
+  lane pair; it still applies to providers with no event feed at all
+  (`fireworks`).
 - `day` = local today; `week` = ISO week (Mon-start) containing today;
   `month` = calendar month. Windows are computed from record timestamps.
 - Snapshot-only providers (no per-event feed) emit `"in": null, "out": null`
@@ -76,7 +87,14 @@ fallback activity series.
 | `opencode` | `$XDG_DATA_HOME/opencode/opencode.db` — `message.data` JSON `tokens{input,output,reasoning,cache{read,write}}` + `cost`; fallback `session.tokens_*`/`cost` columns | `oc:` + `message.id` / `ocs:` + `session.id` | `time_updated` / `time_created` (epoch ms) |
 | `devin` | `~/.local/share/devin/cli/sessions.db` — `message_nodes.chat_message` JSON `metadata.metrics{input_tokens,output_tokens,…}`, `metadata.committed_acu_cost`; plus `cli/transcripts/*.json` `steps[].metadata.committed_acu_cost` if present | `dv:` + session_id:row_id / `dvt:` + file:step | `created_at` (epoch s/ms) |
 | `claude` (merge) | `~/.claude/projects/**/*.jsonl`, `~/.local/share/claude/**/*.jsonl` — per-line `message.usage{input_tokens,output_tokens,cache_*}` | `cl:` + uuid/message.id/requestId | line `timestamp` (ISO) |
+| `claude`/`codex` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
 | `haze` | `~/.hermes/usage/*.json` rollups (`input_tokens`,`output_tokens`,`cache_*`,`reasoning_tokens`,`estimated_cost_usd`,`session_id`,`provider`) + `~/.hermes/cron/usage_audit.jsonl` (`prompt_tokens`,`completion_tokens`,`fire_id`,`ts`; error rows skipped) + `~/.local/share/haze/**/*.{json,jsonl}` same shapes | `hz:`/`hzf:`/`hzl:`/`hzs:` + session_id/fire_id/file | `session_id` `YYYYMMDD_HHMMSS` prefix → file mtime → `undated`; audit rows `ts` |
+
+Hermes/state.db overlap with `haze`: the 8 stale (Aug 10) `~/.hermes/usage/*.json`
+rollup sessions also exist in `session_model_usage`; the 4 `openai-codex` ones
+therefore appear under both `haze` and `codex` on 2026-08-10 — outside every
+rendered window. state.db is the superset; if those rollups ever go live again,
+retire `collect_haze`'s rollup branch rather than deduping across providers.
 
 `kind` mapping: claude/codex/devin/opencode → `sub`, fireworks → `api`,
 haze → `team`. opencode is a harness — its upstream auth decides sub vs api;
@@ -114,9 +132,10 @@ per-provider) rather than being dropped.
   empty vs legacy `message`/`part`; ledger uses `message`.
 - **`~/.local/share/haze/`** — absent; haze data comes from `~/.hermes/`
   (`usage/*.json`, `cron/usage_audit.jsonl`) instead.
-- **Hermes sqlite stores** (`~/.hermes/{sessions,state,response_store}.db`)
-  — present but schema undocumented/no clear token columns; not mined.
-  Revisit if a usage-bearing table is identified.
+- **Hermes sqlite stores** (`~/.hermes/{sessions,response_store}.db`)
+  — no token-usage table; still not mined. `~/.hermes/state.db` (and
+  `profiles/*/state.db`) ARE mined since WS-08a via `session_model_usage`
+  (see the sources table; `hermes insights` reads the same table).
 
 Never-read list enforced by a path denylist: `credentials*`, `auth.json`,
 `mcp_config*`, `service.json`, `*cookie*`, `*.vscdb`, `*mcp-tokens*`,
