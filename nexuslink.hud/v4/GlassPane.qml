@@ -12,7 +12,7 @@ Item {
     property real radius: Style.r.glass
     property bool busy: false               // lit rim while data is in flight
     property color busyColor: Style.c.accent
-    property color glow: Style.tone(Style.c.accent2, 0.14)  // transparent disables
+    property color glow: Style.tone(Style.c.azure, 0.10)  // transparent disables
     property bool holo: false               // iridescent top edge light
     property bool dropShadow: true
     property int edgeWidth: 1
@@ -135,8 +135,9 @@ Item {
         }
     }
 
-    // iridescent top rim — horizontal gradient, painted once (static canvas)
-    Canvas {
+    // iridescent top rim: a plain horizontal-gradient Rectangle (no Canvas
+    // texture per instance; ~40 panes/tiles carry one)
+    Rectangle {
         id: holoStrip
         anchors.left: parent.left
         anchors.right: parent.right
@@ -146,21 +147,15 @@ Item {
         height: 2
         opacity: 0.75
         visible: pane.holo
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.clearRect(0, 0, width, height);
-            if (width <= 0)
-                return;
-            var g = ctx.createLinearGradient(0, 0, width, 0);
-            var stops = ["transparent", Style.c.accent2, Style.c.magenta, Style.c.accent, Style.c.mint, "transparent"];
-            for (var i = 0; i < stops.length; i++)
-                g.addColorStop(i / (stops.length - 1), stops[i]);
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, width, height);
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: "transparent" }
+            GradientStop { position: 0.2; color: Style.c.accent2 }
+            GradientStop { position: 0.4; color: Style.c.azure }
+            GradientStop { position: 0.6; color: Style.c.magenta }
+            GradientStop { position: 0.8; color: Style.c.accent }
+            GradientStop { position: 1.0; color: "transparent" }
         }
-        onWidthChanged: requestPaint()
-        onVisibleChanged: if (visible)
-            requestPaint()
     }
 
     // busy rim: pulses only while busy, so an idle pane costs nothing

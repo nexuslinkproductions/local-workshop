@@ -10,6 +10,11 @@ GlassPane 1.0 GlassPane.qml
 EmbossedTile 1.0 EmbossedTile.qml
 Tag 1.0 Tag.qml
 ScanOverlay 1.0 ScanOverlay.qml
+IconWell 1.0 IconWell.qml
+ActionRow 1.0 ActionRow.qml
+ActionToggle 1.0 ActionToggle.qml
+ActionDockCell 1.0 ActionDockCell.qml
+RingGauge 1.0 RingGauge.qml
 KnotField 1.0 KnotField.qml
 # LANE-S-END
 # LANE-D/N-BEGIN (screens + shared dock — lane D1/D2/D3/N components)

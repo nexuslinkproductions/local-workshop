@@ -25,6 +25,17 @@ Item {
     implicitWidth: Math.ceil(inner.implicitWidth + 2 * padding + 2)
     implicitHeight: Math.ceil(inner.implicitHeight + 2 * padding + 2)
 
+    // static bloom behind hot tiles: a soft stacked-rect halo, no blur filter
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: -3
+        radius: tile.radius + 3
+        color: "transparent"
+        border.width: 3
+        border.color: Style.tone(Style.c.accent, 0.10)
+        visible: tile.hot
+    }
+
     // drop shadow plate (static, no filters)
     Rectangle {
         anchors.fill: parent
@@ -84,8 +95,9 @@ Item {
         }
     }
 
-    // iridescent top rim (painted once)
-    Canvas {
+    // iridescent top rim: a plain horizontal-gradient Rectangle (no Canvas
+    // texture per instance; ~40 panes/tiles carry one)
+    Rectangle {
         id: holoStrip
         anchors.left: parent.left
         anchors.right: parent.right
@@ -95,21 +107,15 @@ Item {
         height: 2
         opacity: 0.75
         visible: tile.holo
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.clearRect(0, 0, width, height);
-            if (width <= 0)
-                return;
-            var g = ctx.createLinearGradient(0, 0, width, 0);
-            var stops = ["transparent", Style.c.accent2, Style.c.magenta, Style.c.accent, Style.c.mint, "transparent"];
-            for (var i = 0; i < stops.length; i++)
-                g.addColorStop(i / (stops.length - 1), stops[i]);
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, width, height);
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: "transparent" }
+            GradientStop { position: 0.2; color: Style.c.accent2 }
+            GradientStop { position: 0.4; color: Style.c.azure }
+            GradientStop { position: 0.6; color: Style.c.magenta }
+            GradientStop { position: 0.8; color: Style.c.accent }
+            GradientStop { position: 1.0; color: "transparent" }
         }
-        onWidthChanged: requestPaint()
-        onVisibleChanged: if (visible)
-            requestPaint()
     }
 
     // hover rim: acid for hot tiles, ice otherwise (mock .tile:hover)
@@ -118,7 +124,7 @@ Item {
         radius: tile.radius
         color: "transparent"
         border.width: 1
-        border.color: Style.tone(tile.hot ? Style.c.accent : Style.c.accent2, 0.35)
+        border.color: Style.tone(tile.hot ? Style.c.accent : Style.c.accent2, 0.50)
         opacity: tile.hovered ? 1 : 0
         Behavior on opacity {
             NumberAnimation {

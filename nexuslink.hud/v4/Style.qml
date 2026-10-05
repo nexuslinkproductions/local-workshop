@@ -45,8 +45,13 @@ QtObject {
             "unknown": Qt.rgba(90/255, 100/255, 108/255, 1),
             "magenta": Qt.rgba(255/255, 122/255, 217/255, 1),
             "mint": Qt.rgba(138/255, 255/255, 208/255, 1),
+            // structural third voice (rings, washes, hover rims); never data/state
+            "azure": Qt.rgba(96/255, 165/255, 250/255, 1),
+            "azureDim": Qt.rgba(96/255, 165/255, 250/255, 0.12),
+            "azureWash": Qt.rgba(96/255, 165/255, 250/255, 0.07),
+            "azureRim": Qt.rgba(96/255, 165/255, 250/255, 0.45),
             // holographic edge-light strip (acid -> ice -> magenta -> mint)
-            "holo": ["#c8f31d", "#8fd8e8", "#ff7ad9", "#8affd0"]
+            "holo": ["#c8f31d", "#8fd8e8", "#60a5fa", "#ff7ad9", "#8affd0"]
         })
 
     // ---- fonts -----------------------------------------------------------
@@ -64,7 +69,7 @@ QtObject {
             "pxHero": 96,
             // tracking (font.letterSpacing, px) matching the mock's em tracks
             "lsEngraved": 3.4,
-            "lsMast": 8.0,
+            "lsMast": 6.0,
             "lsTitle": 2.9,
             "lsTag": 1.0,
             "lsBody": 0.4
@@ -72,11 +77,35 @@ QtObject {
 
     // ---- radii -----------------------------------------------------------
     readonly property var r: ({
-            "pane": 10,
-            "glass": 8,
-            "emboss": 7,
-            "chip": 5,
+            "pane": 12,
+            "glass": 10,
+            "emboss": 8,
+            "chip": 6,
+            "well": 10,
+            "key": 10,
             "disc": 999
+        })
+
+    // ---- glyphs ----------------------------------------------------------
+    // Font Awesome 7 Free Solid codepoints (system font, verified with fc-list).
+    // Brands face is only for bluetooth.
+    readonly property string iconFont: "Font Awesome 7 Free Solid"
+    readonly property string brandFont: "Font Awesome 7 Brands"
+    // Brands-face glyphs (use IconWell.brand): bluetooth \uf293, usb \uf287.
+    readonly property var ico: ({
+            "play": "\uf04b", "pause": "\uf04c", "next": "\uf051", "prev": "\uf048",
+            "vol": "\uf028", "mute": "\uf6a9", "mic": "\uf130", "power": "\uf011",
+            "shot": "\uf030", "pick": "\uf1fb", "folder": "\uf07c", "term": "\uf120",
+            "sync": "\uf2f1", "bolt": "\uf0e7", "moon": "\uf186", "display": "\uf390",
+            "chip": "\uf2db", "branch": "\uf126", "robot": "\uf544", "search": "\uf002",
+            "layers": "\uf5fd", "grid": "\uf00a", "home": "\uf015", "sliders": "\uf1de",
+            "down": "\uf019", "trash": "\uf1f8", "broom": "\uf51a", "checks": "\uf560",
+            "eye": "\uf06e", "wifi": "\uf1eb", "disk": "\uf0a0", "arrow": "\uf061",
+            "chev": "\uf054", "more": "\uf141", "rocket": "\uf135", "send": "\uf1d8",
+            "palette": "\uf53f", "menu": "\uf0c9", "bell": "\uf0f3", "gear": "\uf013",
+            "copy": "\uf0c5", "plus": "\uf067", "stop": "\uf04d", 
+            "refresh": "\uf021", "key": "\uf084", "link": "\uf0c1",
+            "pulse": "\uf21e", "hub": "\uf0e8"
         })
 
     // ---- motion ----------------------------------------------------------

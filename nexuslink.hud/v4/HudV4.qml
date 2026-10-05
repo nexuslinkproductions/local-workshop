@@ -909,7 +909,7 @@ Item {
 
             Timer {
                 id: knotProbe
-                running: win.isCommand
+                running: win.isCommand && !win.isHidden(win.deckId)
                 // dense only while a transition cycle is actually in flight
                 interval: (win.knotNode !== null && win.knotNode !== undefined
                            && win.knotNode.effect >= 0) ? 250 : 1500
@@ -974,7 +974,7 @@ Item {
                 id: initRetry
                 interval: 140
                 repeat: true
-                running: true
+                running: !win.layoutReady   // ensureLayout() is a no-op once ready
                 onTriggered: win.ensureLayout()
             }
             Connections {
