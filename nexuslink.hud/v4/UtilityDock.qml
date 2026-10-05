@@ -5,18 +5,21 @@ import Quickshell
 import Quickshell.Io
 
 // UtilityDock.qml — shared bottom utility strip (lane D1).
-// Imported by CommandHub (DP-1) and Workbench (HDMI-A-3). Seventeen glass
+// Imported by CommandHub (DP-1) and Workbench (HDMI-A-3). Fifteen glass
 // cells per candidates/mock2/B/dp1.html .util/.uchip: each cell is a label,
-// one live value line, an optional sub line or meter bar, and a click that
-// fires a real Omarchy action.
+// an optional status line, and a click that fires a real Omarchy action.
+// Dedupe pass (map rows 11/12/16/17/18/23/24/25): dock cells carry actions,
+// not readouts. The weather and appearance cells are gone; the value/sub/
+// meter lines of volume, mic, disk, updates, workspaces, power and media are
+// stripped; every activate action and the mute/heat state survive.
 //
 // `compact: true` (Workbench/HDMI-A-3, lane G2) renders only the curated
-// compactIds set — MEDIA expanded with an album-art MediaCell, then VOLUME,
-// MIC, NOTIFICATIONS, WEATHER, WORKSPACES, POWER, THEME — weighted wider so
-// the strip breathes, and each hidden cell's poller is gated off entirely.
+// compactIds set: MEDIA expanded with an album-art MediaCell, then VOLUME,
+// MIC, NOTIFICATIONS, WORKSPACES, POWER, weighted wider so the strip
+// breathes, and each hidden cell's poller is gated off entirely.
 //
-// Data plan (recon/integrations-desktop.json): collector stats keys are used
-// where they exist (weather, pkg_updates, ws/win counts, fs_root, theme_name).
+// Data plan (recon/integrations-desktop.json): collector stats keys stay as
+// dot-state inputs (pkg_updates, ws_count, fs_root_pct).
 // Everything else polls the item's scouted read_cmd at its scouted poll_s —
 // each poll is a bounded argv vector or a fixed literal bash script (no
 // interpolated/untrusted input), executed by a dormant Process. Actions are
@@ -33,12 +36,12 @@ GlassPane {
     property var stats: ({})
 
     // ---- profile -----------------------------------------------------------
-    // "full" (default) = all 17 cells, unchanged DP-1 CommandHub dock.
+    // "full" (default) = all 15 cells, unchanged DP-1 CommandHub dock.
     // "compact" (HDMI-A-3 Workbench) = curated subset below — media cell is
     // weighted wider and carries a MediaCell album-art thumb.
     property bool compact: false
     readonly property var compactIds: ["media", "vol", "mic", "notif",
-                                       "wthr", "ws", "pwr", "theme"]
+                                       "ws", "pwr"]
 
     // ---- geometry ----------------------------------------------------------
     property int cellH: 92             // mock .util inner band ≈94 px
@@ -68,18 +71,6 @@ GlassPane {
     function esc(s) {
         return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
-    function fmtBytes(b) {
-        var n = num(b);
-        if (n >= 1099511627776)
-            return (n / 1099511627776).toFixed(1) + "T";
-        if (n >= 1073741824)
-            return (n / 1073741824).toFixed(0) + "G";
-        if (n >= 1048576)
-            return (n / 1048576).toFixed(0) + "M";
-        if (n >= 1024)
-            return (n / 1024).toFixed(0) + "K";
-        return Math.round(n) + "B";
-    }
     function cssHex(c) {
         if (typeof c === "string")
             return c;
@@ -92,9 +83,6 @@ GlassPane {
     function b(s) {
         return "<font color='" + cssHex(Style.c.accent) + "'><b>" + esc(s) + "</b></font>";
     }
-    function i2(s) {
-        return "<font color='" + cssHex(Style.c.accent2) + "'>" + esc(s) + "</font>";
-    }
 
     // Fire-and-forget action: argv through a login shell `exec "$@"` so the
     // omarchy-* scripts under /usr/share/omarchy/bin resolve — the same
@@ -105,7 +93,7 @@ GlassPane {
 
     // ---- cell registry -----------------------------------------------------
     // Order matches the mock's left→right strip; bluetooth slots next to the
-    // other radio/audio chips as the 17th integration.
+    // other radio/audio chips.
     readonly property var cellDefs: [
         {
             id: "media",
@@ -140,10 +128,6 @@ GlassPane {
             label: "IDLE INHIBIT"
         },
         {
-            id: "wthr",
-            label: "WEATHER"
-        },
-        {
             id: "rem",
             label: "TIMERS"
         },
@@ -170,10 +154,6 @@ GlassPane {
         {
             id: "dl",
             label: "DOWNLOADS"
-        },
-        {
-            id: "theme",
-            label: "THEME"
         }
     ]
 
@@ -199,8 +179,8 @@ GlassPane {
         return !compact || compactIds.indexOf(id) >= 0;
     }
 
-    // Per-cell width weight — compact's media cell is expanded so the album
-    // thumb + track text breathe; everything else is an equal share.
+    // Per-cell width weight — compact's media cell is wider than 1 unit so
+    // the album thumb + label breathe; everything else is an equal share.
     function cellWeight(id) {
         return compact && id === "media" ? 1.7 : 1.0;
     }
@@ -210,13 +190,12 @@ GlassPane {
             s += cellWeight(activeCellDefs[i].id);
         return Math.max(1, s);
     }
-    // Integer cell boundaries. 2466 px split 17 ways is 145.06 px per cell, and
-    // the fractional pitch smeared every chip edge and every 1 px hairline
-    // across two device pixels. Accumulating the exact weighted offsets and
-    // rounding each cumulative boundary keeps every edge on a whole pixel, the
-    // strip exactly as wide as the pane, and no cell more than 1 px off its
-    // neighbours — dumping the whole remainder on the last cell left the THEME
-    // chip 7 px wider than POWER in the compact profile.
+    // Integer cell boundaries. A fractional weighted pitch smeared every chip
+    // edge and every 1 px hairline across two device pixels. Accumulating the
+    // exact weighted offsets and rounding each cumulative boundary keeps every
+    // edge on a whole pixel and the strip exactly as wide as the pane; dumping
+    // the whole remainder on the last cell left one chip visibly wider than
+    // its neighbours in the compact profile.
     readonly property var _cellEdges: {
         var n = activeCellDefs.length;
         var W = Math.round(strip.width);
@@ -268,35 +247,22 @@ GlassPane {
     property string dlNewest: ""
 
     // ---------- cell content -------------------------------------------------
-    // A 17-cell strip leaves ~135 px of usable width per chip at 12 px Kode
+    // A 15-cell strip leaves ~155 px of usable width per chip at 12 px Kode
     // Mono (≈8.9 px/char), so every value line below is held to ≤14 characters
     // and every sub line to ≤19. Anything longer was silently elided, which
     // read as truncated data rather than as a design.
+    // Dedupe (map 11/12/16/17/18/23/24/25): the stripped cells (media, vol,
+    // mic, upd, ws, pwr, disk — plus the deleted weather/appearance chips)
+    // fall through to the em dash below and render no datum. The mute state
+    // survives as the dot/led colour via cellHot, not as text. Cells whose
+    // datum lives only here (notif, bt, clip, cap, idle, rem, night, dl)
+    // keep their line: Builder 3 does not enumerate them.
     function cellValue(id) {
         switch (id) {
-        case "media":
-            // ASCII transport marks: Kode Mono carries no geometric triangles,
-            // so U+25B6 / U+275A were pulling glyphs out of a fallback face and
-            // rendering off-baseline inside an otherwise monospaced cell.
-            if (media.playing === true)
-                return "> " + esc(trunc(media.title || "playing", 11));
-            if (media.hasPlayer === true)
-                return "|| " + esc(trunc(media.title || "paused", 11));
-            if (media.hasPlayer === false)
-                return ung + " none";
-            return ung;
         case "notif":
             if (notifCount < 0)
                 return ung;
             return b(String(notifCount)) + " · DND " + (notifDnd === "on" ? "<font color='" + cssHex(Style.c.warn) + "'>on</font>" : "off");
-        case "vol":
-            if (volFrac < 0)
-                return ung;
-            return (volMuted ? "<font color='" + cssHex(Style.c.warn) + "'>MUTE</font> " : "") + b(Math.round(volFrac * 100) + "%");
-        case "mic":
-            if (micFrac < 0)
-                return ung;
-            return micMuted ? "<font color='" + cssHex(Style.c.alert) + "'>MUTED</font>" : i2("LIVE") + " " + Math.round(micFrac * 100) + "%";
         case "bt":
             if (!btSeen)
                 return ung;
@@ -309,48 +275,24 @@ GlassPane {
             if (idle.stayAwake === undefined)
                 return ung;
             return idle.stayAwake === true ? b("AWAKE") : "auto";
-        case "wthr":
-            return wthrShort();
         case "rem":
             if (rem.count === undefined)
                 return ung;
             return b(String(num(rem.count))) + " active";
-        case "upd":
-            return has("pkg_updates") ? b(String(num(stats.pkg_updates))) + " pending" : ung;
-        case "ws":
-            return has("ws_count") ? b(String(num(stats.ws_count))) + " ws · " + (has("win_count") ? num(stats.win_count) : ung) + " win" : ung;
         case "night":
             return nightEnabled === "" ? ung : nightEnabled;
-        case "pwr":
-            return powerProfile !== "" ? i2(powerProfile) : ung;
-        case "disk":
-            if (!has("fs_root_pct"))
-                return ung;
-            var out = Math.round(num(stats.fs_root_pct)) + "%";
-            // free space needs BOTH halves — no -0/-N fabrication on a lone key.
-            if (has("fs_root_size") && has("fs_root_used"))
-                out += " · " + fmtBytes(num(stats.fs_root_size) - num(stats.fs_root_used));
-            return out;
         case "dl":
             if (dlCount < 0)
                 return ung;
             return dlNewest !== "" ? esc(trunc(dlNewest, 12)) : "empty";
-        case "theme":
-            return has("theme_name") ? esc(trunc(stats.theme_name, 12)) : ung;
         }
         return ung;
     }
 
     function cellSub(id) {
         switch (id) {
-        case "media":
-            return media.hasPlayer === true ? esc(trunc(media.artist || "unknown artist", 19)) : "tap → play/pause";
         case "notif":
             return notifNewest !== "" ? "new: " + trunc(notifNewest, 14) : "toggle DND";
-        case "vol":
-            return volMuted ? "sink muted" : "tap → mute";
-        case "mic":
-            return "tap → mute";
         case "bt":
             return btPowered ? "hci0 · panel" : "tap → panel";
         case "clip":
@@ -359,36 +301,20 @@ GlassPane {
             return "screenshot →";
         case "idle":
             return idle.screensaver !== undefined ? "screen " + num(idle.screensaver) + "s" : "toggle idle";
-        case "wthr":
-            return wthrCity();
         case "rem":
             return "reminders →";
-        case "upd":
-            return "tap → refresh";
-        case "ws":
-            return wsIdLine();
         case "night":
             return nightTemp > 0 ? num(nightTemp) + "K" : "hyprsunset";
-        case "pwr":
-            return "tap → toggle";
-        case "disk":
-            return has("fs_root_target") ? trunc(String(stats.fs_root_target), 19) : "/";
         case "dl":
             return dlCount > 1 ? "+" + (dlCount - 1) + " more" : "Downloads";
-        case "theme":
-            return "tap → next bg";
         }
         return "";
     }
 
-    // -1 hides the meter; 0..1 fills it.
+    // -1 hides the meter; 0..1 fills it. Dedupe: the vol/mic/disk meter
+    // branches are gone, so every cell hides the meter. volFrac/micFrac
+    // still feed the mute-state reads in cellHot/cellState.
     function cellBar(id) {
-        if (id === "vol")
-            return volFrac;
-        if (id === "mic")
-            return micFrac;
-        if (id === "disk")
-            return has("fs_root_pct") ? Math.min(1, num(stats.fs_root_pct) / 100) : -1;
         return -1;
     }
 
@@ -438,8 +364,6 @@ GlassPane {
             return capCount < 0 ? 0 : 1;
         case "idle":
             return idle.stayAwake === undefined ? 0 : 1;
-        case "wthr":
-            return has("weather") ? 1 : 0;
         case "rem":
             return rem.count === undefined ? 0 : 1;
         case "upd":
@@ -454,8 +378,6 @@ GlassPane {
             return has("fs_root_pct") ? (num(stats.fs_root_pct) >= 85 ? 2 : 1) : 0;
         case "dl":
             return dlCount < 0 ? 0 : 1;
-        case "theme":
-            return has("theme_name") ? 1 : 0;
         }
         return 0;
     }
@@ -467,40 +389,6 @@ GlassPane {
         if (s === 2)
             return Style.c.warn;
         return s === 1 ? Style.tone(Style.c.accent2, 0.6) : Style.c.unknown;
-    }
-
-    function wthrShort() {
-        if (!has("weather"))
-            return ung;
-        var s = String(stats.weather);
-        var t = s.match(/Temp\s+([^·]+)/);
-        var w = s.match(/Wind\s+([^·]+)/);
-        var out = "";
-        if (t)
-            out += "<b>" + esc(t[1].trim()) + "</b>";
-        if (w)
-            out += (out !== "" ? " " : "") + esc(w[1].trim());
-        return out !== "" ? out : esc(trunc(s, 18));
-    }
-    function wthrCity() {
-        if (!has("weather"))
-            return "weather →";
-        var s = String(stats.weather);
-        var idx = s.indexOf("·");
-        return trunc((idx > 0 ? s.substring(0, idx) : s).trim(), 19);
-    }
-    // Three ids plus an overflow count: the full list ran to 25 characters and
-    // always elided in a 145 px cell.
-    function wsIdLine() {
-        var n = Math.min(8, num(stats.ws_count));
-        var ids = [];
-        for (var i = 0; i < n; i++)
-            if (has("ws" + i + "_id"))
-                ids.push(String(num(stats["ws" + i + "_id"])));
-        if (ids.length === 0)
-            return "exposé →";
-        var head = ids.slice(0, 3).join(" · ");
-        return ids.length > 3 ? head + " +" + (ids.length - 3) : head;
     }
 
     // ---------- actions ------------------------------------------------------
@@ -537,9 +425,6 @@ GlassPane {
             execArgv(["omarchy-toggle-idle"]);
             idlePoll.refreshSoon();
             break;
-        case "wthr":
-            execArgv(["omarchy-shell", "-q", "omarchy.weather", "toggle"]);
-            break;
         case "rem":
             execArgv(["omarchy-shell", "-q", "shell", "call", "omarchy.reminders", "toggle", "{}"]);
             remPoll.refreshSoon();
@@ -565,9 +450,6 @@ GlassPane {
             // omarchy-launch-nautilus ignores args (fixed --new-window), so the
             // downloads dir goes through uwsm-app + nautilus directly.
             execArgv(["uwsm-app", "--", "nautilus", "--new-window", homeDir + "/Downloads"]);
-            break;
-        case "theme":
-            execArgv(["omarchy-theme-bg-next"]);
             break;
         }
     }
