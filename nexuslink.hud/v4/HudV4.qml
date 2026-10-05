@@ -65,7 +65,6 @@ Item {
     property int procCount: 0
     property int batchSeq: 0
     property double lastBatchMs: 0
-    property string pendingFrame: ""
     property string lastFrameRaw: ""
 
     property real cpuPct: -1
@@ -76,6 +75,8 @@ Item {
     property real prevRx: -1
     property real prevTx: -1
     property double lastPollMs: 0
+    property double topoMs: 0
+    readonly property double lastFrameMs: lastPollMs
 
     property string hostName: ""
     property string kernelName: ""
@@ -246,7 +247,13 @@ Item {
 
         stats = m
         lastFrameRaw = String(text || "")
-        try { Topology.refresh(stats) } catch (e) {}
+        // The board only needs a fresh topology every ~2 s; refresh costs far
+        // more than every other frame consumer together and its rates are
+        // dt-based, so a skipped frame just widens dt.
+        if (!Topology.ready || lastFrameMs - topoMs >= 1900) {
+            topoMs = lastFrameMs
+            try { Topology.refresh(stats) } catch (e) {}
+        }
     }
 
     function applyProbe(text) {
@@ -288,19 +295,22 @@ Item {
         id: streamProc
         running: true
         command: ["bash", hud.collectScript, "stream", "auto"]
+        // One read per frame instead of one per line (~440 JS callbacks/s):
+        // the frame is cut on the "batch\t" sentinel, so read k carries
+        // "<seq of frame k-1>\n" followed by the lines of frame k.
         stdout: SplitParser {
+            splitMarker: "batch\t"
             onRead: data => {
-                var line = String(data)
-                if (line.indexOf("batch\t") === 0) {
-                    var n = parseInt(line.substring(6))
-                    if (isFinite(n))
-                        hud.batchSeq = n
-                    hud.applyFrame(hud.pendingFrame)
-                    hud.pendingFrame = ""
-                    hud.lastBatchMs = Date.now()
-                } else {
-                    hud.pendingFrame += line + "\n"
+                var body = String(data)
+                var hm = /^(\d+)\n/.exec(body)
+                if (hm !== null) {
+                    hud.batchSeq = parseInt(hm[1]) + 1
+                    body = body.substring(hm[0].length)
                 }
+                if (body.length === 0)
+                    return
+                hud.applyFrame(body)
+                hud.lastBatchMs = Date.now()
             }
         }
     }

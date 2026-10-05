@@ -1931,7 +1931,7 @@ Item {
                                         visible: hintPulse.running
                                         SequentialAnimation on opacity {
                                             id: hintPulse
-                                            loops: Animation.Infinite
+                                            loops: 6          // a discovery hint, not a permanent 60 fps animation
                                             running: root.running && tkey.unseen
                                             NumberAnimation {
                                                 to: 0.25
