@@ -95,10 +95,24 @@ Item {
         win: root.win
     }
 
+    // the action button pins to the card bottom so it can never be cut;
+    // caption lines above it are sliced to whole-line fits only
+    EngravedButton {
+        id: actBtn
+        visible: root.action !== null
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 4 }
+        height: 18
+        label: root.action !== null ? String(root.action.label) : ""
+        chamfer: 4
+        onActivated: root.runAction(root.action.argv)
+    }
+
     Column {
         id: bodyCol
         anchors { left: parent.left; right: parent.right; leftMargin: 8; rightMargin: 8
-                  top: gauge.bottom; topMargin: 2; bottom: parent.bottom; bottomMargin: 4 }
+                  top: gauge.bottom; topMargin: 2
+                  bottom: actBtn.visible ? actBtn.top : parent.bottom
+                  bottomMargin: actBtn.visible ? 2 : 4 }
         spacing: 1
         clip: true
         Tx {
@@ -110,7 +124,12 @@ Item {
             font.letterSpacing: 1.5
         }
         Repeater {
-            model: root.lines.slice(0, 3)
+            // status takes ~15px, winlab ~15 — fit whole caption lines only
+            model: {
+                var room = bodyCol.height - 16 - (root.winlab !== "" ? 16 : 0);
+                var n = Math.floor(room / 15);
+                return root.lines.slice(0, Math.max(0, Math.min(3, n)));
+            }
             delegate: Tx {
                 required property var modelData
                 role: "cap"
@@ -120,13 +139,5 @@ Item {
             }
         }
         Tx { role: "faint"; text: root.winlab; visible: root.winlab !== "" }
-        EngravedButton {
-            visible: root.action !== null
-            width: parent.width
-            height: 18
-            label: root.action !== null ? String(root.action.label) : ""
-            chamfer: 4
-            onActivated: root.runAction(root.action.argv)
-        }
     }
 }

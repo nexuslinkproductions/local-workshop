@@ -39,8 +39,11 @@ Item {
     onTokDataChanged: root.nowMs = Date.now()
 
     // ---- provider descriptors (ring order: outer -> inner) ---------------
+    // OCG's headline lane is `opencode-go` (Hermes crew events); the local
+    // opencode.db CLI lane stays `opencode` and renders as its own skyline
+    // segment + ledger row — two labelled lanes, never silently summed.
     readonly property var pdesc: [
-        { "id": "opencode", "key": "ocg", "name": "OPENCODE GO",
+        { "id": "opencode-go", "key": "ocg", "name": "OPENCODE GO",
           "code": "PRV-OCG", "col": FuiTokens.ice,   "dash": null },
         { "id": "claude",   "key": "cld", "name": "CLAUDE",
           "code": "PRV-CLD", "col": FuiTokens.white, "dash": null },
@@ -49,17 +52,19 @@ Item {
         { "id": "devin",    "key": "dvn", "name": "DEVIN",
           "code": "PRV-DVN", "col": FuiTokens.dim,   "dash": [1.5, 2.5] }
     ]
-    // skyline stack order incl. codex snapshot lane + haze
+    // skyline stack order incl. opencode CLI lane + codex snapshot lane + haze
     readonly property var stackDef: [
-        { "key": "ocg",  "col": FuiTokens.ice,   "dash": null },
-        { "key": "cld",  "col": FuiTokens.white, "dash": null },
-        { "key": "cdx",  "col": FuiTokens.azure, "dash": null },
-        { "key": "cdxs", "col": FuiTokens.azure, "dash": "double" },
-        { "key": "dvn",  "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
-        { "key": "hze",  "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
+        { "key": "ocg",    "col": FuiTokens.ice,   "dash": null },
+        { "key": "ocgcli", "col": FuiTokens.ice,   "dash": [2, 2] },
+        { "key": "cld",    "col": FuiTokens.white, "dash": null },
+        { "key": "cdx",    "col": FuiTokens.azure, "dash": null },
+        { "key": "cdxs",   "col": FuiTokens.azure, "dash": "double" },
+        { "key": "dvn",    "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
+        { "key": "hze",    "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
     ]
     readonly property var ledgerOrder: ["claude", "codex", "devin",
-                                         "opencode", "haze", "fireworks"]
+                                         "opencode-go", "opencode", "haze",
+                                         "fireworks"]
 
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "tk"].concat(argv));
@@ -92,6 +97,34 @@ Item {
         var snap = b["total"];
         return { "hrm": hrm,
                  "snap": (snap !== null && snap !== undefined && snap > 0) ? snap : null };
+    }
+
+    // ---- model memo --------------------------------------------------------
+    // The heavy row/model builders were re-run by every binding that called
+    // them (skyRows x4, histIndex inside sparkSeries/heatCells/lastHist ~x12
+    // per data refresh) — plus the two non-DP-2 monitor decks each doing the
+    // same work while invisible. _mm() epochs all derived models on
+    // (tokData, nowMs); builders early-return [] / null while !shown so a
+    // dead deck never pays for a ledger refresh it can't paint.
+    //
+    // _memo is assigned ONCE and only its fields are mutated — a property
+    // write inside a binding's own dependency chain trips Qt's binding-loop
+    // detection. Bindings still depend on tokData/nowMs (read below), so
+    // every model re-derives exactly once per epoch.
+    property var _memo: ({})
+    function _mm() {
+        var m = root._memo;
+        if (m._t === root.tokData && m._n === root.nowMs)
+            return m;
+        var fields = ["histIdx", "skyRows", "heatCells", "heroVals",
+                      "compRows", "ledgerRows", "sessionRows", "limCells",
+                      "limBus", "resetMarks"];
+        for (var i = 0; i < fields.length; i++)
+            m[fields[i]] = null;
+        m.sparks = ({});
+        m._t = root.tokData;
+        m._n = root.nowMs;
+        return m;
     }
 
     function fmtMoney(x) {
@@ -157,13 +190,17 @@ Item {
     }
 
     function heroVals() {
+        var m = root._mm();
+        if (m.heroVals)
+            return m.heroVals;
         var v = {}, sum = 0;
         for (var i = 0; i < pdesc.length; i++) {
             var dv = dayVal(pdesc[i].id);
             v[pdesc[i].key] = dv;
             if (dv !== null && dv > 0) sum += dv;
         }
-        return { "v": v, "sum": sum };
+        m.heroVals = { "v": v, "sum": sum };
+        return m.heroVals;
     }
     // "max 626M 10-04" caption for a PrvCard's 30d sparkline
     function sparkMaxOf(pid) {
@@ -208,8 +245,22 @@ Item {
     }
 
     // ================= limit cells =========================================
-    // cap=0 -> all cells (for bus counts); grid shows the first 5 by severity
+    // cap=0 -> all cells (for bus counts); grid shows the first 5 by severity.
+    // Providers with no limits[] feed never get a card — they collapse into
+    // the noFeedProviders strip row so the grid only spends cells on real feeds.
+    readonly property var noFeedProviders: {
+        var out = [];
+        for (var i = 0; i < pdesc.length; i++) {
+            var lims = meta(pdesc[i].id).limits;
+            if (!(lims && lims.length))
+                out.push(pdesc[i].name);
+        }
+        return out;
+    }
     function limitCells(cap) {
+        var m = root._mm();
+        if (m.limCells)
+            return cap > 0 ? m.limCells.slice(0, cap) : m.limCells;
         var cells = [], i, j, lim, ms, wms;
         for (i = 0; i < pdesc.length; i++) {
             var d = pdesc[i], mt = meta(d.id), lims = mt.limits;
@@ -270,35 +321,27 @@ Item {
                 });
             }
         }
-        // providers with no limit feed at all
-        for (i = 0; i < pdesc.length; i++) {
-            d = pdesc[i]; mt = meta(d.id);
-            if (mt.limits && mt.limits.length) continue;
-            cells.push({
-                "code": "LIM-" + d.key.toUpperCase() + "-NF",
-                "sub": "QUOTA",
-                "name": d.name,
-                "stag": "N/A", "sev": "na",
-                "frac": null, "win": null,
-                "statusLine": "NO LIMIT FEED",
-                "lines": ["reset n/a", "ledger: no limit field", "usage only (week/month)"],
-                "winlab": "window n/a",
-                "action": null,
-                "ord": 3
-            });
-        }
         cells.sort(function (a, b) { return a.ord - b.ord; });
+        m.limCells = cells;
         return cap > 0 ? cells.slice(0, cap) : cells;
     }
 
     function limitBus() {
+        var m = root._mm();
+        if (m.limBus)
+            return m.limBus;
         var cells = limitCells(0), c = { "alert": 0, "warn": 0, "na": 0, "ok": 0 };
         for (var i = 0; i < cells.length; i++)
             c[(cells[i].sev in c) ? cells[i].sev : "na"]++;
+        c["na"] += root.noFeedProviders.length;
+        m.limBus = c;
         return c;
     }
 
     function resetMarks() {
+        var m = root._mm();
+        if (m.resetMarks)
+            return m.resetMarks;
         var marks = [], i, j;
         for (i = 0; i < pdesc.length; i++) {
             var d = pdesc[i], mt = meta(d.id), lims = mt.limits;
@@ -324,11 +367,15 @@ Item {
                              "atMs": 0, "status": "na", "etaText": "NO FEED", "note": "" });
             }
         }
+        m.resetMarks = marks;
         return marks;
     }
 
     // ================= history (skyline + heatmap + sparks) ================
     function histIndex() {
+        var m = root._mm();
+        if (m.histIdx)
+            return m.histIdx;
         var h = (root.tokData && root.tokData.history) ? root.tokData.history : {};
         var idx = {};
         for (var pid in h) {
@@ -339,6 +386,7 @@ Item {
                 if (r && r.d) idx[pid][String(r.d)] = r;
             }
         }
+        m.histIdx = idx;
         return idx;
     }
     // per-day token value for a history row (schema rule: in/out, else total)
@@ -351,10 +399,16 @@ Item {
     }
     // last 30 local days, oldest -> today (M tokens per stack key)
     function skyRows(nowMs) {
+        if (!root.shown)
+            return [];
+        var m = root._mm();
+        if (m.skyRows)
+            return m.skyRows;
         var idx = histIndex(), rows = [];
         var today = new Date(nowMs || Date.now());
         today.setHours(0, 0, 0, 0);
-        var keys = { "ocg": "opencode", "cld": "claude", "cdx": "codex",
+        var keys = { "ocg": "opencode-go", "ocgcli": "opencode",
+                     "cld": "claude", "cdx": "codex",
                      "dvn": "devin", "hze": "haze" };
         for (var i = 29; i >= 0; i--) {
             var d = new Date(today.getTime() - i * 86400e3);
@@ -376,9 +430,14 @@ Item {
             rows.push({ "iso": iso, "label": iso.slice(5), "total": total,
                         "parts": parts, "partial": i === 0 });
         }
+        m.skyRows = rows;
         return rows;
     }
     function sparkSeries(pid, nowMs) {
+        var m = root._mm();
+        var ser = m.sparks[pid];
+        if (ser)
+            return ser;
         var idx = histIndex(), vals = [];
         var today = new Date(nowMs || Date.now());
         today.setHours(0, 0, 0, 0);
@@ -387,6 +446,7 @@ Item {
             var r = idx[pid] ? idx[pid][iso] : null;
             vals.push(r ? hval(r) : null);
         }
+        m.sparks[pid] = vals;
         return vals;
     }
     function lastHist(pid, nowMs) {
@@ -397,13 +457,19 @@ Item {
 
     // ================= heatmap =============================================
     function heatCells(nowMs) {
+        if (!root.shown)
+            return [];
+        var m = root._mm();
+        if (m.heatCells)
+            return m.heatCells;
         var idx = histIndex();
         var today = new Date(nowMs || Date.now());
         today.setHours(0, 0, 0, 0);
         var todayIso = isoDay(today);
         var dow = (today.getDay() + 6) % 7;                    // Mon=0
         var start = new Date(today.getTime() - (dow + 25 * 7) * 86400e3);
-        var keys = ["claude", "codex", "devin", "opencode", "haze", "fireworks"];
+        var keys = ["claude", "codex", "devin", "opencode-go", "opencode",
+                    "haze", "fireworks"];
         var cells = [];
         for (var w = 0; w < 26; w++)
             for (var dd = 0; dd < 7; dd++) {
@@ -423,6 +489,7 @@ Item {
                 cells.push({ "iso": iso, "label": iso.slice(5), "total": tot,
                              "partial": iso === todayIso });
             }
+        m.heatCells = cells;
         return cells;
     }
     function heatStats(cells) {
@@ -437,6 +504,9 @@ Item {
 
     // ================= tables ==============================================
     function compRows() {
+        var m = root._mm();
+        if (m.compRows)
+            return m.compRows;
         var hv = heroVals(), rows = [], cum = 0;
         for (var i = 0; i < pdesc.length; i++) {
             var d = pdesc[i], dv = hv.v[d.key];
@@ -455,6 +525,7 @@ Item {
             "sh":  { "v": hv.sum > 0 ? "100.00%" : FuiTokens.unknownGlyph },
             "cum": { "v": "calc" }
         });
+        m.compRows = rows;
         return rows;
     }
 
@@ -462,6 +533,11 @@ Item {
         return { "v": (x === null || x === undefined) ? "n/a" : FuiTokens.fmtTok(x) };
     }
     function ledgerRows() {
+        var m = root._mm();
+        if (m.ledgerRows)
+            return m.ledgerRows;
+        // the two opencode lanes need distinct row tags (labels truncate at 9)
+        var shortPrv = { "opencode-go": "OCG·HRM", "opencode": "OCG·CLI" };
         var rows = [];
         for (var i = 0; i < ledgerOrder.length; i++) {
             var pid = ledgerOrder[i], p = provs()[pid];
@@ -471,32 +547,46 @@ Item {
             var st = mt.status ? String(mt.status).toLowerCase() : "";
             var kind = String(p.kind || "sub") + (st ? "·" + st.slice(0, 7) : "");
             rows.push({
-                "prv": { "v": String(p.label || pid).toUpperCase().slice(0, 9),
+                "prv": { "v": shortPrv[pid]
+                              || String(p.label || pid).toUpperCase().slice(0, 9),
                          "c": st ? FuiTokens.faint : FuiTokens.ice },
                 "kind": { "v": kind, "c": st ? FuiTokens.faint : FuiTokens.mute },
                 "wi": lnum(w["in"]), "wo": lnum(w["out"]), "wc": { "v": fmtMoney(w["cost"]) },
                 "mi": lnum(mo["in"]), "mo": lnum(mo["out"]), "mc": { "v": fmtMoney(mo["cost"]) }
             });
         }
+        m.ledgerRows = rows;
         return rows;
     }
 
     function sessionRows() {
+        var m = root._mm();
+        if (m.sessionRows)
+            return m.sessionRows;
         var s = (root.tokData && root.tokData.sessions) ? root.tokData.sessions : [];
         var rows = [];
         for (var i = 0; i < s.length && i < 8; i++) {
             var e = s[i] || {};
-            var t = String(e.title || "(untitled)");
+            var t = String(e.title || "");
+            if (t === "") {
+                // untitled — identify by profile + start time + model
+                var st = e.start
+                       ? Qt.formatDateTime(new Date(e.start * 1000), "MM-dd hh:mm")
+                       : "?";
+                t = String(e.bot || "?") + "·" + st
+                  + "·" + String(e.model || "?").slice(0, 10);
+            }
             rows.push({
                 "n":   { "v": p2(i + 1) },
                 "bot": { "v": String(e.bot || "?"), "c": FuiTokens.ice },
-                "ti":  { "v": t.length > 19 ? t.slice(0, 18) + "~" : t },
+                "ti":  { "v": t.length > 26 ? t.slice(0, 25) + "~" : t },
                 "mo":  { "v": String(e.model || "").slice(0, 13) },
                 "iN":  { "v": e["in"] !== undefined ? FuiTokens.fmtTok(e["in"]) : "n/a" },
                 "oN":  { "v": e["out"] !== undefined ? FuiTokens.fmtTok(e["out"]) : "n/a" },
                 "t":   { "v": e["last"] ? Qt.formatDateTime(new Date(e["last"] * 1000), "hh:mm") : "" }
             });
         }
+        m.sessionRows = rows;
         return rows;
     }
     function sessionStats() {
@@ -668,7 +758,7 @@ Item {
                 code: "PRV-OCG"
                 color: FuiTokens.ice
                 valueText: {
-                    var v = root.dayVal("opencode");
+                    var v = root.dayVal("opencode-go");
                     return v !== null ? FuiTokens.fmtTok(v) : FuiTokens.unknownGlyph;
                 }
                 share: {
@@ -677,24 +767,29 @@ Item {
                 }
                 shareSuffix: "calc"
                 costLine: {
-                    var mo = root.bk("opencode", "month");
-                    var t = "cost n/a today";
+                    var mo = root.bk("opencode-go", "month");
+                    var t = "cost n/a · hrm crew lane";
                     if (mo["cost"] !== null && mo["cost"] !== undefined)
                         t += " · month " + root.fmtMoney(mo["cost"]);
                     return t;
                 }
+                // two disjoint event lanes under one product: Hermes crew
+                // (this card's headline) + the local opencode.db CLI feed
                 extraLine: {
-                    var mo = root.bk("opencode", "month");
-                    var s = (mo["msgs"] !== null && mo["msgs"] !== undefined)
-                          ? mo["msgs"] + " msgs/mo" : "ring 1";
-                    var lag = root.histLag("opencode");
+                    var cw = root.bk("opencode-go", "week"),
+                        cl = root.bk("opencode", "week");
+                    var hrm = (cw["in"] || 0) + (cw["out"] || 0);
+                    var cli = (cl["in"] || 0) + (cl["out"] || 0);
+                    var s = "hrm " + FuiTokens.fmtTok(hrm)
+                          + " + cli " + FuiTokens.fmtTok(cli) + " · disjoint";
+                    var lag = root.histLag("opencode-go");
                     if (lag === "no rows") s += " · no history rows";
                     else if (lag !== "") s += " · history lags (" + lag + ")";
                     return s;
                 }
-                warned: root.histLag("opencode") !== ""
-                spark: root.sparkSeries("opencode", root.nowMs)
-                sparkMax: root.sparkMaxOf("opencode")
+                warned: root.histLag("opencode-go") !== ""
+                spark: root.sparkSeries("opencode-go", root.nowMs)
+                sparkMax: root.sparkMaxOf("opencode-go")
             }
 
             // centre — concentric limit rings + countdown chips
@@ -880,18 +975,27 @@ Item {
         Item {
             id: limGrid
             anchors.fill: parent
-            readonly property real cw2: (width - 2 * 8 - 2 * 9) / 3
-            // cards need header(34)+gauge(128)+body(~96) ≈ 258; timeline gets the rest
-            readonly property real ch2: Math.min(258, Math.max(150, (height - 106) / 2))
-            readonly property real tlH: Math.max(56, height - (2 * ch2 + 34))
+            // real limit feeds only; providers with no limits[] collapse into
+            // the nfStrip line so the freed cells give the real cards more room
+            readonly property var cells: root.limitCells(5)
+            readonly property int nCells: cells.length + 1    // + LIM-BUS cell
+            readonly property int cols: nCells <= 3 ? Math.max(1, nCells)
+                                      : (nCells <= 4 ? 2 : 3)
+            readonly property int nRows: Math.ceil(nCells / cols)
+            readonly property real nfH: root.noFeedProviders.length > 0 ? 22 : 0
+            readonly property real tlH: Math.max(56, Math.min(130, height * 0.16))
+            // cards get everything left after strip + timeline block
+            readonly property real cardsH: height - 4 - nfH - (20 + tlH) - 8
+            readonly property real ch2: Math.max(150, (cardsH - (nRows - 1) * 9) / nRows)
+            readonly property real cw2: (width - 16 - (cols - 1) * 9) / cols
 
             Repeater {
-                model: root.limitCells(5)
+                model: limGrid.cells
                 delegate: Tk.LimitCard {
                     required property int index
                     required property var modelData
-                    x: 8 + (index % 3) * (limGrid.cw2 + 9)
-                    y: 4 + Math.floor(index / 3) * (limGrid.ch2 + 8)
+                    x: 8 + (index % limGrid.cols) * (limGrid.cw2 + 9)
+                    y: 4 + Math.floor(index / limGrid.cols) * (limGrid.ch2 + 9)
                     width: limGrid.cw2
                     height: limGrid.ch2
                     code: modelData.code
@@ -909,11 +1013,12 @@ Item {
                 }
             }
 
-            // LIM-BUS summary cell (6th slot)
+            // LIM-BUS summary cell (last grid slot)
             Item {
                 id: busCell
-                x: 8 + 2 * (limGrid.cw2 + 9)
-                y: 4 + limGrid.ch2 + 8
+                x: 8 + ((limGrid.nCells - 1) % limGrid.cols) * (limGrid.cw2 + 9)
+                y: 4 + Math.floor((limGrid.nCells - 1) / limGrid.cols)
+                     * (limGrid.ch2 + 9)
                 width: limGrid.cw2
                 height: limGrid.ch2
                 Rectangle {
@@ -977,6 +1082,34 @@ Item {
                 }
             }
 
+            // collapsed providers without a limits[] feed — one compact line,
+            // the freed cells went to the real cards above
+            Item {
+                visible: limGrid.nfH > 0
+                x: 8
+                y: 4 + limGrid.nRows * (limGrid.ch2 + 9)
+                width: limGrid.width - 16
+                height: limGrid.nfH
+                Rectangle {
+                    anchors.fill: parent
+                    color: Qt.rgba(4/255, 6/255, 8/255, 0.35)
+                    border.width: 1
+                    border.color: FuiTokens.hair3
+                }
+                Tk.Tx {
+                    role: "cap"
+                    anchors { left: parent.left; leftMargin: 8
+                              verticalCenter: parent.verticalCenter }
+                    text: "NO LIMIT FEED: " + root.noFeedProviders.join(" · ")
+                }
+                Tk.Tx {
+                    role: "micro"; tone: FuiTokens.faint
+                    anchors { right: parent.right; rightMargin: 8
+                              verticalCenter: parent.verticalCenter }
+                    text: "usage rows still counted · ledger only"
+                }
+            }
+
             // RESET TIMELINE band
             Column {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -1016,11 +1149,12 @@ Item {
         Item {
             anchors.fill: parent
 
-            // KEY legend — parked in the skyline's empty lower-left apron
+            // KEY legend — parked in the skyline's empty upper-left apron,
+            // off the bars (tall days only reach high on the right)
             Row {
                 id: keyRow
-                anchors { left: parent.left; bottom: parent.bottom; leftMargin: 58
-                          bottomMargin: 34 }
+                anchors { left: parent.left; top: parent.top; leftMargin: 58
+                          topMargin: 2 }
                 spacing: 10
                 Tk.Tx { role: "code"; text: "KEY" }
                 Repeater {
@@ -1152,7 +1286,7 @@ Item {
                     }
                 }
                 Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
-                Tk.Tx { role: "cap"; text: "axis linear · stack OCG CLD CDX+SNP DVN HZE" }
+                Tk.Tx { role: "cap"; text: "axis linear · stack OCG+OCLI CLD CDX+SNP DVN HZE" }
                 Tk.Tx { role: "cap"; text: "dashed footprint = zero / no record" }
                 Tk.Tx {
                     role: "cap"; tone: FuiTokens.warn
@@ -1160,7 +1294,8 @@ Item {
                     text: {
                         var lags = [], i;
                         var today = root.isoDay(new Date(root.nowMs || Date.now()));
-                        var map = { "opencode": "OCG", "devin": "DVN", "claude": "CLD", "codex": "CDX" };
+                        var map = { "opencode-go": "OCG", "opencode": "OCLI",
+                                    "devin": "DVN", "claude": "CLD", "codex": "CDX" };
                         for (var pid in map) {
                             var lh = root.lastHist(pid);
                             if (lh && lh < today) lags.push(map[pid] + " last " + lh.slice(5));
@@ -1362,7 +1497,7 @@ Item {
                     text: {
                         var mo = root.bk("opencode", "month");
                         return mo["msgs"] !== undefined && mo["msgs"] !== null
-                               ? "OCG " + mo["msgs"] + " msgs/mo" : "";
+                               ? "OCG·CLI " + mo["msgs"] + " msgs/mo" : "";
                     }
                 }
             }

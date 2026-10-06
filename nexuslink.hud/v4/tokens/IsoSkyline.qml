@@ -63,15 +63,17 @@ Item {
             var ACID = FuiTokens.css(FuiTokens.acid);
 
             // ---- projection (m_lib: O origin, AV day, BV depth, v up) ------
+            // fill the panel: day axis takes the full width (the peak label
+            // floats top-right over the back wall, it needs no side lane)
             var axL = 56;                    // room for value-axis labels
-            var rightPad = 96;               // peak label lane
+            var rightPad = 10;
             var O = { x: axL + 18, y: height - 44 };
             var bvx = 14, bvy = -10;
             var avail = width - O.x - bvx - rightPad;
-            var avx = Math.min(24, Math.max(7, avail / n));
+            var avx = Math.max(6, avail / n);
             var avy = avx * 0.156;
-            bvx = Math.min(bvx, avx * 0.9);
-            var fw = 0.70;
+            bvx = Math.min(16, avx * 0.9);
+            var fw = 0.78;
 
             var maxTot = 0;
             for (var i = 0; i < n; i++)
@@ -216,17 +218,22 @@ Item {
             }
 
             // ---- peak leader -----------------------------------------------
+            // label right-anchored in the top strip — never over the bars
             var ip = -1;
             for (i = 0; i < n; i++)
                 if (ip < 0 || (R[i].total || 0) > (R[ip].total || 0))
                     ip = i;
             if (ip >= 0 && (R[ip].total || 0) > 0) {
                 var top = P(ip, fw / 2, 0.5, R[ip].total);
-                var lx = Math.min(top.x + 30, width - rightPad + 6), ly = Math.max(18, top.y - 46);
+                var labR = width - 6;
+                var ly = Math.max(14, top.y - 46);
+                var lx = Math.min(top.x + 30, labR - 196);
                 ctx.globalAlpha = 0.7;
                 ctx.strokeStyle = ICE;
                 ctx.beginPath();
-                ctx.moveTo(top.x, top.y); ctx.lineTo(top.x + 16, ly + 6); ctx.lineTo(lx + 60, ly + 6);
+                ctx.moveTo(top.x, top.y);
+                ctx.lineTo(Math.min(top.x + 16, lx), ly + 6);
+                ctx.lineTo(lx, ly + 6);
                 ctx.stroke();
                 ctx.fillStyle = ICE;
                 ctx.beginPath(); ctx.arc(top.x, top.y, 2, 0, Math.PI * 2); ctx.fill();
@@ -237,13 +244,13 @@ Item {
                     if (pv > 0) contrib.push({ k: PR[p2].key, v: pv });
                 }
                 contrib.sort(function (a, b) { return b.v - a.v; });
-                txt(lx + 64, ly + 10, "PEAK " + String(R[ip].label) + " · Σ " + fmtM(R[ip].total),
-                    WHITE, "left");
+                txt(labR, ly + 10, "PEAK " + String(R[ip].label) + " · Σ " + fmtM(R[ip].total),
+                    WHITE, "right");
                 if (contrib.length)
-                    txt(lx + 64, ly + 22, contrib.slice(0, 2).map(function (e) {
+                    txt(labR, ly + 22, contrib.slice(0, 2).map(function (e) {
                         return e.k.toUpperCase() + " " + fmtM(e.v)
                              + " (" + (e.v / R[ip].total * 100).toFixed(1) + "%)";
-                    }).join(" + "), FuiTokens.css(FuiTokens.mute), "left", 11);
+                    }).join(" + "), FuiTokens.css(FuiTokens.mute), "right", 11);
             }
             ctx.globalAlpha = 1;
         }
