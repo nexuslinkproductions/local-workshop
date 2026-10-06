@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import Quickshell
 import ".."
 
 // AppDial.qml — M1 APP-DL hero: N-tick app ring + A-Z index ring + tracked
