@@ -2983,6 +2983,8 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
+            if (width <= 0 || height <= 0)
+                return;
             var w = width, h = height, cx = w / 2, cy = h / 2;
             var hot = heatLens && heatK >= 0;
             var hk = Math.max(0, heatK);
@@ -2998,6 +3000,8 @@ Item {
             ctx.lineCap = "round";
 
             function rr(x, y, rw, rh, r) {
+                if (!(r > 0))
+                    r = 0;
                 ctx.beginPath();
                 ctx.moveTo(x + r, y);
                 ctx.arcTo(x + rw, y, x + rw, y + rh, r);
@@ -3007,6 +3011,8 @@ Item {
                 ctx.closePath();
             }
             function circ(x, y, r) {
+                if (!(r > 0))
+                    return;
                 ctx.beginPath();
                 ctx.arc(x, y, r, 0, 6.2832);
             }
@@ -3277,10 +3283,10 @@ Item {
                     ctx.fill();
                     ctx.strokeStyle = live ? acc : dim;
                     ctx.beginPath();
-                    ctx.arc(jx, jy, jr + 3.5, -0.9, 0.9);
+                    ctx.arc(jx, jy, Math.max(0.5, jr + 3.5), -0.9, 0.9);
                     ctx.stroke();
                     ctx.beginPath();
-                    ctx.arc(jx, jy, jr + 6.5, -0.7, 0.7);
+                    ctx.arc(jx, jy, Math.max(0.5, jr + 6.5), -0.7, 0.7);
                     ctx.stroke();
                     break;
                 }
@@ -3303,9 +3309,9 @@ Item {
                     for (var wv = 0; wv < 2; wv++) {
                         ctx.beginPath();
                         if (src)
-                            ctx.arc(pxc, cy, pr + 3 + wv * 3, Math.PI - 0.8, Math.PI + 0.8);
+                            ctx.arc(pxc, cy, Math.max(0.5, pr + 3 + wv * 3), Math.PI - 0.8, Math.PI + 0.8);
                         else
-                            ctx.arc(pxc, cy, pr + 3 + wv * 3, -0.8, 0.8);
+                            ctx.arc(pxc, cy, Math.max(0.5, pr + 3 + wv * 3), -0.8, 0.8);
                         ctx.stroke();
                     }
                     break;

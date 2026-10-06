@@ -46,6 +46,8 @@ Item {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
             ctx.globalAlpha = 1;
+            if (width <= 0 || height <= 0 || !(root.rOuter > 0))
+                return;
             var cx = width / 2, cy = height / 2;
             // ---- outer 0-100% bezel (major 10, minor 2, micro 0.5) --------
             if (root.bezel) {
@@ -82,6 +84,8 @@ Item {
             for (var k = 0; k < root.ringCount; k++) {
                 var e = root.model[k] || {};
                 var r = root.ringR(k);
+                if (!(r > 0))
+                    continue;
                 var col = e.color !== undefined ? e.color : FuiTokens.ice;
                 // track
                 ctx.globalAlpha = 1;

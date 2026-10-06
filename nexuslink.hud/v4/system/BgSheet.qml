@@ -16,6 +16,8 @@ Canvas {
         var ctx = getContext("2d");
         ctx.clearRect(0, 0, width, height);
         var sx = width / 1920, sy = height / 1200;
+        if (!(sx > 0) || !(sy > 0))
+            return;
         var ice = FuiTokens.css(FuiTokens.ice);
         var m = 14, L = 22;
 

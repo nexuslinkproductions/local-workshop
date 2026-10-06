@@ -409,6 +409,8 @@ Item {
         onPaint: {
             var c = getContext("2d");
             c.clearRect(0, 0, width, height);
+            if (width <= 0 || height <= 0)
+                return;
             var rx = width * 0.5;
             var col = Math.round(tint.r * 255) + "," + Math.round(tint.g * 255) + "," + Math.round(tint.b * 255);
             c.save();

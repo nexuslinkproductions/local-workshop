@@ -59,6 +59,8 @@ Item {
             var rOut = Math.min(w, h) / 2 - root.margin - lbl;
             var l1 = 4, l2 = 9;
             var rArc = rOut - l2 - 4;
+            if (!(rArc > 0))
+                return;
             var tickCol = FuiTokens.css(FuiTokens.ice);
             // ---- bezel ticks ---------------------------------------------
             ctx.lineWidth = FuiTokens.lwHair;

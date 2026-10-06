@@ -141,6 +141,8 @@ Item {
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
+            if (width <= 0 || height <= 0 || !(root.rl > 0) || !(root.barBase > 0))
+                return;
             var pol = FuiTokens.pol;
             // centre rings
             ctx.lineWidth = 1;
