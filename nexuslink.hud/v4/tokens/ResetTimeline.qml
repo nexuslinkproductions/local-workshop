@@ -64,7 +64,7 @@ Item {
             var spanH = (far - now) / 3600e3;
             var tickH = spanH > 72 ? 24 : (spanH > 30 ? 12 : 6);
             var t = Math.ceil(now / (tickH * 3600e3)) * tickH * 3600e3;
-            ctx.font = "7px \"" + FuiTokens.mono + "\"";
+            ctx.font = "11px \"" + FuiTokens.mono + "\"";
             for (; t < far; t += tickH * 3600e3) {
                 var xx = tx(t);
                 var d = new Date(t);
@@ -96,14 +96,14 @@ Item {
                 var scol = mk.status === "alert" ? FuiTokens.css(FuiTokens.alert)
                          : mk.status === "warn" ? FuiTokens.css(FuiTokens.warn) : col;
                 if (!mk.atMs) {
-                    var gw2 = 84, gx2 = width - 8 - gw2, gy2 = 16 + gi * 15;
+                    var gw2 = 96, gx2 = width - 8 - gw2, gy2 = 16 + gi * 17;
                     gi++;
                     ctx.globalAlpha = 0.75;
                     ctx.strokeStyle = FuiTokens.css(FuiTokens.hair2);
-                    ctx.strokeRect(gx2, gy2, gw2, 12);
+                    ctx.strokeRect(gx2, gy2, gw2, 15);
                     ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
                     ctx.textAlign = "left";
-                    ctx.fillText(String(mk.label) + " " + String(mk.etaText || "NO FEED"), gx2 + 4, gy2 + 9);
+                    ctx.fillText(String(mk.label) + " " + String(mk.etaText || "NO FEED"), gx2 + 4, gy2 + 12);
                     continue;
                 }
                 var mx = tx(mk.atMs);
@@ -115,25 +115,23 @@ Item {
                 ctx.lineTo(mx, baseY + 7); ctx.lineTo(mx - 5, baseY);
                 ctx.closePath(); ctx.stroke();
                 // stem up to chip row (alternate two lanes to avoid overlap)
-                var lane = i % 2, cy = 34 - lane * 16;
+                var lane = i % 2, cy = 38 - lane * 19;
                 ctx.globalAlpha = 0.45;
-                ctx.beginPath(); ctx.moveTo(mx, baseY - 7); ctx.lineTo(mx, cy + 8); ctx.stroke();
-                // chip
-                var lab = String(mk.label) + " " + String(mk.etaText || "");
-                ctx.font = "8px \"" + FuiTokens.mono + "\"";
+                ctx.beginPath(); ctx.moveTo(mx, baseY - 7); ctx.lineTo(mx, cy + 15); ctx.stroke();
+                // chip — note folds into the label so nothing floats over lanes
+                var lab = String(mk.label) + " " + String(mk.etaText || "")
+                          + (mk.note ? " · " + String(mk.note) : "");
+                ctx.font = "11px \"" + FuiTokens.mono + "\"";
                 var cw = ctx.measureText(lab).width + 10;
-                var cx = Math.min(Math.max(mx - cw / 2, x0), x1 - cw + 10);
+                // clamp inside the axis span, short of the ghost dock
+                var gxLim = width - 8 - 96 - 6;
+                var cx = Math.min(Math.max(mx - cw / 2, x0), gxLim - cw);
                 ctx.globalAlpha = 0.85;
                 ctx.strokeStyle = scol;
-                ctx.strokeRect(cx + 0.5, cy + 0.5, cw, 12);
+                ctx.strokeRect(cx + 0.5, cy + 0.5, cw, 15);
                 ctx.fillStyle = scol;
                 ctx.textAlign = "left";
-                ctx.fillText(lab, cx + 5, cy + 9);
-                if (mk.note) {
-                    ctx.globalAlpha = 0.7;
-                    ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
-                    ctx.fillText(String(mk.note), cx, cy - 3);
-                }
+                ctx.fillText(lab, cx + 5, cy + 12);
             }
             ctx.globalAlpha = 1;
         }

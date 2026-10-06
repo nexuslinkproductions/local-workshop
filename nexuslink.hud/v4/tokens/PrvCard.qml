@@ -72,11 +72,11 @@ Item {
 
         Item {
             width: parent.width
-            height: 30
+            height: 28
             Tx {
                 role: "num"
                 text: root.valueText
-                font.pixelSize: FuiTokens.px.big + 10
+                font.pixelSize: FuiTokens.px.big + 6
                 anchors { left: parent.left; verticalCenter: parent.verticalCenter }
             }
             Tx {

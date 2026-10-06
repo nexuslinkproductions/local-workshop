@@ -87,8 +87,8 @@ Item {
 
     SegGauge {
         id: gauge
-        anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 46 }
-        height: Math.min(104, root.width * 0.5)
+        anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 40 }
+        height: Math.min(92, Math.max(56, root.height * 0.34), root.width * 0.5)
         frac: root.frac
         sev: root.sev === "na" ? "na" : root.sev
         color: FuiTokens.ice
@@ -98,8 +98,9 @@ Item {
     Column {
         id: bodyCol
         anchors { left: parent.left; right: parent.right; leftMargin: 8; rightMargin: 8
-                  top: gauge.bottom; topMargin: 4; bottom: parent.bottom }
+                  top: gauge.bottom; topMargin: 2; bottom: parent.bottom; bottomMargin: 4 }
         spacing: 1
+        clip: true
         Tx {
             role: "cap"
             text: root.statusLine
@@ -109,7 +110,7 @@ Item {
             font.letterSpacing: 1.5
         }
         Repeater {
-            model: root.lines
+            model: root.lines.slice(0, 3)
             delegate: Tx {
                 required property var modelData
                 role: "cap"
@@ -122,7 +123,7 @@ Item {
         EngravedButton {
             visible: root.action !== null
             width: parent.width
-            height: 20
+            height: 18
             label: root.action !== null ? String(root.action.label) : ""
             chamfer: 4
             onActivated: root.runAction(root.action.argv)

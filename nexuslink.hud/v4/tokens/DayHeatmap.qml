@@ -42,7 +42,7 @@ Item {
             var ICE = FuiTokens.css(FuiTokens.ice);
             var ACID = FuiTokens.css(FuiTokens.acid);
 
-            var gx = 30, gy = 20;                  // grid origin
+            var gx = 36, gy = 22;                  // grid origin (fits MON@11px)
             var gw = width - gx - 8, gh = height - gy - 18;
             var cw = gw / W, chh = gh / 7, pad = 1;
 
@@ -70,9 +70,9 @@ Item {
                     ctx.beginPath(); ctx.moveTo(mx - 0.5, gy - 4); ctx.lineTo(mx - 0.5, gy + gh + 4); ctx.stroke();
                     ctx.globalAlpha = 0.85;
                     ctx.fillStyle = FuiTokens.css(FuiTokens.dim);
-                    ctx.font = "7px \"" + FuiTokens.mono + "\"";
+                    ctx.font = "11px \"" + FuiTokens.mono + "\"";
                     ctx.textAlign = "left";
-                    ctx.fillText(monName(mon), mx + 2, gy - 6);
+                    ctx.fillText(monName(mon), mx + 2, gy - 7);
                     lastMon = mon;
                 } else if (mon !== lastMon) {
                     lastMon = mon;
@@ -89,9 +89,9 @@ Item {
             for (var r2 = 0; r2 < 7; r2 += 2) {
                 ctx.globalAlpha = 0.8;
                 ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
-                ctx.font = "7px \"" + FuiTokens.mono + "\"";
+                ctx.font = "11px \"" + FuiTokens.mono + "\"";
                 ctx.textAlign = "right";
-                ctx.fillText(dows[r2], gx - 4, gy + r2 * chh + chh * 0.7);
+                ctx.fillText(dows[r2], gx - 4, gy + r2 * chh + chh * 0.75);
             }
 
             // cells

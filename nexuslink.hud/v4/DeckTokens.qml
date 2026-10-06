@@ -95,8 +95,11 @@ Item {
     }
 
     function fmtMoney(x) {
-        return (x === null || x === undefined || !isFinite(Number(x)))
-               ? "n/a" : "$" + Number(x).toFixed(2);
+        if (x === null || x === undefined || !isFinite(Number(x)))
+            return "n/a";
+        var v = Number(x);
+        return "$" + (v >= 1000 ? (v / 1000).toFixed(2) + "k"
+                    : v >= 100 ? v.toFixed(1) : v.toFixed(2));
     }
     function p2(x) { return (x < 10 ? "0" : "") + x; }
     function isoDay(d) {
@@ -878,8 +881,9 @@ Item {
             id: limGrid
             anchors.fill: parent
             readonly property real cw2: (width - 2 * 8 - 2 * 9) / 3
-            readonly property real ch2: Math.min(232, Math.max(120, (height - 130) / 2))
-            readonly property real tlH: Math.max(48, height - (2 * ch2 + 30))
+            // cards need header(34)+gauge(128)+body(~96) ≈ 258; timeline gets the rest
+            readonly property real ch2: Math.min(258, Math.max(150, (height - 106) / 2))
+            readonly property real tlH: Math.max(56, height - (2 * ch2 + 34))
 
             Repeater {
                 model: root.limitCells(5)
@@ -1012,10 +1016,11 @@ Item {
         Item {
             anchors.fill: parent
 
-            // KEY legend top-left
+            // KEY legend — parked in the skyline's empty lower-left apron
             Row {
                 id: keyRow
-                anchors { left: parent.left; top: parent.top; leftMargin: 58 }
+                anchors { left: parent.left; bottom: parent.bottom; leftMargin: 58
+                          bottomMargin: 34 }
                 spacing: 10
                 Tk.Tx { role: "code"; text: "KEY" }
                 Repeater {
@@ -1198,7 +1203,7 @@ Item {
                             id: legCell
                             required property int index
                             required property string modelData
-                            width: 28; height: 24
+                            width: 30; height: 24
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; top: parent.top }
                                 height: 11
@@ -1211,7 +1216,6 @@ Item {
                                 role: "micro"; text: legCell.modelData
                                 anchors { top: parent.top; topMargin: 13
                                           horizontalCenter: parent.horizontalCenter }
-                                font.pixelSize: 7
                             }
                         }
                     }

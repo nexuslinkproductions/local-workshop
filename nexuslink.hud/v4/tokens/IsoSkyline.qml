@@ -95,7 +95,7 @@ Item {
             function txt(x, y, s, col, align, px) {
                 ctx.globalAlpha = 1;
                 ctx.fillStyle = col;
-                ctx.font = (px || 9) + "px \"" + FuiTokens.mono + "\"";
+                ctx.font = (px || FuiTokens.px.micro) + "px \"" + FuiTokens.mono + "\"";
                 ctx.textAlign = align || "left";
                 ctx.textBaseline = "alphabetic";
                 ctx.fillText(s, x, y);
@@ -243,7 +243,7 @@ Item {
                     txt(lx + 64, ly + 22, contrib.slice(0, 2).map(function (e) {
                         return e.k.toUpperCase() + " " + fmtM(e.v)
                              + " (" + (e.v / R[ip].total * 100).toFixed(1) + "%)";
-                    }).join(" + "), FuiTokens.css(FuiTokens.mute), "left", 8);
+                    }).join(" + "), FuiTokens.css(FuiTokens.mute), "left", 11);
             }
             ctx.globalAlpha = 1;
         }
