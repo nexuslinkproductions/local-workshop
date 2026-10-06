@@ -430,6 +430,16 @@ Item {
             rows.push({ "iso": iso, "label": iso.slice(5), "total": total,
                         "parts": parts, "partial": i === 0 });
         }
+        // Trim the leading all-zero prefix so the chart spans the panel:
+        // with ~20 dead days the bars squeezed into a right-side wedge.
+        // Inner/trailing zero days keep their dashed footprints (and the
+        // zero-run bracket still draws); a fully-dead month keeps all 30.
+        var first = -1;
+        for (var zi = 0; zi < rows.length; zi++) {
+            if ((rows[zi].total || 0) > 0) { first = zi; break; }
+        }
+        if (first > 0)
+            rows = rows.slice(first);
         m.skyRows = rows;
         return rows;
     }
@@ -978,24 +988,85 @@ Item {
             // real limit feeds only; providers with no limits[] collapse into
             // the nfStrip line so the freed cells give the real cards more room
             readonly property var cells: root.limitCells(5)
-            readonly property int nCells: cells.length + 1    // + LIM-BUS cell
+            // auth-pending cells (frac null + warn + action) drop to a compact
+            // one-line strip — a full gauge card just to say "log in" wastes
+            // the grid; the freed room goes to the real cards + timeline
+            readonly property var compactCells: cells.filter(function (c) {
+                return c.sev === "warn" && c.frac === null && c.action !== null;
+            })
+            readonly property var gridCells: cells.filter(function (c) {
+                return !(c.sev === "warn" && c.frac === null && c.action !== null);
+            })
+            readonly property int nCells: gridCells.length + 1    // + LIM-BUS cell
             readonly property int cols: nCells <= 3 ? Math.max(1, nCells)
                                       : (nCells <= 4 ? 2 : 3)
             readonly property int nRows: Math.ceil(nCells / cols)
+            readonly property real stripH: compactCells.length > 0
+                                           ? compactCells.length * 34 + 4 : 0
             readonly property real nfH: root.noFeedProviders.length > 0 ? 22 : 0
-            readonly property real tlH: Math.max(56, Math.min(130, height * 0.16))
-            // cards get everything left after strip + timeline block
-            readonly property real cardsH: height - 4 - nfH - (20 + tlH) - 8
-            readonly property real ch2: Math.max(150, (cardsH - (nRows - 1) * 9) / nRows)
+            // cards are capped at 224; whatever is left goes to the timeline
+            // (min 56) so an auth-pending day never leaves dead lanes
+            readonly property real cardsWant: nRows * 224 + Math.max(0, nRows - 1) * 9
+            readonly property real tlH: Math.max(56, Math.min(240,
+                    height - 4 - stripH - nfH - cardsWant - 28))
+            readonly property real cardsH: height - 4 - stripH - nfH - (20 + tlH) - 8
+            readonly property real ch2: Math.max(140, (cardsH - (nRows - 1) * 9) / nRows)
             readonly property real cw2: (width - 16 - (cols - 1) * 9) / cols
 
+            // compact auth-pending rows: one line + login button each
             Repeater {
-                model: limGrid.cells
+                model: limGrid.compactCells
+                delegate: Item {
+                    id: cmp
+                    required property int index
+                    required property var modelData
+                    x: 8
+                    y: 4 + index * 34
+                    width: limGrid.width - 16
+                    height: 30
+                    Rectangle {
+                        anchors.fill: parent
+                        color: Qt.rgba(4/255, 6/255, 8/255, 0.35)
+                        border.width: 1
+                        border.color: FuiTokens.tone(FuiTokens.warn, 0.4)
+                    }
+                    Tk.Tx {
+                        role: "code"; text: cmp.modelData.code
+                        anchors { left: parent.left; leftMargin: 8
+                                  verticalCenter: parent.verticalCenter }
+                    }
+                    Tk.Tx {
+                        role: "lbl"; text: cmp.modelData.name; tone: FuiTokens.white
+                        anchors { left: parent.left; leftMargin: 96
+                                  verticalCenter: parent.verticalCenter }
+                    }
+                    Tk.Tx {
+                        role: "cap"; tone: FuiTokens.warn
+                        text: cmp.modelData.statusLine + " · " + cmp.modelData.sub.toLowerCase()
+                        anchors { left: parent.left; leftMargin: 200
+                                  verticalCenter: parent.verticalCenter }
+                    }
+                    EngravedButton {
+                        visible: cmp.modelData.action !== null
+                        anchors { right: parent.right; rightMargin: 5
+                                  verticalCenter: parent.verticalCenter }
+                        width: 104; height: 20
+                        label: cmp.modelData.action !== null
+                               ? String(cmp.modelData.action.label) : ""
+                        chamfer: 4
+                        onActivated: root.execArgv(cmp.modelData.action.argv)
+                    }
+                }
+            }
+
+            Repeater {
+                model: limGrid.gridCells
                 delegate: Tk.LimitCard {
                     required property int index
                     required property var modelData
                     x: 8 + (index % limGrid.cols) * (limGrid.cw2 + 9)
-                    y: 4 + Math.floor(index / limGrid.cols) * (limGrid.ch2 + 9)
+                    y: 4 + limGrid.stripH
+                       + Math.floor(index / limGrid.cols) * (limGrid.ch2 + 9)
                     width: limGrid.cw2
                     height: limGrid.ch2
                     code: modelData.code
@@ -1017,7 +1088,8 @@ Item {
             Item {
                 id: busCell
                 x: 8 + ((limGrid.nCells - 1) % limGrid.cols) * (limGrid.cw2 + 9)
-                y: 4 + Math.floor((limGrid.nCells - 1) / limGrid.cols)
+                y: 4 + limGrid.stripH
+                   + Math.floor((limGrid.nCells - 1) / limGrid.cols)
                      * (limGrid.ch2 + 9)
                 width: limGrid.cw2
                 height: limGrid.ch2
@@ -1087,7 +1159,7 @@ Item {
             Item {
                 visible: limGrid.nfH > 0
                 x: 8
-                y: 4 + limGrid.nRows * (limGrid.ch2 + 9)
+                y: 4 + limGrid.stripH + limGrid.nRows * (limGrid.ch2 + 9)
                 width: limGrid.width - 16
                 height: limGrid.nfH
                 Rectangle {

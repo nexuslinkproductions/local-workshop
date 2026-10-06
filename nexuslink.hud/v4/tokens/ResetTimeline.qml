@@ -96,7 +96,9 @@ Item {
                 var scol = mk.status === "alert" ? FuiTokens.css(FuiTokens.alert)
                          : mk.status === "warn" ? FuiTokens.css(FuiTokens.warn) : col;
                 if (!mk.atMs) {
-                    var gw2 = 96, gx2 = width - 8 - gw2, gy2 = 16 + gi * 17;
+                    // ghost chips stack upward from just above the axis so
+                    // a tall band never leaves an empty right lane
+                    var gw2 = 96, gx2 = width - 8 - gw2, gy2 = baseY - 38 - gi * 17;
                     gi++;
                     ctx.globalAlpha = 0.75;
                     ctx.strokeStyle = FuiTokens.css(FuiTokens.hair2);
@@ -114,8 +116,9 @@ Item {
                 ctx.moveTo(mx, baseY - 7); ctx.lineTo(mx + 5, baseY);
                 ctx.lineTo(mx, baseY + 7); ctx.lineTo(mx - 5, baseY);
                 ctx.closePath(); ctx.stroke();
-                // stem up to chip row (alternate two lanes to avoid overlap)
-                var lane = i % 2, cy = 38 - lane * 19;
+                // stem up to chip row (alternate two lanes to avoid overlap);
+                // lanes hang just above the axis so a tall band stays tight
+                var lane = i % 2, cy = baseY - 34 - lane * 19;
                 ctx.globalAlpha = 0.45;
                 ctx.beginPath(); ctx.moveTo(mx, baseY - 7); ctx.lineTo(mx, cy + 15); ctx.stroke();
                 // chip — note folds into the label so nothing floats over lanes
