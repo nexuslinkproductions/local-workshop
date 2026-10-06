@@ -42,14 +42,15 @@ Item {
             ctx.lineTo(0.5, h - 0.5 - c);
             ctx.lineTo(0.5, 0.5 + c);
             ctx.closePath();
-            ctx.fillStyle = FuiTokens.css(root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.10)
-                                : root.hov ? FuiTokens.tone(FuiTokens.ice, 0.05)
+            ctx.fillStyle = FuiTokens.css(root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.16)
+                                : root.hov ? FuiTokens.tone(FuiTokens.ice, 0.12)
                                 : FuiTokens.tone(FuiTokens.ice, 0.025));
             ctx.fill();
             ctx.strokeStyle = FuiTokens.css(
-                root.danger ? FuiTokens.tone(FuiTokens.warn, root.hov ? 0.9 : 0.7)
-                            : FuiTokens.tone(FuiTokens.ice, root.hov ? 0.8 : 0.5));
-            ctx.lineWidth = 1;
+                root.danger ? FuiTokens.tone(FuiTokens.warn, root.hov ? 1.0 : 0.7)
+                            : (root.hov ? FuiTokens.ice
+                                        : FuiTokens.tone(FuiTokens.ice, 0.5)));
+            ctx.lineWidth = root.hov ? 1.5 : 1;
             ctx.stroke();
             // mid hairline under the glyph/keybind row
             ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.1));
@@ -95,18 +96,22 @@ Item {
             font.pixelSize: FuiTokens.px.micro
         }
     }
-    Text {                         // label
+    Text {                         // label — wraps to 2 lines before eliding
         x: 12; y: 36
         width: parent.width - 24
         elide: Text.ElideRight
+        wrapMode: Text.WrapAnywhere
+        maximumLineCount: 2
+        lineHeight: 0.95
         text: root.label
-        color: root.danger ? FuiTokens.warn : FuiTokens.white
+        color: root.danger ? FuiTokens.warn : (root.hov ? FuiTokens.white : FuiTokens.txt)
         font.family: FuiTokens.display
         font.pixelSize: FuiTokens.px.cap
         font.letterSpacing: 1.0
     }
     Row {                          // serial + command caption
-        x: 12; y: 58
+        anchors { left: parent.left; leftMargin: 12
+                  bottom: parent.bottom; bottomMargin: 9 }
         width: parent.width - 24
         spacing: 6
         Text {

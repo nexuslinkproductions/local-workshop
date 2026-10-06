@@ -28,11 +28,24 @@ Item {
     }
 
     readonly property var bots: {
+        // state-ranked: active first, warm/idle next, dormant last (stable
+        // within a tier). _ord keeps the crew.json serial order so a state
+        // flip never renumbers a lane.
         var src = (crew && crew.bots) ? crew.bots : [];
         var out = [];
-        for (var i = 0; i < src.length; i++)
-            if (src[i].name !== "default")
-                out.push(src[i]);
+        function rank(s) { return s === "active" ? 0 : (s === "dormant" ? 2 : 1); }
+        for (var i = 0; i < src.length; i++) {
+            var b = src[i];
+            if (b.name === "default")
+                continue;
+            var rb = {};
+            for (var k in b)
+                rb[k] = b[k];
+            rb._ord = i;
+            rb._rank = rank(String(b.state || "dormant"));
+            out.push(rb);
+        }
+        out.sort(function (a, b) { return a._rank - b._rank || a._ord - b._ord; });
         return out;
     }
 
@@ -45,8 +58,15 @@ Item {
     readonly property real rxX: width * (1104 / 1420)
     readonly property real rowsY: headH + 18
     readonly property real rowsH: Math.max(20, height - rowsY - footH)
-    readonly property real rowH: bots.length > 0
-                                 ? Math.max(17, Math.min(22, rowsH / bots.length)) : 22
+    // rows never exceed rowsH: if the roster can't fit at min row height the
+    // tail collapses into a "+N dormant" summary row.
+    readonly property int minRowH: 17
+    readonly property int maxFit: Math.max(1, Math.floor(rowsH / minRowH))
+    readonly property bool overflowed: bots.length > maxFit
+    readonly property var shownBots: overflowed ? bots.slice(0, maxFit - 1) : bots
+    readonly property int hiddenCount: bots.length - shownBots.length
+    readonly property int nRows: shownBots.length + (overflowed ? 1 : 0)
+    readonly property real rowH: nRows > 0 ? Math.min(22, rowsH / nRows) : 22
     readonly property double tNow: windowEnd - 15 * 60
     // scale for the S/24H micro bar: busiest lane fills the column
     readonly property int maxSes: {
@@ -122,7 +142,7 @@ Item {
             ctx.stroke();
             var step = 600;
             var first = Math.ceil(root.windowStart / step) * step;
-            var rowsBottom = root.rowsY + root.bots.length * root.rowH;
+            var rowsBottom = root.rowsY + root.nRows * root.rowH;
             for (var t = first; t <= root.windowEnd; t += step) {
                 var x = root.tx(t);
                 var hour = t % 3600 === 0;
@@ -234,7 +254,7 @@ Item {
     Column {
         y: root.rowsY
         Repeater {
-            model: root.bots
+            model: root.shownBots
             delegate: Item {
                 id: lane
                 required property int index
@@ -261,7 +281,7 @@ Item {
                 }
                 Text {                             // serial
                     x: 28; anchors.verticalCenter: parent.verticalCenter
-                    text: "CRW-" + root.p2(lane.index + 1)
+                    text: "CRW-" + root.p2(lane.bot._ord + 1)
                     color: FuiTokens.tone(FuiTokens.azure, 0.75)
                     font.family: FuiTokens.mono
                     font.pixelSize: FuiTokens.px.micro
@@ -401,13 +421,40 @@ Item {
         }
     }
 
+    // "+N dormant" summary row — only when the roster overflows rowsH
+    Item {
+        visible: root.overflowed
+        y: root.rowsY + root.shownBots.length * root.rowH
+        width: root.width
+        height: root.rowH
+        Rectangle {
+            x: 14; width: 6; height: 6
+            anchors.verticalCenter: parent.verticalCenter
+            color: FuiTokens.faint
+        }
+        Text {
+            x: 28; anchors.verticalCenter: parent.verticalCenter
+            text: "+ " + root.hiddenCount + " dormant"
+            color: FuiTokens.mute
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
+        Rectangle {                        // continuation ticks on the track
+            x: root.trackX0; width: root.trackW
+            anchors.bottom: parent.bottom
+            height: 1
+            color: FuiTokens.tone(FuiTokens.ice, 0.06)
+        }
+    }
+
     // NOW cursor + tag (sits at end of the 6h track, before the +15m zone)
     Rectangle {
         visible: root.bots.length > 0
         x: Math.round(root.trackX0 + root.trackW)
         y: root.headH - 26
         width: 1
-        height: root.rowsY + root.bots.length * root.rowH - (root.headH - 26)
+        height: root.rowsY + root.nRows * root.rowH - (root.headH - 26)
         color: FuiTokens.tone(FuiTokens.acid, 0.9)
     }
     Rectangle {

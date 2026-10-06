@@ -40,7 +40,7 @@ Item {
         { "label": "CLIPBOARD", "kb": "SUPER+CTRL+V", "gl": FuiTokens.ico.clip,
           "cmd": "omarchy.clipboard",
           "argv": ["omarchy-shell", "shell", "toggle", "omarchy.clipboard"] },
-        { "label": "NEXUS_AI_CENTER", "kb": "unbound", "gl": FuiTokens.ico.folder,
+        { "label": "AI CENTER", "kb": "unbound", "gl": FuiTokens.ico.folder,
           "cmd": "nautilus ~/NEXUS_AI_CENTER",
           "argv": ["uwsm-app", "--", "nautilus",
                    Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },

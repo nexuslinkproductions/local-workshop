@@ -53,11 +53,14 @@ Item {
                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }
             ctx.closePath();
-            ctx.fillStyle = FuiTokens.css(FuiTokens.recess);
+            ctx.fillStyle = FuiTokens.css(
+                root.hovered ? FuiTokens.tone(root.live ? FuiTokens.acid
+                                                        : FuiTokens.ice, 0.11)
+                             : FuiTokens.recess);
             ctx.fill();
             ctx.strokeStyle = FuiTokens.css(
-                root.live ? FuiTokens.tone(FuiTokens.acid, root.hovered ? 0.85 : 0.55)
-                          : (root.hovered ? FuiTokens.tone(FuiTokens.ice, 0.85)
+                root.live ? FuiTokens.tone(FuiTokens.acid, root.hovered ? 1.0 : 0.55)
+                          : (root.hovered ? FuiTokens.ice
                                           : FuiTokens.hair2));
             ctx.lineWidth = FuiTokens.lwHair;
             ctx.stroke();
@@ -76,7 +79,7 @@ Item {
         visible: root.serial !== ""
         anchors { top: parent.top; topMargin: 9; right: parent.right; rightMargin: 14 }
         text: root.serial
-        color: FuiTokens.faint
+        color: FuiTokens.mute
         font.family: FuiTokens.mono
         font.pixelSize: FuiTokens.px.micro
     }
@@ -88,6 +91,7 @@ Item {
         Item {                  // icon or fallback glyph
             anchors.horizontalCenter: parent.horizontalCenter
             width: 26; height: 26
+            scale: root.hovered ? 1.14 : 1.0
             IconImage {
                 anchors.centerIn: parent
                 visible: root._src !== ""
@@ -101,7 +105,7 @@ Item {
                 anchors.centerIn: parent
                 visible: root._src === "" && root.glyph !== ""
                 text: root.glyph
-                color: root.hovered ? FuiTokens.ice : FuiTokens.dim
+                color: root.hovered ? FuiTokens.white : FuiTokens.dim
                 font.family: FuiTokens.icons
                 font.pixelSize: 15
             }
@@ -111,6 +115,9 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: 2
+            lineHeight: 0.95
             text: root.label.toUpperCase()
             color: root.hovered ? FuiTokens.white : FuiTokens.dim
             font.family: FuiTokens.display
@@ -122,15 +129,18 @@ Item {
             text: root.count >= 0 ? "LAUNCH " + (root.count < 10 ? "0" : "")
                                     + root.count + " : " + root.count + "x"
                                   : "untracked"
-            color: root.count > 0 ? FuiTokens.dim : FuiTokens.faint
+            color: root.count > 0 ? FuiTokens.mute : FuiTokens.faint
             font.family: FuiTokens.mono
             font.pixelSize: FuiTokens.px.micro
         }
         Text {
             visible: root.sub !== ""
             anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             text: root.sub
-            color: FuiTokens.faint
+            color: FuiTokens.mute
             font.family: FuiTokens.mono
             font.pixelSize: FuiTokens.px.micro
         }

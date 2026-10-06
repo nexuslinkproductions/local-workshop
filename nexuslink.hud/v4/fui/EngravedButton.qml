@@ -48,18 +48,19 @@ Item {
             path(0.5);
             ctx.fillStyle = FuiTokens.css(
                 !root.interactive ? FuiTokens.recess
-                : root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.10)
-                : hov ? FuiTokens.tone(FuiTokens.ice, 0.07)
+                : root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.16)
+                : hov ? FuiTokens.tone(root.active ? FuiTokens.acid : FuiTokens.ice, 0.14)
                 : FuiTokens.recess);
             ctx.fill();
             ctx.strokeStyle = FuiTokens.css(
                 !root.interactive ? FuiTokens.faint
-                : root.active ? FuiTokens.tone(FuiTokens.acid, hov ? 0.9 : 0.6)
-                : hov ? FuiTokens.tone(FuiTokens.ice, 0.8) : FuiTokens.hair2);
-            ctx.lineWidth = FuiTokens.lwHair;
+                : root.active ? FuiTokens.acid
+                : hov ? FuiTokens.ice : FuiTokens.hair2);
+            ctx.lineWidth = hov || root.active ? 1.5 : FuiTokens.lwHair;
             ctx.stroke();
             path(2.5);              // inner engraving
-            ctx.strokeStyle = FuiTokens.css(FuiTokens.hair3);
+            ctx.strokeStyle = FuiTokens.css(hov ? FuiTokens.tone(FuiTokens.ice, 0.35)
+                                                : FuiTokens.hair3);
             ctx.stroke();
         }
         onWidthChanged: requestPaint()
