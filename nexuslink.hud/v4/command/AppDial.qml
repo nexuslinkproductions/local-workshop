@@ -1,6 +1,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import Quickshell
+import Quickshell.Hyprland
 import ".."
 
 // AppDial.qml — M1 APP-DL hero: N-tick app ring + A-Z index ring + tracked
@@ -85,12 +87,35 @@ Item {
         return out;
     }
 
-    function focusSearch() { search.forceActiveFocus(); }
+    function focusSearch() { arm(); }
     function clearSearch() { query = ""; search.text = ""; }
     function launchTop() {
         if (results.length > 0)
             root.launch(results[0]);
+        disarm();
     }
+
+    // ---------- keyboard grab ---------------------------------------------
+    // The host surface is WlrKeyboardFocus.None, so typing needs an explicit
+    // hyprland_focus_grab_v1 on this window (AppGrid.qml idiom). Arm when the
+    // field is clicked; release on Escape/launch/click elsewhere.
+    readonly property var hostWindow: QsWindow.window
+    property bool kbArmed: false
+
+    HyprlandFocusGrab {
+        windows: root.hostWindow ? [root.hostWindow] : []
+        // `active` is bound, never assigned — flip kbArmed to take/release.
+        active: root.kbArmed && !!root.hostWindow && root.visible
+        onCleared: root.kbArmed = false
+    }
+
+    function arm() {
+        kbArmed = true;
+        search.forceActiveFocus();
+    }
+    function disarm() { kbArmed = false; }
+    onVisibleChanged: if (!visible)
+        disarm()
 
     // ------------------------------------------------------------- painting
     Canvas {
@@ -101,8 +126,12 @@ Item {
             ctx.clearRect(0, 0, width, height);
             var pol = FuiTokens.pol;
             var s = root.s, cx = root.dcx, cy = root.dcy;
+            if (!(s > 0))
+                return;
             function P(r, deg) { return pol(cx, cy, r * s, deg); }
             function ring(r, col, w) {
+                if (!(r * s > 0))
+                    return;
                 ctx.lineWidth = w || 1;
                 ctx.strokeStyle = FuiTokens.css(col);
                 ctx.beginPath();
@@ -200,14 +229,16 @@ Item {
             });
             ctx.beginPath(); ctx.moveTo(cx, cy - 242 * s); ctx.lineTo(cx, cy - 232 * s); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(cx, cy + 232 * s); ctx.lineTo(cx, cy + 250 * s); ctx.stroke();
-            // search field frame
-            ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(ice, 0.8));
+            // search field frame — acid edge while the focus grab is armed
+            ctx.strokeStyle = FuiTokens.css(root.kbArmed ? FuiTokens.acid
+                                                       : FuiTokens.tone(ice, 0.8));
             ctx.fillStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.bg, 0.85));
             var fw = 344 * s, fh = 48 * s;
             ctx.beginPath();
             ctx.rect(cx - fw / 2, cy - fh / 2, fw, fh);
             ctx.fill(); ctx.stroke();
-            ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(ice, 0.4));
+            ctx.strokeStyle = FuiTokens.css(root.kbArmed ? FuiTokens.tone(FuiTokens.acid, 0.55)
+                                                       : FuiTokens.tone(ice, 0.4));
             ctx.strokeRect(cx - fw / 2 + 4 * s, cy - fh / 2 + 4 * s, 32 * s, fh - 8 * s);
             // acid caret marker left of text zone
             ctx.lineWidth = 1.5;
@@ -222,9 +253,19 @@ Item {
             function onAppsChanged() { dial.requestPaint(); }
             function onUsesChanged() { dial.requestPaint(); }
             function onSChanged() { dial.requestPaint(); }
+            function onKbArmedChanged() { dial.requestPaint(); }
         }
         onWidthChanged: requestPaint()
         onHeightChanged: requestPaint()
+    }
+
+    // click on empty dial area releases the grab (never eats the press —
+    // children above handle their own hits, propagation reaches here only
+    // when nothing else accepted)
+    MouseArea {
+        anchors.fill: parent
+        propagateComposedEvents: true
+        onPressed: function (m) { root.disarm(); m.accepted = false; }
     }
 
     // ------------------------------------------------------------ centre text
@@ -291,7 +332,7 @@ Item {
             onTextChanged: root.query = text
             Keys.onReturnPressed: root.launchTop()
             Keys.onEnterPressed: root.launchTop()
-            Keys.onEscapePressed: root.clearSearch()
+            Keys.onEscapePressed: { root.clearSearch(); root.disarm(); }
             Keys.onDownPressed: resultsList.incrementCurrentIndex()
             Keys.onUpPressed: resultsList.decrementCurrentIndex()
             Text {
@@ -302,12 +343,12 @@ Item {
                 font: search.font
             }
         }
-        MouseArea {                  // click anywhere in the field focuses
+        MouseArea {                  // click anywhere in the field arms the grab
             anchors.fill: parent
-            onClicked: search.forceActiveFocus()
+            onClicked: root.arm()
             // let TextInput position the cursor where clicked
             propagateComposedEvents: true
-            onPressed: function (m) { search.forceActiveFocus(); m.accepted = false; }
+            onPressed: function (m) { root.arm(); m.accepted = false; }
         }
     }
 
@@ -354,7 +395,7 @@ Item {
                 }
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: root.launch(parent.modelData)
+                    onClicked: { root.disarm(); root.launch(parent.modelData); }
                 }
             }
         }
@@ -382,7 +423,7 @@ Item {
                     .toString(16).toUpperCase()).slice(-2)
             count: root.uses[modelData.id] || -1
             live: (root.uses[modelData.id] || 0) > 0
-            onActivated: root.launch(modelData)
+            onActivated: { root.disarm(); root.launch(modelData); }
         }
     }
 }
