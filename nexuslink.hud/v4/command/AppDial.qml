@@ -14,6 +14,7 @@ Item {
     property var apps: []                       // AppModel.apps
     property var uses: ({})                     // AppModel.uses
     property int totalUse: 0                    // AppModel.totalUse
+    property var pinnedApps: []                 // AppModel.pinned (curated)
     signal launch(var app)
 
     // dial geometry — design panel 1160x584, centre (580,306)
@@ -48,14 +49,25 @@ Item {
         [-408, -204], [-408, 204], [248, -204], [248, 204],
         [490, -69], [490, 69], [408, -204], [408, 204]
     ]
+    // curated pins first (AppModel policy); by-use only fills leftover slots
     readonly property var pinned: {
-        var byUse = sortedApps.slice(0);
-        byUse.sort(function (x, y) {
-            var d = (uses[y.id] || 0) - (uses[x.id] || 0);
-            if (d !== 0) return d;
-            return String(x.name).toLowerCase() < String(y.name).toLowerCase() ? -1 : 1;
-        });
-        return byUse.slice(0, 16);
+        var out = [], seen = {}, i;
+        for (i = 0; i < pinnedApps.length && out.length < 16; i++) {
+            out.push(pinnedApps[i]);
+            seen[pinnedApps[i].id] = true;
+        }
+        if (out.length < 16) {
+            var byUse = sortedApps.slice(0);
+            byUse.sort(function (x, y) {
+                var d = (uses[y.id] || 0) - (uses[x.id] || 0);
+                if (d !== 0) return d;
+                return String(x.name).toLowerCase() < String(y.name).toLowerCase() ? -1 : 1;
+            });
+            for (i = 0; i < byUse.length && out.length < 16; i++)
+                if (!seen[byUse[i].id])
+                    out.push(byUse[i]);
+        }
+        return out;
     }
 
     // ---- search -------------------------------------------------------------
@@ -124,7 +136,7 @@ Item {
             }
             // ring index labels every 10
             ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
-            ctx.font = Math.round(11 * Math.max(0.5, s)) + "px 'Kode Mono'";
+            ctx.font = Math.max(11, Math.round(11 * Math.max(0.5, s))) + "px 'Kode Mono'";
             ctx.textAlign = "center";
             for (i = 0; i < N; i += 10) {
                 var lp = P(240, i * 360 / N);
@@ -135,7 +147,7 @@ Item {
             ctx.fillStyle = FuiTokens.css(FuiTokens.tone(ice, 0.75));
             for (i = 0; i < 26; i++) {
                 var ga = i * 360 / 26;
-                var gp = P(184, ga);
+                var gp = P(174, ga);   // inside the 191-196 tick band, clear gap
                 ctx.fillText(String.fromCharCode(65 + i), gp.x, gp.y + 4);
                 var g1 = P(196, ga + 360 / 52), g2 = P(191, ga + 360 / 52);
                 ctx.lineWidth = 1;
@@ -175,7 +187,7 @@ Item {
             ctx.lineTo(cx - 30 * s, lp0.y + 22 * s);
             ctx.stroke();
             ctx.fillStyle = FuiTokens.css(ice);
-            ctx.font = Math.round(11 * Math.max(0.5, s)) + "px 'Kode Mono'";
+            ctx.font = Math.max(11, Math.round(11 * Math.max(0.5, s))) + "px 'Kode Mono'";
             ctx.textAlign = "left";
             ctx.fillText("TRACKED " + root.nTracked + "/" + N,
                          cx - 26 * s, lp0.y + 26 * s + 4);
@@ -265,7 +277,7 @@ Item {
             text: FuiTokens.ico.search
             color: FuiTokens.ice
             font.family: FuiTokens.icons
-            font.pixelSize: 15 * Math.max(0.5, root.s)
+            font.pixelSize: Math.max(11, 15 * root.s)
         }
         TextInput {
             id: search
@@ -274,7 +286,7 @@ Item {
             verticalAlignment: Text.AlignVCenter
             color: FuiTokens.txt
             font.family: FuiTokens.mono
-            font.pixelSize: 14 * Math.max(0.5, root.s)
+            font.pixelSize: Math.max(11, 14 * root.s)
             clip: true
             onTextChanged: root.query = text
             Keys.onReturnPressed: root.launchTop()

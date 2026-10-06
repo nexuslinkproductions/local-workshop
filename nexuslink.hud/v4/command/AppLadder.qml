@@ -12,6 +12,7 @@ Item {
     property var apps: []
     property var uses: ({})
     property int totalUse: 0
+    property var pinned: []                     // AppModel.pinned (curated)
     signal launch(var app)
 
     readonly property var ranked: {
@@ -21,8 +22,29 @@ Item {
             return d !== 0 ? d
                 : String(x.name).toLowerCase() < String(y.name).toLowerCase() ? -1 : 1;
         });
-        return a.slice(0, 5);
+        return a.slice(0, 7);
     }
+    // rows = ranked apps first, then curated-but-untracked pins (honest 0x)
+    readonly property real rowsAvail: Math.max(60, height - 196 - 118)
+    readonly property int maxRows: Math.max(3, Math.min(7, Math.floor(rowsAvail / 40)))
+    readonly property var rows: {
+        var out = [];
+        for (var i = 0; i < Math.min(maxRows, ranked.length); i++)
+            out.push({ "app": ranked[i], "tracked": true });
+        var un = [];
+        for (i = 0; i < pinned.length && out.length < maxRows; i++) {
+            var p = pinned[i];
+            var used = false;
+            for (var k = 0; k < out.length; k++)
+                if (out[k].app.id === p.id) used = true;
+            if (!used && (uses[p.id] || 0) <= 0)
+                un.push(p);
+        }
+        for (i = 0; i < un.length && out.length < maxRows; i++)
+            out.push({ "app": un[i], "tracked": false });
+        return out;
+    }
+    readonly property real rowH: Math.max(38, Math.min(50, rowsAvail / Math.max(1, rows.length)))
     readonly property int nTracked: {
         var n = 0;
         for (var i = 0; i < apps.length; i++)
@@ -105,15 +127,16 @@ Item {
     Column {
         y: 196
         Repeater {
-            model: root.ranked
+            model: root.rows
             delegate: Item {
                 id: row
                 required property int index
                 required property var modelData
-                readonly property var app: modelData
+                readonly property var app: modelData.app
+                readonly property bool tracked: modelData.tracked
                 readonly property int n: Number(root.uses[app.id]) || 0
                 width: root.width
-                height: 50
+                height: root.rowH
 
                 Text {
                     x: 16; y: 4
@@ -127,7 +150,7 @@ Item {
                     width: root.bx - 56
                     elide: Text.ElideRight
                     text: String(row.app.name || "").toUpperCase()
-                    color: FuiTokens.white
+                    color: row.tracked ? FuiTokens.white : FuiTokens.dim
                     font.family: FuiTokens.display
                     font.pixelSize: FuiTokens.px.cap
                     font.letterSpacing: FuiTokens.ls.cap
@@ -182,7 +205,8 @@ Item {
                 Text {
                     anchors { right: parent.right; rightMargin: 16 }
                     y: 22
-                    text: "cum " + root.cum(row.index).toFixed(1) + "%"
+                    text: row.tracked ? "cum " + root.cum(row.index).toFixed(1) + "%"
+                                      : "pinned · untracked"
                     color: FuiTokens.mute
                     font.family: FuiTokens.mono
                     font.pixelSize: FuiTokens.px.micro

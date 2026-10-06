@@ -46,8 +46,15 @@ Item {
     readonly property real rowsY: headH + 18
     readonly property real rowsH: Math.max(20, height - rowsY - footH)
     readonly property real rowH: bots.length > 0
-                                 ? Math.max(15, Math.min(22, rowsH / bots.length)) : 22
+                                 ? Math.max(17, Math.min(22, rowsH / bots.length)) : 22
     readonly property double tNow: windowEnd - 15 * 60
+    // scale for the S/24H micro bar: busiest lane fills the column
+    readonly property int maxSes: {
+        var m = 0;
+        for (var i = 0; i < bots.length; i++)
+            m = Math.max(m, Number(bots[i].sessions_24h) || 0);
+        return m;
+    }
 
     function tx(ts) {
         // spans the 6h track AND the +15m future zone so an event may bleed
@@ -319,31 +326,35 @@ Item {
                 }
 
                 // ---- readout columns ------------------------------------
-                Text {                             // S/24H
-                    x: root.rxX + 18
+                Text {                             // S/24H count
+                    x: root.rxX + 2
                     anchors.verticalCenter: parent.verticalCenter
                     horizontalAlignment: Text.AlignRight
-                    width: 24
+                    width: 26
                     text: lane.bot.sessions_24h !== undefined
                           ? root.p2(Number(lane.bot.sessions_24h)) : FuiTokens.unknownGlyph
                     color: FuiTokens.white
                     font.family: FuiTokens.mono
                     font.pixelSize: FuiTokens.px.cap
                 }
-                Row {                              // 10-notch odometer
-                    x: root.rxX + 26
+                Item {                             // S/24H micro bar (scaled to busiest lane)
+                    x: root.rxX + 34
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 5
-                    Repeater {
-                        model: 10
-                        delegate: Rectangle {
-                            id: notch
-                            required property int index
-                            width: 1
-                            height: notch.index < Math.min(10, Number(lane.bot.sessions_24h) || 0) ? 10 : 4
-                            color: FuiTokens.tone(FuiTokens.ice,
-                                notch.index < Math.min(10, Number(lane.bot.sessions_24h) || 0) ? 0.9 : 0.25)
-                        }
+                    width: 52; height: 9
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "transparent"
+                        border.width: 1
+                        border.color: FuiTokens.tone(FuiTokens.ice, 0.3)
+                    }
+                    Rectangle {
+                        visible: lane.bot.sessions_24h !== undefined
+                        x: 1; y: 1
+                        width: root.maxSes > 0
+                               ? Math.max(1, (parent.width - 2) * Math.min(1, (Number(lane.bot.sessions_24h) || 0) / root.maxSes))
+                               : 0
+                        height: parent.height - 2
+                        color: FuiTokens.tone(lane.st === "dormant" ? FuiTokens.dim : FuiTokens.ice, 0.8)
                     }
                 }
                 Rectangle {                        // LANE chip (model tag)

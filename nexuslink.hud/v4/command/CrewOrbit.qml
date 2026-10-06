@@ -99,8 +99,10 @@ Item {
 
     // ---------- geometry (design panel 796x560) -----------------------------
     readonly property real cx: width * 0.5
-    readonly property real cy: height * (258 / 560)
-    readonly property real rl: Math.min(width, height) * (206 / 560)
+    readonly property real cy: height * (246 / 560)
+    // ring bottom must stay above the banner zone (height-86) with margin
+    readonly property real rl: Math.min(Math.min(width, height) * (196 / 560),
+                                        height * 0.561 - 104)
     readonly property real rn: rl * (134 / 206)
     readonly property real barBase: rl * (72 / 206)
     readonly property real pxPerSes: rl * (5 / 206)
@@ -209,9 +211,12 @@ Item {
                 var ly = leaderY(gi);
                 ctx.lineWidth = 1;
                 ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(laneCol, 0.55));
+                // elbow leader: radial stub -> vertical drop outside the name
+                // band -> horizontal into the label block (never crosses arcs)
                 ctx.beginPath();
                 ctx.moveTo(lp1.x, lp1.y);
                 ctx.lineTo(lp2.x, lp2.y);
+                ctx.lineTo(lp2.x, ly + 6);
                 ctx.lineTo(right ? lx - 8 : lx + 8, ly + 6);
                 ctx.stroke();
                 ctx.fillStyle = FuiTokens.css(laneCol);
@@ -483,6 +488,47 @@ Item {
                       ? root.stalledLane.members.map(function (b) {
                             return String(b.name); }).join(" ")
                       : ""
+                color: FuiTokens.mute
+                font.family: FuiTokens.mono
+                font.pixelSize: FuiTokens.px.micro
+            }
+        }
+    }
+
+    // ---------- nominal status (fills the banner slot when no lane is spent) --
+    Rectangle {
+        visible: root.stalledLane === null && root.groups.length > 0
+        x: 16; y: root.height - 86
+        width: 400; height: 78
+        color: FuiTokens.tone(FuiTokens.ice, 0.02)
+        border.width: 1
+        border.color: FuiTokens.tone(FuiTokens.ice, 0.25)
+        Rectangle {                    // corner tab
+            x: -1; y: -1; width: 10; height: 10
+            color: "transparent"
+            Rectangle { x: 0; y: 0; width: 2; height: 10; color: FuiTokens.acid }
+            Rectangle { x: 0; y: 0; width: 10; height: 2; color: FuiTokens.acid }
+        }
+        Column {
+            x: 12; y: 8
+            spacing: 3
+            Text {
+                text: "ALL LANES NOMINAL"
+                color: FuiTokens.acid
+                font.family: FuiTokens.display
+                font.pixelSize: FuiTokens.px.cap
+                font.letterSpacing: FuiTokens.ls.cap
+            }
+            Text {
+                text: root.activeCount + " ACTIVE · " + root.totalSes + " SES/24H · 0 STALLED"
+                color: FuiTokens.dim
+                font.family: FuiTokens.mono
+                font.pixelSize: FuiTokens.px.cap
+            }
+            Text {
+                width: 376
+                elide: Text.ElideRight
+                text: "limits polled via tokens.json · none at 100%"
                 color: FuiTokens.mute
                 font.family: FuiTokens.mono
                 font.pixelSize: FuiTokens.px.micro

@@ -188,6 +188,7 @@ Item {
             apps: appModel.apps
             uses: appModel.counts
             totalUse: appModel.totalLaunches
+            pinnedApps: appModel.pinned
             onLaunch: function (a) { appModel.launchEntry(a); }
         }
     }
@@ -204,6 +205,7 @@ Item {
             apps: appModel.apps
             uses: appModel.counts
             totalUse: appModel.totalLaunches
+            pinned: appModel.pinned
             onLaunch: function (a) { appModel.launchEntry(a); }
         }
     }
@@ -241,7 +243,7 @@ Item {
     // ================================================== footer strip ======
     Item {
         x: root.mx
-        anchors { top: parent.bottom; topMargin: -root.height * (26 / 1440) }
+        anchors { top: parent.bottom; topMargin: -root.height * (30 / 1440) }
         width: root.width - 2 * root.mx
         height: root.height * (18 / 1440)
         Row {

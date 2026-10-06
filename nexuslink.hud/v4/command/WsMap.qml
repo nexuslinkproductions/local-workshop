@@ -161,12 +161,23 @@ Item {
             Column {
                 anchors { left: parent.left; top: parent.top; leftMargin: 8; topMargin: 7 }
                 spacing: 3
-                Text {
-                    text: String(mon.modelData.name)
-                    color: FuiTokens.white
-                    font.family: FuiTokens.display
-                    font.pixelSize: FuiTokens.px.micro
-                    font.letterSpacing: 1.2
+                Row {
+                    spacing: 6
+                    Text {
+                        text: String(mon.modelData.name)
+                        color: FuiTokens.white
+                        font.family: FuiTokens.display
+                        font.pixelSize: FuiTokens.px.micro
+                        font.letterSpacing: 1.2
+                    }
+                    Text {
+                        visible: mon.you
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "· YOU ARE HERE"
+                        color: FuiTokens.acid
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
                 }
                 Text {
                     text: String(mon.modelData.width) + "x" + String(mon.modelData.height)
@@ -194,14 +205,7 @@ Item {
                     font.pixelSize: FuiTokens.px.micro
                 }
             }
-            Text {
-                visible: mon.you
-                anchors { right: parent.right; top: parent.top; rightMargin: 7; topMargin: 7 }
-                text: "YOU ARE HERE"
-                color: FuiTokens.acid
-                font.family: FuiTokens.mono
-                font.pixelSize: FuiTokens.px.micro
-            }
+
             Text {
                 visible: mon.you
                 anchors { right: parent.right; bottom: parent.bottom; rightMargin: 7; bottomMargin: 6 }

@@ -210,7 +210,7 @@ Item {
             }
         }
         Text {
-            x: -2; y: 30
+            x: -2; y: 24
             text: Qt.formatDateTime(root.now, "HH:mm")
             color: FuiTokens.white
             font.family: FuiTokens.display
@@ -221,12 +221,12 @@ Item {
         Item {
             id: secRule
             x: 8
-            y: blockB.height - 52
+            y: blockB.height - 42
             width: blockB.width * 0.62
-            height: 22
+            height: 34
             property int sec: root.now.getSeconds() + root.now.getMilliseconds() / 1000
             Ruler {
-                anchors { left: parent.left; right: parent.right; top: parent.top }
+                anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: 8 }
                 height: 12
                 from: 0; to: 60; minor: 60; majorEvery: 10
                 labels: ["00", "10", "20", "30", "40", "50", "60"]
@@ -237,7 +237,7 @@ Item {
             }
             // minute tick labels under the ruler (Ruler label row is off for flip)
             Row {
-                anchors { top: parent.top; topMargin: 2; left: parent.left; right: parent.right }
+                anchors { top: parent.top; topMargin: 23; left: parent.left; right: parent.right }
                 height: 10
                 Repeater {
                     model: ["00", "10", "20", "30", "40", "50", "60"]
@@ -374,7 +374,8 @@ Item {
     Item {
         id: blockD
         x: Math.round(root.width * 0.776)
-        anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
+        width: parent.width - x
+        anchors { top: parent.top; bottom: parent.bottom }
 
         Text {
             x: 0; y: 12
