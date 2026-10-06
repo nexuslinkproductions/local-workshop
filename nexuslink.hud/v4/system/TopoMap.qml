@@ -419,11 +419,14 @@ Item {
         // controller cards: first gets the tall card, the rest bottom-stack
         var cards = [];
         var busMap = poll !== null ? poll.usbBuses : {};
+        // port -> plate lookup so cards can print real per-port occupancy
+        var plateByDp = {};
+        for (var pi = 0; pi < out.length; pi++)
+            if (out[pi].dp !== "")
+                plateByDp[out[pi].dp] = out[pi];
         for (var c = 0; c < ctrls.length; c++) {
             var cr = ctrls[c];
             var big = c === 0 && cr.devs.length >= 3;
-            var ch2 = big ? Math.min(360, Math.round(h * 0.56)) : 136;
-            var cy = c === 0 ? 0 : Math.max(0, h - ch2 - (c - 1) * (136 + 16));
             var node = cr.node;
             var nm = node !== null ? String(node.label).replace(/\s*\(.*\)\s*$/, "") : "USB CONTROLLER " + cr.buses.join("/");
             var lines = [];
@@ -439,12 +442,25 @@ Item {
                 lines.push({ "l": "pcie", "v": "Gen" + parts[1] + " " + parts[0] });
             }
             var ports = cr.devs.filter(function (d) { return d.indexOf(".") < 0; }).sort(_cmpDp);
-            if (big)
-                lines.push({ "l": "ports used", "v": ports.join(" ") });
+            if (big) {
+                // real per-port detail: dp -> device name (or hub fan-out)
+                for (var pp = 0; pp < ports.length && pp < 8; pp++) {
+                    var pl = plateByDp[ports[pp]];
+                    lines.push({ "l": "port " + ports[pp],
+                                 "v": pl !== undefined ? pl.name.toLowerCase() : "hub" });
+                }
+                if (ports.length > 8)
+                    lines.push({ "l": "ports", "v": "+ " + (ports.length - 8) + " more" });
+            }
             lines.push({ "l": "devices", "v": String(cr.devs.length) });
+            // content-fit height: header ~86 + per-line 17 + temp strip 58
+            var hasTemp = c === 0 && poll !== null && poll.ctlTemp !== null;
+            var ch2 = Math.min(big ? 330 : 150,
+                               Math.max(104, 90 + lines.length * 17 + (hasTemp ? 58 : 0)));
+            var cy = c === 0 ? 0 : Math.max(0, h - ch2 - (c - 1) * (136 + 16));
             cards.push({ "code": cr.code, "pci": String(cr.bdf), "name": nm.toUpperCase(),
                          "lines": lines, "x": 4, "y": cy, "w": col0w - 8, "h": ch2,
-                         "temp": c === 0 && poll !== null ? poll.ctlTemp : null,
+                         "temp": hasTemp ? poll.ctlTemp : null,
                          "ctrlIdx": c });
 
             // spine: vertical line at spineX over this ctrl's col1 rows +

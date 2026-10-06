@@ -197,7 +197,7 @@ Item {
                         text: mcol.modelData.v
                         color: FuiTokens.white
                         font.family: mcol.modelData.hero === true ? FuiTokens.display : FuiTokens.mono
-                        font.pixelSize: mcol.modelData.hero === true ? 15 : FuiTokens.px.mid
+                        font.pixelSize: mcol.modelData.hero === true ? 16 : FuiTokens.px.mid
                         font.letterSpacing: mcol.modelData.hero === true ? 3 : 0
                     }
                     Text {
@@ -456,7 +456,7 @@ Item {
 
     // ---------------------------------------------------------------- footer
     Text {
-        anchors { left: parent.left; leftMargin: 40; bottom: parent.bottom; bottomMargin: 4 }
+        anchors { left: parent.left; leftMargin: root.m; bottom: parent.bottom; bottomMargin: 6 }
         text: "M1-HDMI-03 · devices+system · canvas+card · src: /sys/bus/usb, pactl, ip, hyprctl, collector dev_*"
         color: FuiTokens.faint
         font.family: FuiTokens.mono

@@ -107,7 +107,7 @@ Item {
                     text: statRow.modelData.v
                     color: statRow.modelData.vc !== undefined ? statRow.modelData.vc : FuiTokens.dim
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
-                    elide: Text.ElideLeft
+                    elide: Text.ElideRight
                     width: Math.min(implicitWidth, parent.width - 40)
                 }
             }
@@ -176,6 +176,7 @@ Item {
                     color: ftRow.modelData.vc !== undefined ? ftRow.modelData.vc : FuiTokens.dim
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     elide: Text.ElideRight
+                    width: Math.min(implicitWidth, statCol.x - 68)
                 }
             }
         }

@@ -79,6 +79,10 @@ Item {
                     var k = i / 5;
                     if (k < root.majors.length) {
                         var pt = FuiTokens.pol(cx, cy, r + 3 + 9 + 11, a);
+                        // keep label centres inside the item — the ±120° end
+                        // labels otherwise clip the cell's inner border
+                        pt.x = Math.min(Math.max(pt.x, 14), w - 14);
+                        pt.y = Math.min(Math.max(pt.y, 8), h - 8);
                         ctx.globalAlpha = 0.9;
                         ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
                         ctx.font = FuiTokens.px.body + "px \"" + FuiTokens.mono + "\"";
@@ -141,12 +145,12 @@ Item {
                 ctx.fillStyle = FuiTokens.css(FuiTokens.white);
                 ctx.font = FuiTokens.px.body + "px \"" + FuiTokens.display + "\"";
                 try { ctx.letterSpacing = "3px"; } catch (e) {}
-                ctx.fillText(root.title.toUpperCase(), cx, cy + 58);
+                ctx.fillText(root.title.toUpperCase(), cx, Math.min(cy + 58, h - 24));
             }
             if (root.sub !== "") {
                 ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
                 ctx.font = FuiTokens.px.body + "px \"" + FuiTokens.mono + "\"";
-                ctx.fillText(root.sub, cx, cy + 76);
+                ctx.fillText(root.sub, cx, Math.min(cy + 76, h - 12));
             }
         }
         onWidthChanged: requestPaint()

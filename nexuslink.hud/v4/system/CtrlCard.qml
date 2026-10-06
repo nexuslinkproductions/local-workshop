@@ -74,7 +74,7 @@ Item {
         }
         Column {
             anchors { left: parent.left; right: parent.right
-                      top: parent.top; topMargin: root.temp !== null ? 82 : 72 }
+                      top: parent.top; topMargin: 78 }
             spacing: 2
             Repeater {
                 model: root.lines
@@ -105,7 +105,7 @@ Item {
     Item {
         visible: root.temp !== null
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom
-                  leftMargin: 14; rightMargin: 14; bottomMargin: 66 }
+                  leftMargin: 14; rightMargin: 14; bottomMargin: 12 }
         height: 44
         Canvas {
             id: strip

@@ -112,15 +112,17 @@ Item {
             id: nh; height: 18
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Repeater {
-                model: [["IF", 0, 64], ["STATE", 64, 48], ["ADDR", 112, 138], ["HW", 250, 0]]
+                model: [["IF", 0, 62], ["STATE", 68, 60], ["ADDR", 134, 112], ["HW", 252, 0]]
                 delegate: Text {
                     required property var modelData
                     x: modelData[1]
+                    width: modelData[2] > 0 ? modelData[2] : implicitWidth
+                    elide: Text.ElideRight
                     text: modelData[0]
                     color: FuiTokens.mute
                     font.family: FuiTokens.display
                     font.pixelSize: FuiTokens.px.cap
-                    font.letterSpacing: 1.5
+                    font.letterSpacing: 0.8
                 }
             }
             Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair2 }
@@ -134,10 +136,10 @@ Item {
                     required property var modelData
                     width: netCol.width
                     height: 19
-                    Text { x: 0; width: 64; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData["if"]; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 64; width: 48; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.st; color: ifRow.modelData.st === "UP" ? FuiTokens.acid : FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
-                    Text { x: 112; width: 138; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.addr; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 250; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.hw; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: 0; width: 62; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData["if"]; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: 68; width: 50; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.st; color: ifRow.modelData.st === "UP" ? FuiTokens.acid : FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
+                    Text { x: 134; width: 112; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.addr; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: 252; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.hw; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
                     Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair3 }
                 }
             }
@@ -165,15 +167,17 @@ Item {
             id: ph; height: 18
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Repeater {
-                model: [["BDF", 0, 56], ["DEVICE", 56, 150], ["GEN", 206, 30], ["WIDTH x1-x16", 236, 0]]
+                model: [["BDF", 0, 52], ["DEVICE", 56, 138], ["GEN", 200, 44], ["WIDTH x1-x16", 250, 0]]
                 delegate: Text {
                     required property var modelData
                     x: modelData[1]
+                    width: modelData[2] > 0 ? modelData[2] : implicitWidth
+                    elide: Text.ElideRight
                     text: modelData[0]
                     color: FuiTokens.mute
                     font.family: FuiTokens.display
                     font.pixelSize: FuiTokens.px.cap
-                    font.letterSpacing: 1.5
+                    font.letterSpacing: 0.8
                 }
             }
             Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair2 }
@@ -187,11 +191,11 @@ Item {
                     required property var modelData
                     width: pcieCol.width
                     height: 20
-                    Text { x: 0; width: 56; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.bdf; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
-                    Text { x: 56; width: 150; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.nm; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 206; width: 30; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.gen !== "" ? pcieRow.modelData.gen : FuiTokens.unknownGlyph; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
+                    Text { x: 0; width: 52; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.bdf; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
+                    Text { x: 56; width: 138; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.nm; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: 200; width: 44; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.gen !== "" ? pcieRow.modelData.gen : FuiTokens.unknownGlyph; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
                     Canvas {
-                        x: 236; width: 120; height: 12
+                        x: 250; width: 112; height: 12
                         anchors.verticalCenter: parent.verticalCenter
                         onPaint: {
                             var ctx = getContext("2d");
@@ -200,16 +204,16 @@ Item {
                             for (var k = 0; k < 16; k++) {
                                 ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.45));
                                 ctx.lineWidth = FuiTokens.lwHair;
-                                ctx.strokeRect(k * 7.5 + 0.5, 2, 6, 8);
+                                ctx.strokeRect(k * 7 + 0.5, 2, 5.5, 8);
                                 if (wd !== null && k < wd) {
                                     ctx.fillStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.8));
-                                    ctx.fillRect(k * 7.5 + 0.5, 2, 6, 8);
+                                    ctx.fillRect(k * 7 + 0.5, 2, 5.5, 8);
                                 }
                             }
                         }
                     }
                     Text {
-                        anchors { left: parent.left; leftMargin: 362; verticalCenter: parent.verticalCenter }
+                        anchors { left: parent.left; leftMargin: 366; verticalCenter: parent.verticalCenter }
                         text: pcieRow.modelData.wd !== null ? "x" + pcieRow.modelData.wd : FuiTokens.unknownGlyph
                         color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     }

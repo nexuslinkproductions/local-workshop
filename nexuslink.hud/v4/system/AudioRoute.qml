@@ -67,10 +67,12 @@ Item {
             height: 18
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Repeater {
-                model: [["ID", 0, 46], ["NODE", 46, 150], ["BUS", 196, 82], ["FMT", 278, 48], ["CH", 326, 30], ["RATE", 356, 44], ["STATE", 400, 76]]
+                model: [["ID", 0, 46], ["NODE", 46, 150], ["BUS", 196, 82], ["FMT", 278, 48], ["CH", 326, 30], ["RATE", 356, 56], ["STATE", 418, 68]]
                 delegate: Text {
                     required property var modelData
                     x: modelData[1]
+                    width: modelData[2] > 0 ? modelData[2] : implicitWidth
+                    elide: Text.ElideRight
                     text: modelData[0]
                     color: FuiTokens.mute
                     font.family: FuiTokens.display
@@ -96,8 +98,8 @@ Item {
                             { "x": 196, "w": 82, "t": rowItem.modelData.bus, "c": FuiTokens.dim },
                             { "x": 278, "w": 48, "t": rowItem.modelData.fmt, "c": FuiTokens.dim },
                             { "x": 326, "w": 30, "t": rowItem.modelData.ch, "c": FuiTokens.dim },
-                            { "x": 356, "w": 44, "t": rowItem.modelData.rate, "c": FuiTokens.dim },
-                            { "x": 400, "w": 76, "t": rowItem.modelData.state,
+                            { "x": 356, "w": 56, "t": rowItem.modelData.rate, "c": FuiTokens.dim },
+                            { "x": 418, "w": 68, "t": rowItem.modelData.state,
                               "c": rowItem.modelData.state === "RUNNING" ? FuiTokens.acid : FuiTokens.mute }
                         ]
                         delegate: Text {
@@ -115,10 +117,10 @@ Item {
                     }
                     Text {
                         visible: rowItem.modelData.name === tblItem.defName
-                        anchors { left: parent.left; leftMargin: 478; verticalCenter: parent.verticalCenter }
+                        anchors { left: parent.left; leftMargin: 492; verticalCenter: parent.verticalCenter }
                         text: "◆"
                         color: FuiTokens.ice
-                        font.pixelSize: 9
+                        font.pixelSize: 11
                     }
                     Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair3 }
                 }

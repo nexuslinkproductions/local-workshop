@@ -274,7 +274,7 @@ Item {
                             border.color: wsBox.focused ? FuiTokens.acid : FuiTokens.hair2
                         }
                         Text {
-                            anchors.centerIn: parent
+                            anchors { centerIn: parent; verticalCenterOffset: -5 }
                             text: wsBox.n
                             color: wsBox.focused ? FuiTokens.acid : wsBox.occupied ? FuiTokens.white : FuiTokens.mute
                             font.family: FuiTokens.mono
@@ -286,7 +286,7 @@ Item {
                             text: "·" + wsBox.wins
                             color: FuiTokens.mute
                             font.family: FuiTokens.mono
-                            font.pixelSize: 8
+                            font.pixelSize: 11
                         }
                         TapHandler {
                             onTapped: root.execArgv([
@@ -307,7 +307,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         text: index === 0 ? "col 1" : ""
                         color: FuiTokens.faint
-                        font.family: FuiTokens.mono; font.pixelSize: 8
+                        font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     }
                 }
             }
