@@ -11,11 +11,13 @@ import Quickshell.Wayland
 // ExclusionMode.Auto and no keyboard focus (the chrome-cybercore HUD is a
 // read-only desktop surface; the Navigator overlay owns focus when open).
 //
-// Role map (BRIEF-V4-BUILD §2):
-//   DP-1      command  -> CommandHub  (reactor + knot dead-centre)
-//   DP-2      hardware -> BoardView   (live topology schematic)
-//   HDMI-A-3  ops      -> Workbench   (ledger / patch bay)
+// Role map (M1 kit — docs/m1):
+//   DP-1      command  -> DeckCommand (crew + launch, SwimLane hero)
+//   DP-2      hardware -> DeckTokens  (token flux, concentric limit rings)
+//   HDMI-A-3  ops      -> DeckSystem  (device topology + system ledger)
 //   unknown   -> command fallback so no output ever renders empty
+// (the v4 screens CommandHub/BoardView/Workbench stay in the tree and in
+// qmldir for reference; they are no longer instantiated)
 //
 // MOVABLE DECKS: the v4 screens are monolithic surfaces, so the movable unit
 // is the screen deck itself — a floating slab on a free canvas per monitor.
@@ -50,8 +52,12 @@ Item {
         decodeURIComponent(String(Qt.resolvedUrl("../collect.sh")).replace(/^file:\/\//, ""))
     readonly property string ledgerScript:
         decodeURIComponent(String(Qt.resolvedUrl("../tokens/ledger.py")).replace(/^file:\/\//, ""))
+    readonly property string crewScript:
+        decodeURIComponent(String(Qt.resolvedUrl("../tokens/crew.py")).replace(/^file:\/\//, ""))
     readonly property string tokStatePath:
         Quickshell.env("HOME") + "/.local/state/nexuslink/tokens.json"
+    readonly property string crewStatePath:
+        Quickshell.env("HOME") + "/.local/state/nexuslink/crew.json"
     // v4 state is deliberately a different file — no v3 layout migrates.
     readonly property string stateDir:
         Quickshell.env("HOME") + "/.config/omarchy/nexuslink/"
@@ -65,7 +71,6 @@ Item {
     property int procCount: 0
     property int batchSeq: 0
     property double lastBatchMs: 0
-    property string pendingFrame: ""
     property string lastFrameRaw: ""
 
     property real cpuPct: -1
@@ -76,6 +81,8 @@ Item {
     property real prevRx: -1
     property real prevTx: -1
     property double lastPollMs: 0
+    property double topoMs: 0
+    readonly property double lastFrameMs: lastPollMs
 
     property string hostName: ""
     property string kernelName: ""
@@ -84,6 +91,7 @@ Item {
 
     property var tokData: ({})
     property bool tokLoaded: false
+    property var crew: ({})
 
     property var persistScreens: ({})
     property bool persistLoaded: false
@@ -246,7 +254,13 @@ Item {
 
         stats = m
         lastFrameRaw = String(text || "")
-        try { Topology.refresh(stats) } catch (e) {}
+        // The board only needs a fresh topology every ~2 s; refresh costs far
+        // more than every other frame consumer together and its rates are
+        // dt-based, so a skipped frame just widens dt.
+        if (!Topology.ready || lastFrameMs - topoMs >= 1900) {
+            topoMs = lastFrameMs
+            try { Topology.refresh(stats) } catch (e) {}
+        }
     }
 
     function applyProbe(text) {
@@ -288,19 +302,22 @@ Item {
         id: streamProc
         running: true
         command: ["bash", hud.collectScript, "stream", "auto"]
+        // One read per frame instead of one per line (~440 JS callbacks/s):
+        // the frame is cut on the "batch\t" sentinel, so read k carries
+        // "<seq of frame k-1>\n" followed by the lines of frame k.
         stdout: SplitParser {
+            splitMarker: "batch\t"
             onRead: data => {
-                var line = String(data)
-                if (line.indexOf("batch\t") === 0) {
-                    var n = parseInt(line.substring(6))
-                    if (isFinite(n))
-                        hud.batchSeq = n
-                    hud.applyFrame(hud.pendingFrame)
-                    hud.pendingFrame = ""
-                    hud.lastBatchMs = Date.now()
-                } else {
-                    hud.pendingFrame += line + "\n"
+                var body = String(data)
+                var hm = /^(\d+)\n/.exec(body)
+                if (hm !== null) {
+                    hud.batchSeq = parseInt(hm[1]) + 1
+                    body = body.substring(hm[0].length)
                 }
+                if (body.length === 0)
+                    return
+                hud.applyFrame(body)
+                hud.lastBatchMs = Date.now()
             }
         }
     }
@@ -321,13 +338,32 @@ Item {
         running: false
         onExited: tokFile.reload()
     }
+    // crew feed — same 60 s ledger cadence; crew.py writes crew.json
+    FileView {
+        id: crewFile
+        path: hud.crewStatePath
+        watchChanges: false
+        atomicWrites: true
+        printErrors: false
+        onLoaded: hud.loadCrew(text())
+        onLoadFailed: hud.loadCrew("")
+    }
+    Process {
+        id: crewProc
+        command: ["python3", hud.crewScript]
+        running: false
+        onRunningChanged: if (!running) crewFile.reload()
+    }
     Timer {
         id: ledgerTimer
         interval: 60000
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!ledgerProc.running) ledgerProc.running = true
+        onTriggered: {
+            if (!ledgerProc.running) ledgerProc.running = true
+            if (!crewProc.running) crewProc.running = true
+        }
     }
     function loadTokens(raw) {
         var data = null
@@ -335,6 +371,12 @@ Item {
         if (data === null || typeof data !== "object") data = ({})
         tokData = data
         tokLoaded = true
+    }
+    function loadCrew(raw) {
+        var data = null
+        try { data = JSON.parse(String(raw || "")) } catch (e) { data = null }
+        if (data === null || typeof data !== "object") data = ({})
+        crew = data
     }
 
     // say() TTL — the reactor face draws the payload while sayFlash is hot
@@ -382,6 +424,7 @@ Item {
         add("devin",        s.devsess_count !== undefined)
         add("media-mounts", s.media_count !== undefined)
         add("tokens",       tokProviderCount > 0)
+        add("crew",         crew.bots !== undefined && crew.bots.length > 0)
         add("topology",     Topology.ready === true)
         return list
     }
@@ -909,7 +952,7 @@ Item {
 
             Timer {
                 id: knotProbe
-                running: win.isCommand
+                running: win.isCommand && !win.isHidden(win.deckId)
                 // dense only while a transition cycle is actually in flight
                 interval: (win.knotNode !== null && win.knotNode !== undefined
                            && win.knotNode.effect >= 0) ? 250 : 1500
@@ -974,7 +1017,7 @@ Item {
                 id: initRetry
                 interval: 140
                 repeat: true
-                running: true
+                running: !win.layoutReady   // ensureLayout() is a no-op once ready
                 onTriggered: win.ensureLayout()
             }
             Connections {
@@ -1050,31 +1093,53 @@ Item {
                         onCanceled: () => win.dragAbort(deck)
                     }
 
-                    // ------- role screen (exactly one is visible per window)
-                    CommandHub {
+                    // ------- role screen (exactly one is instantiated per window)
+                    // M1 kit: the three decks share one input contract —
+                    // stats/tokData/crew/screenName/shown (+navigator/say on DP-1).
+                    // The Loader gates CREATION on role, not just visibility:
+                    // each window builds only its own deck tree.
+                    Loader {
+                        id: deckLoader
                         anchors.fill: parent
-                        visible: win.isCommand
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        screenName: win.screenName
-                        navigator: nav
-                        sayText: hud.sayText
-                        sayFlash: hud.sayFlash
-                        shown: win.isCommand && deck.shown
+                        sourceComponent: win.isCommand ? commandScreen
+                                       : win.isHardware ? tokensScreen
+                                       : systemScreen
                     }
-                    BoardView {
-                        anchors.fill: parent
-                        visible: win.isHardware
-                        stats: hud.stats
-                        screenName: win.screenName
-                        running: win.isHardware && deck.shown
+                    Component {
+                        id: commandScreen
+                        DeckCommand {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            navigator: nav
+                            sayText: hud.sayText
+                            sayFlash: hud.sayFlash
+                            shown: deck.shown
+                        }
                     }
-                    Workbench {
-                        anchors.fill: parent
-                        visible: win.role === "ops"
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        screenName: win.screenName
+                    Component {
+                        id: tokensScreen
+                        DeckTokens {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                        }
+                    }
+                    Component {
+                        id: systemScreen
+                        DeckSystem {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                        }
                     }
 
                     // machined slab edge — the deck's chrome frame

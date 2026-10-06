@@ -6,7 +6,7 @@ import QtQuick
 Canvas {
     id: scan
 
-    property real pitch: 3          // line spacing in px
+    property real pitch: 4          // line spacing in px
     property real lineWidth: 1
     property real lineAlpha: 0.09   // mock uses rgba(0,0,0,.09)
 

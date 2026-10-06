@@ -51,7 +51,8 @@ QtObject {
             "accent2": "#8fd8e8",
             "warn": "#ffb300",
             "alert": "#ff4a3d",
-            "unknown": "#5a646c"
+            "unknown": "#5a646c",
+            "azure": "#60a5fa"
         })
 
     // ---- easing ----------------------------------------------------------

@@ -28,16 +28,25 @@ OUT = STATE_HOME / "nexuslink" / "tokens.json"
 CURSOR = STATE_HOME / "nexuslink" / "ledger-cursor.json"
 HISTORY_DAYS = 90
 SEEN_CAP = 20000
+SESS_WINDOW_DAYS = 14
+SESS_TOP = 10
 DENY = ("credentials", "auth.json", "mcp_config", "service.json", "cookie",
         ".vscdb", "mcp-tokens", ".lock", "bus-principals", "secret")
 KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
-         "opencode": "sub", "devin": "sub", "haze": "team"}
-LABELS = {"opencode": "opencode", "devin": "Devin", "haze": "Haze team API",
+         "opencode": "sub", "opencode-go": "sub", "devin": "sub",
+         "haze": "team"}
+LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
+          "devin": "Devin", "haze": "Haze team API",
           "claude": "Claude", "codex": "Codex"}
 # Hermes billing_provider -> ledger id. Omarchy's codex/claude snapshot
 # collectors never scan Hermes paths (0 hits grepping for hermes), so folding
 # these onto the merged ids cannot double-count the snapshot lane.
-HERMES_PROVIDER_MAP = {"anthropic": "claude", "openai-codex": "codex"}
+# `opencode-go` gets its OWN id, not a fold onto `opencode`: the local
+# opencode.db lane (collect_opencode) and the Hermes crew lane are disjoint
+# event feeds of the same product — rendered as separate labelled lanes
+# (OCG crew / OCG CLI on DP-2), never summed silently.
+HERMES_PROVIDER_MAP = {"anthropic": "claude", "openai-codex": "codex",
+                       "opencode-go": "opencode-go"}
 SID_TS = re.compile(r"^(\d{8})_(\d{6})")          # hermes session_id prefix
 
 
@@ -98,6 +107,7 @@ class Ledger:
         self.meta = {}    # prov -> dict (rebuilt fresh each run)
         self.models = {}  # prov -> model -> {in,out}
         self.sources = {} # prov -> set(str)
+        self.top_sessions = []  # session rows, rebuilt fresh each run
 
     def src(self, prov, path):
         self.sources.setdefault(prov, set()).add(str(path))
@@ -428,6 +438,32 @@ def collect_haze(led):
                                    j.get("session_id")), f)
 
 
+def _smu_fold(led, profile, db, row):
+    """Fold one session_model_usage row; returns its last_seen (float).
+
+    Row -> mapped ledger id via HERMES_PROVIDER_MAP. Rid-dedup in
+    Ledger.add makes re-reading a row harmless, so backfill passes and the
+    incremental scan may overlap freely — only unrecorded tuples accrue."""
+    (sid, model, prov, base, mode, task, tin_, tout_, rd_, wr_,
+     cost, cstat, seen) = row
+    p = HERMES_PROVIDER_MAP.get(str(prov))
+    if p:
+        if not isinstance(cost, (int, float)) or cost <= 0 or \
+                str(cstat) in ("unknown", "included"):
+            cost = None
+        # in = input+cache_read+cache_write (SCHEMA: cache is prompt-side);
+        # out = output_tokens only (Anthropic/Responses already contain
+        # reasoning in it — adding reasoning_tokens would double count).
+        # No msgs=: Ledger.add deltas tin/tout/cost/acu but not msgs.
+        rid = "hm:%s:%s:%s:%s:%s:%s:%s" % (
+            profile, sid, model, prov, base or "-", mode or "-",
+            task or "-")
+        led.add(p, rid, parse_ts(seen),
+                tin=(tin_ or 0) + (rd_ or 0) + (wr_ or 0),
+                tout=tout_ or 0, cost=cost, model=model, path=db)
+    return float(seen or 0)
+
+
 def collect_hermes(led):
     """Hermes state.db -> claude/codex event rows (read-only).
 
@@ -444,10 +480,22 @@ def collect_hermes(led):
     exist here (state.db is the superset), so the 4 rollup rows with
     provider=openai-codex land in BOTH `haze` and `codex`, dated 2026-08-10
     — outside every rendered window, left uncorrected rather than coupling
-    the two collectors. `opencode-go`/`nous`/`ollama-cloud` rows are skipped
-    (no ledger id; folding them is a product decision, not a data problem).
+    the two collectors. `opencode-go` rows land on their own ledger id (the
+    Hermes crew lane — disjoint from the local opencode.db `opencode` lane,
+    both rendered as labelled lanes on DP-2). `nous`/`ollama-cloud` rows are
+    still skipped (no ledger id; folding them is a product decision).
+
+    Provider-map migration (cursor v2): each store records which
+    billing_providers it has folded under `sqlite.hermes.__folded__`.
+    Rows for a provider that joined the map after this store's mark already
+    advanced were scanned past without folding — the version-1 cursor that
+    predates `opencode-go` is exactly that case — so a newly mapped provider
+    gets a one-time backfill of its OWN rows (`billing_provider IN (new)`),
+    while already-mapped providers keep their normal incremental mark.
+    Rid-dedup guarantees the two passes never double-count.
     """
     marks = led.cur.setdefault("sqlite", {}).setdefault("hermes", {})
+    folded = marks.setdefault("__folded__", {})
     stores = [(HOME / ".hermes/state.db", "default")]
     pdir = HOME / ".hermes/profiles"
     stores += [(p, p.parent.name)
@@ -461,6 +509,8 @@ def collect_hermes(led):
                 continue
             mark = float(marks.get(str(db)) or 0)
             hi = mark
+            done = set(folded.get(str(db)) or [])
+            new = sorted(set(HERMES_PROVIDER_MAP) - done)
             # Register the store under both ids when it holds ANY mapped
             # provider row, so tokens.json `sources` stays stable across warm
             # cursor passes (a delta of zero must not erase the declared feed).
@@ -470,33 +520,86 @@ def collect_hermes(led):
                            tuple(HERMES_PROVIDER_MAP)).fetchone():
                 for led_id in set(HERMES_PROVIDER_MAP.values()):
                     led.src(led_id, db)
+            cols = ("session_id, model, billing_provider, billing_base_url,"
+                    " billing_mode, task, input_tokens, output_tokens,"
+                    " cache_read_tokens, cache_write_tokens,"
+                    " estimated_cost_usd, cost_status, last_seen")
+            if new and mark > 0:
+                # Backfill only the newly-mapped providers' rows — a full
+                # rescan is avoided on purpose: rows already in `seen` are
+                # deduped anyway, but skipping them keeps the pass bounded
+                # even if `seen` was pruned at SEEN_CAP.
+                qb = ("SELECT %s FROM session_model_usage"
+                      " WHERE billing_provider IN (%s)"
+                      % (cols, ",".join("?" * len(new))))
+                try:
+                    for row in con.execute(qb, tuple(new)):
+                        _smu_fold(led, profile, db, row)
+                    done.update(new)
+                except sqlite3.Error:
+                    pass      # stays unfolded -> retried on the next pass
+            elif mark == 0:
+                done.update(HERMES_PROVIDER_MAP)   # full scan below covers all
             # No index on last_seen, but the table is ~5k rows (the 3 GB of the
             # db lives in messages/FTS), so the filtered scan is milliseconds.
-            q = ("SELECT session_id, model, billing_provider, billing_base_url,"
-                 " billing_mode, task, input_tokens, output_tokens,"
-                 " cache_read_tokens, cache_write_tokens, estimated_cost_usd,"
-                 " cost_status, last_seen FROM session_model_usage"
-                 " WHERE last_seen > ? ORDER BY last_seen LIMIT 50000")
-            for (sid, model, prov, base, mode, task, tin_, tout_, rd_, wr_,
-                 cost, cstat, seen) in con.execute(q, (mark,)):
-                hi = max(hi, float(seen or 0))
-                p = HERMES_PROVIDER_MAP.get(str(prov))
-                if not p:
-                    continue
-                if not isinstance(cost, (int, float)) or cost <= 0 or \
-                        str(cstat) in ("unknown", "included"):
-                    cost = None
-                # in = input+cache_read+cache_write (SCHEMA: cache is prompt-side);
-                # out = output_tokens only (Anthropic/Responses already contain
-                # reasoning in it — adding reasoning_tokens would double count).
-                # No msgs=: Ledger.add deltas tin/tout/cost/acu but not msgs.
-                rid = "hm:%s:%s:%s:%s:%s:%s:%s" % (
-                    profile, sid, model, prov, base or "-", mode or "-",
-                    task or "-")
-                led.add(p, rid, parse_ts(seen),
-                        tin=(tin_ or 0) + (rd_ or 0) + (wr_ or 0),
-                        tout=tout_ or 0, cost=cost, model=model, path=db)
+            q = ("SELECT %s FROM session_model_usage"
+                 " WHERE last_seen > ? ORDER BY last_seen LIMIT 50000" % cols)
+            for row in con.execute(q, (mark,)):
+                hi = max(hi, _smu_fold(led, profile, db, row))
             marks[str(db)] = hi   # cursor: next pass reads only rows touched since
+            folded[str(db)] = sorted(done)
+        finally:
+            con.close()
+
+
+def collect_sessions(led):
+    """Hermes `sessions` table -> led.top_sessions (top-N by tokens, 14 days).
+
+    The DP-2 SES-05 table's source: one row per session with bot, provider,
+    model, title, in/out tokens, api calls and last-seen. Unlike
+    collect_hermes this reads `sessions` (per-session rollup), not
+    `session_model_usage`, keeps EVERY billing_provider (opencode-go and
+    nous included — attribution, not ledger folding) and is rebuilt fresh
+    each run: a top-10 ranking needs no cursor.
+    """
+    cutoff = datetime.now(timezone.utc).timestamp() - SESS_WINDOW_DAYS * 86400
+    stores = [(HOME / ".hermes/state.db", "default")]
+    pdir = HOME / ".hermes/profiles"
+    stores += [(p, p.parent.name)
+               for p in sorted(pdir.glob("*/state.db"))] if pdir.is_dir() else []
+    for db, profile in stores:
+        con = _ro_db(db)
+        if not con:
+            continue
+        try:
+            if "sessions" not in _tables(con):
+                continue
+            cols = {r[1] for r in con.execute("PRAGMA table_info(sessions)")}
+            if not {"id", "model", "billing_provider", "started_at",
+                    "ended_at", "last_activity_at", "title", "api_call_count",
+                    "input_tokens", "output_tokens", "cache_read_tokens",
+                    "cache_write_tokens", "archived", "hidden"} <= cols:
+                continue
+            q = ("SELECT id, model, billing_provider, started_at,"
+                 " COALESCE(last_activity_at, ended_at, started_at), title,"
+                 " api_call_count,"
+                 " input_tokens + cache_read_tokens + cache_write_tokens,"
+                 " output_tokens FROM sessions"
+                 " WHERE archived = 0 AND hidden = 0"
+                 " AND COALESCE(last_activity_at, ended_at, started_at) >= ?")
+            for (sid, model, prov, start, last, title, calls, tin, tout) \
+                    in con.execute(q, (cutoff,)):
+                if not (tin or tout):
+                    continue
+                led.top_sessions.append({
+                    "id": sid, "bot": profile, "provider": prov,
+                    "model": model, "title": title,
+                    "in": int(tin or 0), "out": int(tout or 0),
+                    "tokens": int((tin or 0) + (tout or 0)),
+                    "calls": int(calls or 0),
+                    "start": float(start or 0), "last": float(last or 0)})
+        except sqlite3.Error:
+            pass               # one bad store must not sink the pass
         finally:
             con.close()
 
@@ -571,9 +674,12 @@ def build(led, now):
         hist[p] = rows[-HISTORY_DAYS:]
         if led.sources.get(p):
             srcs[p] = sorted(led.sources[p])
+    sess = sorted(led.top_sessions,
+                  key=lambda s: -s["tokens"])[:SESS_TOP]
     return {"updated": now.isoformat(timespec="seconds"),
             "generator": "token-ledger/1",
-            "providers": out_p, "history": hist, "sources": srcs}
+            "providers": out_p, "history": hist, "sources": srcs,
+            "sessions": sess}
 
 
 def atomic_write(path, obj):
@@ -607,7 +713,8 @@ def main():
             cur = {}
     led = Ledger(cur if isinstance(cur, dict) else {})
     for fn in (collect_omarchy, collect_opencode, collect_devin,
-               collect_claude, collect_haze, collect_hermes):
+               collect_claude, collect_haze, collect_hermes,
+               collect_sessions):
         try:
             fn(led)
         except Exception as e:  # a bad source must not sink the pass
@@ -622,7 +729,7 @@ def main():
         # led.cur is the dict LOADED from the cursor, so it carries the stale
         # version/saved keys; spread first, then overwrite them, else `saved`
         # freezes at whatever the first-ever run wrote.
-        atomic_write(CURSOR, {"version": 1, **led.cur,
+        atomic_write(CURSOR, {**led.cur, "version": 2,
                               "saved": now.isoformat(timespec="seconds")})
     except OSError as e:
         print("error: %s" % e, file=sys.stderr)
