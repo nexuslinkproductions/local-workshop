@@ -69,7 +69,7 @@ QtObject {
     // Mirrors m_base.css: code 11 ice ls1, title Michroma 11 ls3 white caps,
     // lbl Michroma 11 ls2.5 dim, cap/meta 11 mute, num Kode white, hero Michroma.
     readonly property var px: ({
-            "micro": 8, "tag": 9, "cap": 10, "code": 11, "body": 11,
+            "micro": 11, "tag": 11, "cap": 11, "code": 11, "body": 11,
             "num": 11, "mid": 14, "big": 20, "hero": 52, "heroXL": 92
         })
     readonly property var ls: ({

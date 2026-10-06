@@ -17,7 +17,7 @@ Item {
     property bool active: false     // acid rim (stateful toggle ON / armed)
     property bool interactive: true
     property int chamfer: 6
-    property bool _down: false
+    property bool pressedState: false   // `down` would warn on handler wiring
 
     signal activated()
 
@@ -48,7 +48,7 @@ Item {
             path(0.5);
             ctx.fillStyle = FuiTokens.css(
                 !root.interactive ? FuiTokens.recess
-                : root._down ? FuiTokens.tone(FuiTokens.ice, 0.10)
+                : root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.10)
                 : hov ? FuiTokens.tone(FuiTokens.ice, 0.07)
                 : FuiTokens.recess);
             ctx.fill();
@@ -69,7 +69,7 @@ Item {
             function onActiveChanged() { plate.requestPaint(); }
             function onEnabledChanged() { plate.requestPaint(); }
             function onChamferChanged() { plate.requestPaint(); }
-            function on_downChanged() { plate.requestPaint(); }
+            function onPressedStateChanged() { plate.requestPaint(); }
         }
         onHovChanged: requestPaint()
     }
@@ -120,9 +120,9 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         enabled: root.interactive
-        onPressed: root._down = true
-        onReleased: root._down = false
-        onCanceled: root._down = false
+        onPressed: root.pressedState = true
+        onReleased: root.pressedState = false
+        onCanceled: root.pressedState = false
         onClicked: root.activated()
     }
 }

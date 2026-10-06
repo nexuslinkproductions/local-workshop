@@ -10,7 +10,8 @@ import QtQuick
 //     state:"alert",       // ok|warn|alert — colours the thick arc
 //     dash:[2,3],          // optional dash pattern for the thin arc
 //     valueText:"1.46B", reset:"≤5h" }   // shown in the inside label
-// Labels hug the inside of each ring at the lower-left (angle table), the
+// Labels float in the mid-gap between rings at the lower-left (angle table),
+// each tied to its ring by a short radial nub; the
 // outer bezel carries a 0-100% graduated scale. Canvas repaints only when
 // `model` or geometry changes. Centre content via the default property.
 Item {
@@ -126,6 +127,19 @@ Item {
                 }
             }
             ctx.setLineDash([]);
+            // label nubs: short radial ticks from each ring into its label's
+            // mid-gap lane (same angle table as the label repeater)
+            if (root.labelMode === "inside") {
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.35));
+                for (var li = 0; li < root.ringCount; li++) {
+                    var la = 195 + li * 17;
+                    var n0 = FuiTokens.pol(cx, cy, root.ringR(li) - 3, la);
+                    var n1 = FuiTokens.pol(cx, cy,
+                                 root.ringR(li) - Math.max(16, root.pitch / 2) + 3, la);
+                    ctx.beginPath(); ctx.moveTo(n0.x, n0.y); ctx.lineTo(n1.x, n1.y); ctx.stroke();
+                }
+            }
             ctx.globalAlpha = 1;
         }
         Connections {
@@ -133,6 +147,7 @@ Item {
             function onModelChanged() { rings.requestPaint(); }
             function onBezelChanged() { rings.requestPaint(); }
             function onBezelLabelsChanged() { rings.requestPaint(); }
+            function onLabelModeChanged() { rings.requestPaint(); }
             function onInnerHoleChanged() { rings.requestPaint(); }
             function onRingPitchChanged() { rings.requestPaint(); }
             function onMarginChanged() { rings.requestPaint(); }
@@ -150,7 +165,7 @@ Item {
             required property int index
             required property var modelData
             readonly property real a: 195 + index * 17
-            readonly property real r: root.ringR(index) - 14
+            readonly property real r: root.ringR(index) - Math.max(16, root.pitch / 2)
             readonly property var p: FuiTokens.pol(root.width / 2, root.height / 2, Math.max(10, r), a)
             x: p.x - 150
             y: p.y - 8

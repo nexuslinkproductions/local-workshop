@@ -17,7 +17,7 @@ Item {
     property string command: ""
     property bool danger: false
     property bool interactive: true
-    property bool _down: false
+    property bool pressedState: false
     property bool hov: false
 
     signal activated()
@@ -42,7 +42,7 @@ Item {
             ctx.lineTo(0.5, h - 0.5 - c);
             ctx.lineTo(0.5, 0.5 + c);
             ctx.closePath();
-            ctx.fillStyle = FuiTokens.css(root._down ? FuiTokens.tone(FuiTokens.ice, 0.10)
+            ctx.fillStyle = FuiTokens.css(root.pressedState ? FuiTokens.tone(FuiTokens.ice, 0.10)
                                 : root.hov ? FuiTokens.tone(FuiTokens.ice, 0.05)
                                 : FuiTokens.tone(FuiTokens.ice, 0.025));
             ctx.fill();
@@ -61,7 +61,7 @@ Item {
         Connections {
             target: root
             function onHovChanged() { plate.requestPaint(); }
-            function on_DownChanged() { plate.requestPaint(); }
+            function onPressedStateChanged() { plate.requestPaint(); }
             function onDangerChanged() { plate.requestPaint(); }
         }
         onWidthChanged: requestPaint()
@@ -132,10 +132,10 @@ Item {
         hoverEnabled: true
         enabled: root.interactive
         onEntered: root.hov = true
-        onExited: { root.hov = false; root._down = false; }
-        onPressed: root._down = true
-        onReleased: root._down = false
-        onCanceled: root._down = false
+        onExited: { root.hov = false; root.pressedState = false; }
+        onPressed: root.pressedState = true
+        onReleased: root.pressedState = false
+        onCanceled: root.pressedState = false
         onClicked: root.activated()
     }
 }
