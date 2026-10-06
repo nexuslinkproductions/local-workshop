@@ -26,12 +26,21 @@ Item {
     implicitWidth: 380
     implicitHeight: 136
 
+    // the gauge lives strictly below the title zone and shrinks with the
+    // card, so it can never collide with the header or name rows
+    readonly property real titleH: 52
+    readonly property real gaugeR: gauge === "none" ? 0
+        : Math.min(30, Math.max(0, (height - titleH - 12) / 2))
+    readonly property real gaugeW: gaugeR > 10 ? gaugeR * 2 + 26 : 0
+
     Canvas {
         id: cv
         anchors.fill: parent
         onPaint: {
             var ctx = getContext("2d");
             ctx.clearRect(0, 0, width, height);
+            if (width <= 0 || height <= 0)
+                return;
             var w = width, h = height, c = 14;
             var col = root.live ? FuiTokens.acid : FuiTokens.ice;
             ctx.globalAlpha = 1;
@@ -55,10 +64,12 @@ Item {
             ctx.beginPath(); ctx.moveTo(14, 0.5); ctx.lineTo(70, 0.5); ctx.stroke();
             ctx.lineWidth = FuiTokens.lwHair;
 
-            // corner gauge — log-scale link arc or battery arc
-            if (root.gauge === "none")
+            // corner gauge — log-scale link arc or battery arc; radius
+            // follows the card's free body height, hidden when too small
+            var r = root.gaugeR;
+            if (root.gauge === "none" || !(r > 10))
                 return;
-            var gx = w - 52, gy = h - 44, r = 30;
+            var gx = w - r - 14, gy = root.titleH + (h - root.titleH - 8) / 2;
             function pol(rr, deg) { return FuiTokens.pol(gx, gy, rr, deg); }
             function arc(rr, a0, a1, cc, lw, op) {
                 ctx.globalAlpha = op;
@@ -144,6 +155,8 @@ Item {
         height: 14
         Row {
             anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            width: Math.max(40, tagTxt.x - 8)
+            clip: true
             spacing: 8
             Repeater {
                 model: [
@@ -164,6 +177,7 @@ Item {
             }
         }
         Text {
+            id: tagTxt
             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             visible: root.stateTag !== ""
             text: root.stateTag
@@ -187,10 +201,15 @@ Item {
 
     Column {
         anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 56
-                  right: parent.right; rightMargin: 96 }
+                  right: parent.right; rightMargin: 18 + root.gaugeW
+                  bottom: parent.bottom; bottomMargin: 6 }
         spacing: 2
+        clip: true
         Repeater {
-            model: root.lines
+            // whole lines only — never render a row whose baseline would be
+            // cut by the plate's bottom edge (17px pitch = 11px body + 2 gap)
+            model: root.lines.slice(0, Math.max(1,
+                       Math.floor((root.height - 62) / 17)))
             delegate: Row {
                 id: lnRow
                 required property var modelData

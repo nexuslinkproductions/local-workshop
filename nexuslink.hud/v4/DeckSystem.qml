@@ -27,6 +27,17 @@ Item {
     function tNum(v, dec) { var n = num(v); return isFinite(n) ? n.toFixed(dec === undefined ? 0 : dec) : FuiTokens.unknownGlyph; }
     function gbOfKb(kb) { return num(kb) / 1048576; }
     function _gbTxt(v, dec) { return isFinite(v) ? v.toFixed(dec === undefined ? 0 : dec) + " GB" : FuiTokens.unknownGlyph; }
+    // df -B1 feeds raw bytes — humanize before display (T/G/M/K suffixes,
+    // same convention as CommandHub.fmtBytes)
+    function _fmtBytes(v) {
+        var n = num(v);
+        if (!isFinite(n)) return FuiTokens.unknownGlyph;
+        if (n >= 1099511627776) return (n / 1099511627776).toFixed(1) + " TB";
+        if (n >= 1073741824) return (n / 1073741824).toFixed(0) + " GB";
+        if (n >= 1048576) return (n / 1048576).toFixed(0) + " MB";
+        if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+        return Math.round(n) + " B";
+    }
     function _uptimeTxt(s) {
         var u = num(s);
         if (!isFinite(u)) return FuiTokens.unknownGlyph;
@@ -114,7 +125,7 @@ Item {
     readonly property real m: 24
     readonly property real gut: FuiTokens.gutter
     readonly property real topY: 96
-    readonly property real ledgerH: 136
+    readonly property real ledgerH: 156
     readonly property real ledgerY: height - 20 - ledgerH
     readonly property real midH: ledgerY - gut - topY
     readonly property real heroH: midH * (640 / 936)
@@ -377,7 +388,7 @@ Item {
                 gaugeUnit: "% ROOT"
                 gaugeTitle: "STORAGE"
                 gaugeSub: root.has("fs_root_used") && root.has("fs_root_size")
-                          ? String(root.stats.fs_root_used) + " / " + String(root.stats.fs_root_size) : ""
+                          ? root._fmtBytes(root.stats.fs_root_used) + " / " + root._fmtBytes(root.stats.fs_root_size) : ""
                 statRows: [
                     { "l": "nvme0", "v": root.tNum(root.stats.dev_nvme0_t !== undefined ? root.stats.dev_nvme0_t : root.stats.nvme0_temp) + " C" },
                     { "l": "", "v": root.stats.nvme0_model !== undefined ? String(root.stats.nvme0_model).slice(0, 20) : FuiTokens.unknownGlyph },
@@ -447,7 +458,7 @@ Item {
         title: "System ledger"
         meta: "omarchy + hyprland"
         Sys.Ledger {
-            anchors.fill: parent
+            anchors { fill: parent; margins: 6 }
             poll: sp
             stats: root.stats
             screenName: root.screenName

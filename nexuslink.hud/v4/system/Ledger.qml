@@ -37,6 +37,10 @@ Item {
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ledger"].concat(argv));
     }
+    // compound shell (two hyprctl dispatches) — literals only, no input
+    function execShell(line) {
+        Quickshell.execDetached(["bash", "-lc", line]);
+    }
 
     // ---- inline widgets --------------------------------------------------
     component SegBar: Row {          // engraved segmented control
@@ -44,15 +48,16 @@ Item {
         property var items: []       // [{label, value}]
         property string value: ""
         signal picked(string v)
-        spacing: 0
+        spacing: 6
         Repeater {
             model: seg.items
             delegate: Item {
                 id: segCell
                 required property var modelData
                 required property int index
-                width: seg.width / Math.max(1, seg.items.length)
-                height: 30
+                width: (seg.width - seg.spacing * Math.max(0, seg.items.length - 1))
+                       / Math.max(1, seg.items.length)
+                height: 28
                 Rectangle {
                     anchors.fill: parent
                     color: segCell.modelData.value === seg.value ? FuiTokens.tone(FuiTokens.acid, 0.07) : FuiTokens.recess
@@ -86,7 +91,7 @@ Item {
         property bool on: false
         property bool known: true    // false -> dim "—" state, no interaction
         signal toggled()
-        height: 34
+        height: 30
         implicitWidth: 150
         Row {
             spacing: 10
@@ -123,7 +128,7 @@ Item {
         default property alias contents: capCol.children
         Item {
             id: capRow
-            height: 16
+            height: 14
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Text {
                 id: capTxt
@@ -140,8 +145,10 @@ Item {
         }
         Column {
             id: capCol
-            anchors { left: parent.left; right: parent.right; top: capRow.bottom; topMargin: 8; bottom: parent.bottom }
-            spacing: 8
+            anchors { left: parent.left; right: parent.right; top: capRow.bottom; topMargin: 5
+                      bottom: parent.bottom; bottomMargin: 3 }
+            spacing: 5
+            clip: true
         }
     }
 
@@ -165,10 +172,14 @@ Item {
                 width: parent.width
             }
             EngravedButton {
-                label: "BACKGROUND SWITCHER"
-                keybind: "SUPER+CTRL+SPACE"
-                width: 212; height: 30
+                label: "BG SWITCHER"
+                width: 212; height: 26
                 onActivated: root.execArgv(["omarchy-theme-bg-switcher"])
+            }
+            Text {
+                color: FuiTokens.faint
+                font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
+                text: "omarchy-theme-bg-switcher · SUPER+CTRL+SPACE"
             }
         }
 
@@ -203,7 +214,7 @@ Item {
                     text: root.stats.pkg_updates !== undefined ? String(root.stats.pkg_updates) : FuiTokens.unknownGlyph
                     color: FuiTokens.white
                     font.family: FuiTokens.display
-                    font.pixelSize: 26
+                    font.pixelSize: 22
                 }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
@@ -215,13 +226,8 @@ Item {
             EngravedButton {
                 label: "UPDATE"
                 active: root.stats.pkg_updates !== undefined && Number(root.stats.pkg_updates) > 0
-                width: 140; height: 30
+                width: 140; height: 26
                 onActivated: root.execArgv(["omarchy-launch-terminal", "omarchy-update"])
-            }
-            Text {
-                color: FuiTokens.faint
-                font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
-                text: root.poll !== null && root.poll.omarchyVer !== "" ? "omarchy " + root.poll.omarchyVer : ""
             }
         }
 
@@ -289,10 +295,16 @@ Item {
                             font.pixelSize: 11
                         }
                         TapHandler {
-                            onTapped: root.execArgv([
-                                "hyprctl", "dispatch",
-                                'hl.dsp.focus({ workspace = "' + wsBox.n + '" })'
-                            ])
+                            // focus THIS output first, then the workspace —
+                            // a key on HDMI-A-3 must switch HDMI's workspace
+                            onTapped: {
+                                var line = "hyprctl dispatch 'hl.dsp.focus({ workspace = \""
+                                           + wsBox.n + "\" })'";
+                                if (root.screenName !== "")
+                                    line = "hyprctl dispatch 'hl.dsp.focus({ monitor = \""
+                                           + root.screenName + "\" })' && " + line;
+                                root.execShell(line);
+                            }
                         }
                     }
                 }
@@ -310,11 +322,6 @@ Item {
                         font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     }
                 }
-            }
-            Text {
-                color: FuiTokens.faint
-                font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
-                text: "num = workspace · SUPER+1..0 bound in hyprland"
             }
         }
     }
