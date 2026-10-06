@@ -127,13 +127,22 @@ decides sub vs api; revisit `kind` if the HUD cares.
 ## Cursor (`ledger-cursor.json`, internal)
 
 ```json
-{"version": 1, "saved": "...",
+{"version": 2, "saved": "...",
  "files":  {"<path>": byte_offset},                 // jsonl tails
- "sqlite": {"opencode": {"mark": max_time_updated}, "devin": {"mark": max_row_id}},
+ "sqlite": {"opencode": {"mark": max_time_updated}, "devin": {"mark": max_row_id},
+            "hermes": {"<db path>": max_last_seen,
+                       "__folded__": {"<db path>": ["<billing_provider>"]}}},
  "seen":   {"<prov>": {"<rid>": [in,out,cost,acu]}},// delta-dedupe (capped 20k)
  "days":   {"<prov>": {"YYYY-MM-DD": {in,out,cost,acu,msgs,snap}}},
  "undated":{"<prov>": {in,out,cost,acu,msgs}}}
 ```
+
+`__folded__` (v2): per-store set of Hermes `billing_provider`s already
+covered. A provider added to `HERMES_PROVIDER_MAP` later gets a one-time
+backfill of its own rows (`WHERE billing_provider IN (new)`); the
+incremental mark alone cannot reach rows scanned past while unmapped.
+Rid-dedup keeps the two passes disjoint. A v1 cursor has no `__folded__`,
+so every mapped provider counts as new and backfills once.
 
 Idempotency: records keyed by rid accumulate only the *delta* vs the stored
 tuple — safe for opencode rows whose token fields update mid-stream. Omarchy
