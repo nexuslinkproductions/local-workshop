@@ -52,6 +52,7 @@ Item {
     function _cleanName(raw) {
         var s = String(raw || "");
         s = s.replace(/\s+\d+-\d[\d.]*/g, "");      // drop port paths
+        s = s.replace(/_/g, " ");                   // sysfs snake -> words
         var paren = /\(+([^()]*)\)+/.exec(s);
         var base = s.replace(/\(.*\)/, "").trim();
         var name = base;

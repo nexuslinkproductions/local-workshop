@@ -41,6 +41,28 @@ QtObject {
     property var monActive: ({})
     property string monFocused: ""
     property var monGeom: ({})        // name -> "1920x1200 @ -1920,0"
+    property var monDesc: ({})        // name -> "desc:" descriptor string
+    property var wsRules: []          // hyprctl -j workspacerules
+
+    // Workspace ids bound to `mon` by hyprctl workspacerules. A rule's
+    // `monitor` field may be the connector name or "desc:<description>" —
+    // match both via monDesc (and a bare desc, just in case). Returns []
+    // when rules are unknown so callers can fall back to stats fields.
+    function wsFor(mon) {
+        var out = [];
+        var desc = monDesc[mon] || "";
+        for (var i = 0; i < wsRules.length; i++) {
+            var r = wsRules[i] || {};
+            var w = parseInt(r.workspaceString, 10);
+            if (isNaN(w) || out.indexOf(w) >= 0)
+                continue;
+            var m = String(r.monitor || "");
+            if (m === mon || m === desc ||
+                    (desc !== "" && m === "desc:" + desc))
+                out.push(w);
+        }
+        return out.sort(function (a, b) { return a - b; });
+    }
 
     signal updated()
 
@@ -251,16 +273,21 @@ QtObject {
         }
     }
 
-    // focused workspace per monitor (for the ws-strip live mark)
+    // focused workspace per monitor + workspace->monitor binding rules
     readonly property Poll monPoll: Poll {
         everyMs: 4000
-        argv: ["hyprctl", "-j", "monitors"]
+        sh: 'hyprctl -j monitors 2>/dev/null; echo "==WSRULES=="; hyprctl -j workspacerules 2>/dev/null'
         onFinished: function (out) {
-            var arr = null;
-            try { arr = JSON.parse(String(out)); } catch (e) { arr = null; }
+            var t = String(out);
+            var wi = t.indexOf("==WSRULES==");
+            if (wi < 0)
+                return;
+            var arr = null, rules = [];
+            try { arr = JSON.parse(t.slice(0, wi)); } catch (e) { arr = null; }
+            try { rules = JSON.parse(t.slice(wi + 11)); } catch (e) { rules = []; }
             if (!arr || typeof arr.length !== "number")
                 return;
-            var act = {}, foc = "", geom = {};
+            var act = {}, foc = "", geom = {}, desc = {};
             for (var i = 0; i < arr.length; i++) {
                 var mo = arr[i];
                 if (!mo || mo.name === undefined)
@@ -270,10 +297,14 @@ QtObject {
                 if (mo.focused === true)
                     foc = String(mo.name);
                 geom[String(mo.name)] = mo.width + "x" + mo.height + " @ " + mo.x + "," + mo.y;
+                desc[String(mo.name)] = String(mo.description || "");
             }
+            if (rules && typeof rules.length === "number")
+                poll.wsRules = rules;
             poll.monActive = act;
             poll.monFocused = foc;
             poll.monGeom = geom;
+            poll.monDesc = desc;
             poll.updated();
         }
     }

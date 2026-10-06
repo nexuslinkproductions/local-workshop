@@ -27,8 +27,10 @@ Item {
     implicitHeight: 136
 
     // the gauge lives strictly below the title zone and shrinks with the
-    // card, so it can never collide with the header or name rows
-    readonly property real titleH: 52
+    // card, so it can never collide with the header or name rows. The name
+    // wraps to two word-boundary lines (long USB product strings no longer
+    // elide mid-word), so the zone is 66px tall.
+    readonly property real titleH: 66
     readonly property real gaugeR: gauge === "none" ? 0
         : Math.min(30, Math.max(0, (height - titleH - 12) / 2))
     readonly property real gaugeW: gaugeR > 10 ? gaugeR * 2 + 26 : 0
@@ -189,18 +191,24 @@ Item {
     }
 
     Text {
-        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 30 }
+        // two word-boundary lines max — "MEDIATEK WIRELESS DEVICE" and
+        // "CORSAIR SLIPSTREAM MULTI-DEVICE RECEIVER" stay whole instead of
+        // clipping at the plate edge ("WIRELESS DEVI", "SLIPSTREAM RECE")
+        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 28
+                  right: parent.right; rightMargin: 18 }
         text: root.name
         color: FuiTokens.white
         font.family: FuiTokens.display
         font.pixelSize: 13
         font.letterSpacing: 2
+        lineHeight: 0.95
+        wrapMode: Text.WordWrap
+        maximumLineCount: 2
         elide: Text.ElideRight
-        width: root.width - 36
     }
 
     Column {
-        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 56
+        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: root.titleH
                   right: parent.right; rightMargin: 18 + root.gaugeW
                   bottom: parent.bottom; bottomMargin: 6 }
         spacing: 2
@@ -209,7 +217,7 @@ Item {
             // whole lines only — never render a row whose baseline would be
             // cut by the plate's bottom edge (17px pitch = 11px body + 2 gap)
             model: root.lines.slice(0, Math.max(1,
-                       Math.floor((root.height - 62) / 17)))
+                       Math.floor((root.height - root.titleH - 6) / 17)))
             delegate: Row {
                 id: lnRow
                 required property var modelData

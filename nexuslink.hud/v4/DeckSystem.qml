@@ -469,7 +469,7 @@ Item {
     Text {
         anchors { left: parent.left; leftMargin: root.m; bottom: parent.bottom; bottomMargin: 6 }
         text: "M1-HDMI-03 · devices+system · canvas+card · src: /sys/bus/usb, pactl, ip, hyprctl, collector dev_*"
-        color: FuiTokens.faint
+        color: FuiTokens.mute      // faint read too dark on HDMI at 11px
         font.family: FuiTokens.mono
         font.pixelSize: FuiTokens.px.micro
         font.letterSpacing: FuiTokens.ls.cap

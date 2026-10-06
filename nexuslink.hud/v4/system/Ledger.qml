@@ -34,6 +34,28 @@ Item {
         return id !== undefined ? Number(id) : -1;
     }
 
+    // Workspaces bound to THIS output. Primary source: hyprctl workspacerules
+    // via SysPoll.wsFor (descriptor-matched, shows bound-but-empty ws too).
+    // Fallback: collector ws<i>_mon fields (existing workspaces only).
+    readonly property var wsList: {
+        if (poll !== null && screenName !== "") {
+            var l = poll.wsFor(screenName);
+            if (l.length > 0)
+                return l;
+        }
+        var out = [];
+        var cnt = Number(stats.ws_count);
+        if (isFinite(cnt)) {
+            for (var i = 0; i < cnt; i++) {
+                var id = Number(stats["ws" + i + "_id"]);
+                if (String(stats["ws" + i + "_mon"]) === screenName
+                        && isFinite(id) && out.indexOf(id) < 0)
+                    out.push(id);
+            }
+        }
+        return out.sort(function (a, b) { return a - b; });
+    }
+
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ledger"].concat(argv));
     }
@@ -55,14 +77,16 @@ Item {
                 id: segCell
                 required property var modelData
                 required property int index
-                width: (seg.width - seg.spacing * Math.max(0, seg.items.length - 1))
-                       / Math.max(1, seg.items.length)
+                // size to the label + padding — equal shares clip the
+                // 11px display caps ("PERFORMANC", "OWER-SAVE")
+                width: Math.ceil(lbl.implicitWidth) + 20
                 height: 28
                 Rectangle {
                     anchors.fill: parent
                     color: segCell.modelData.value === seg.value ? FuiTokens.tone(FuiTokens.acid, 0.07) : FuiTokens.recess
                     border.width: FuiTokens.lwHair
-                    border.color: segCell.modelData.value === seg.value ? FuiTokens.tone(FuiTokens.acid, 0.6) : FuiTokens.hair2
+                    border.color: segCell.modelData.value === seg.value ? FuiTokens.tone(FuiTokens.acid, 0.6)
+                                                                      : (hov.hovered ? FuiTokens.ice : FuiTokens.hair2)
                 }
                 Rectangle {   // active keyline under the label
                     visible: segCell.modelData.value === seg.value
@@ -71,6 +95,7 @@ Item {
                     color: FuiTokens.acid
                 }
                 Text {
+                    id: lbl
                     anchors.centerIn: parent
                     text: segCell.modelData.label
                     color: segCell.modelData.value === seg.value ? FuiTokens.acid : (hov.hovered ? FuiTokens.white : FuiTokens.dim)
@@ -79,7 +104,11 @@ Item {
                     font.letterSpacing: 1.2
                 }
                 HoverHandler { id: hov }
-                TapHandler { onTapped: seg.picked(segCell.modelData.value) }
+                MouseArea {   // full-bounds press — TapHandler missed live clicks
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: seg.picked(segCell.modelData.value)
+                }
             }
         }
     }
@@ -185,7 +214,8 @@ Item {
 
         Sec {
             cap: "POWER PROFILE"
-            width: Math.round(parent.width * 0.2)
+            // segments are text-sized now; 3 × (~130px + pad) + spacing
+            width: Math.round(parent.width * 0.24)
             height: parent.height
             SegBar {
                 width: parent.width
@@ -260,24 +290,28 @@ Item {
         Sec {
             cap: "WORKSPACE JUMP  SUPER+1..0"
             height: parent.height
-            width: 420
+            width: Math.max(180, wsRow.implicitWidth + 4)
             Row {
+                id: wsRow
                 spacing: 6
                 Repeater {
-                    model: 10
+                    model: root.wsList
                     delegate: Item {
                         id: wsBox
-                        required property int index
-                        property int n: (index + 1) % 10   // boxes 1..9,0
+                        required property var modelData
+                        property int n: Number(modelData)
                         property int wins: root.wsWins(n)
                         property bool occupied: wins > 0
                         property bool focused: root.wsFocused === n
                         width: 34; height: 30
                         Rectangle {
                             anchors.fill: parent
-                            color: wsBox.focused ? FuiTokens.tone(FuiTokens.acid, 0.10) : FuiTokens.recess
+                            color: wsBox.focused ? FuiTokens.tone(FuiTokens.acid, 0.10)
+                                                 : (wma.containsMouse ? FuiTokens.tone(FuiTokens.ice, 0.08)
+                                                                      : FuiTokens.recess)
                             border.width: FuiTokens.lwHair
-                            border.color: wsBox.focused ? FuiTokens.acid : FuiTokens.hair2
+                            border.color: wsBox.focused ? FuiTokens.acid
+                                                        : (wma.containsMouse ? FuiTokens.ice : FuiTokens.hair2)
                         }
                         Text {
                             anchors { centerIn: parent; verticalCenterOffset: -5 }
@@ -294,10 +328,15 @@ Item {
                             font.family: FuiTokens.mono
                             font.pixelSize: 11
                         }
-                        TapHandler {
-                            // focus THIS output first, then the workspace —
-                            // a key on HDMI-A-3 must switch HDMI's workspace
-                            onTapped: {
+                        MouseArea {
+                            // full key bounds — live uinput clicks on the old
+                            // TapHandler never fired. Focus THIS output first,
+                            // then the workspace: an HDMI key switches HDMI.
+                            id: wma
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
                                 var line = "hyprctl dispatch 'hl.dsp.focus({ workspace = \""
                                            + wsBox.n + "\" })'";
                                 if (root.screenName !== "")
@@ -309,19 +348,12 @@ Item {
                     }
                 }
             }
-            Row {
-                spacing: 6
-                Repeater {
-                    model: ["", "", "", "", "", "", "", "", "", ""]
-                    delegate: Text {
-                        required property int index
-                        width: 34
-                        horizontalAlignment: Text.AlignHCenter
-                        text: index === 0 ? "col 1" : ""
-                        color: FuiTokens.faint
-                        font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
-                    }
-                }
+            Text {   // no binding known — explicit unknown, not a ghost row
+                visible: root.wsList.length === 0
+                text: FuiTokens.unknownGlyph + " no ws bound to " +
+                      (root.screenName !== "" ? root.screenName : "this output")
+                color: FuiTokens.mute
+                font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
             }
         }
     }
