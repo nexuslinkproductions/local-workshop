@@ -1093,38 +1093,53 @@ Item {
                         onCanceled: () => win.dragAbort(deck)
                     }
 
-                    // ------- role screen (exactly one is visible per window)
-                    // M1 kit: the three new decks share one input contract —
+                    // ------- role screen (exactly one is instantiated per window)
+                    // M1 kit: the three decks share one input contract —
                     // stats/tokData/crew/screenName/shown (+navigator/say on DP-1).
-                    DeckCommand {
+                    // The Loader gates CREATION on role, not just visibility:
+                    // each window builds only its own deck tree.
+                    Loader {
+                        id: deckLoader
                         anchors.fill: parent
-                        visible: win.isCommand
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        crew: hud.crew
-                        screenName: win.screenName
-                        navigator: nav
-                        sayText: hud.sayText
-                        sayFlash: hud.sayFlash
-                        shown: win.isCommand && deck.shown
+                        sourceComponent: win.isCommand ? commandScreen
+                                       : win.isHardware ? tokensScreen
+                                       : systemScreen
                     }
-                    DeckTokens {
-                        anchors.fill: parent
-                        visible: win.isHardware
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        crew: hud.crew
-                        screenName: win.screenName
-                        shown: win.isHardware && deck.shown
+                    Component {
+                        id: commandScreen
+                        DeckCommand {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            navigator: nav
+                            sayText: hud.sayText
+                            sayFlash: hud.sayFlash
+                            shown: deck.shown
+                        }
                     }
-                    DeckSystem {
-                        anchors.fill: parent
-                        visible: win.role === "ops"
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        crew: hud.crew
-                        screenName: win.screenName
-                        shown: win.role === "ops" && deck.shown
+                    Component {
+                        id: tokensScreen
+                        DeckTokens {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                        }
+                    }
+                    Component {
+                        id: systemScreen
+                        DeckSystem {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                        }
                     }
 
                     // machined slab edge — the deck's chrome frame
