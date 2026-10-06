@@ -19,8 +19,8 @@ HUD renders `tokens.json` only — the cursor is internal.
 ```
 
 Provider ids seen: `claude`, `codex`, `fireworks` (from omarchy records),
-`opencode`, `devin`, `haze`. Unknown/missing sources are simply omitted —
-an absent provider key means "no local feed".
+`opencode`, `opencode-go`, `devin`, `haze`. Unknown/missing sources are
+simply omitted — an absent provider key means "no local feed".
 
 ## Provider object
 
@@ -60,6 +60,11 @@ Bucket semantics:
   `month` = calendar month. Windows are computed from record timestamps.
 - Snapshot-only providers (no per-event feed) emit `"in": null, "out": null`
   with `total` as the real figure.
+- OpenCode runs two disjoint EVENT lanes (unlike the snapshot `total`
+  split): `opencode` = local `opencode.db` CLI events, `opencode-go` =
+  Hermes `session_model_usage` rows billed to opencode-go (the crew lane).
+  They are both real usage of different traffic — sum only under an
+  explicitly combined label, never silently folded.
 
 `meta` extras (all optional): `label`, `ready`, `tier`, `status`
 (free-text usage status e.g. "Waiting for auth"), `limits` (raw omarchy
@@ -106,7 +111,7 @@ set or zero tokens are skipped.
 | `opencode` | `$XDG_DATA_HOME/opencode/opencode.db` — `message.data` JSON `tokens{input,output,reasoning,cache{read,write}}` + `cost`; fallback `session.tokens_*`/`cost` columns | `oc:` + `message.id` / `ocs:` + `session.id` | `time_updated` / `time_created` (epoch ms) |
 | `devin` | `~/.local/share/devin/cli/sessions.db` — `message_nodes.chat_message` JSON `metadata.metrics{input_tokens,output_tokens,…}`, `metadata.committed_acu_cost`; plus `cli/transcripts/*.json` `steps[].metadata.committed_acu_cost` if present | `dv:` + session_id:row_id / `dvt:` + file:step | `created_at` (epoch s/ms) |
 | `claude` (merge) | `~/.claude/projects/**/*.jsonl`, `~/.local/share/claude/**/*.jsonl` — per-line `message.usage{input_tokens,output_tokens,cache_*}` | `cl:` + uuid/message.id/requestId | line `timestamp` (ISO) |
-| `claude`/`codex` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
+| `claude`/`codex`/`opencode-go` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, `opencode-go`→`opencode-go` (own lane), other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
 | `haze` | `~/.hermes/usage/*.json` rollups (`input_tokens`,`output_tokens`,`cache_*`,`reasoning_tokens`,`estimated_cost_usd`,`session_id`,`provider`) + `~/.hermes/cron/usage_audit.jsonl` (`prompt_tokens`,`completion_tokens`,`fire_id`,`ts`; error rows skipped) + `~/.local/share/haze/**/*.{json,jsonl}` same shapes | `hz:`/`hzf:`/`hzl:`/`hzs:` + session_id/fire_id/file | `session_id` `YYYYMMDD_HHMMSS` prefix → file mtime → `undated`; audit rows `ts` |
 
 Hermes/state.db overlap with `haze`: the 8 stale (Aug 10) `~/.hermes/usage/*.json`
@@ -115,9 +120,9 @@ therefore appear under both `haze` and `codex` on 2026-08-10 — outside every
 rendered window. state.db is the superset; if those rollups ever go live again,
 retire `collect_haze`'s rollup branch rather than deduping across providers.
 
-`kind` mapping: claude/codex/devin/opencode → `sub`, fireworks → `api`,
-haze → `team`. opencode is a harness — its upstream auth decides sub vs api;
-revisit `kind` if the HUD cares.
+`kind` mapping: claude/codex/devin/opencode/opencode-go → `sub`,
+fireworks → `api`, haze → `team`. opencode is a harness — its upstream auth
+decides sub vs api; revisit `kind` if the HUD cares.
 
 ## Cursor (`ledger-cursor.json`, internal)
 

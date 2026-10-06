@@ -33,13 +33,20 @@ SESS_TOP = 10
 DENY = ("credentials", "auth.json", "mcp_config", "service.json", "cookie",
         ".vscdb", "mcp-tokens", ".lock", "bus-principals", "secret")
 KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
-         "opencode": "sub", "devin": "sub", "haze": "team"}
-LABELS = {"opencode": "opencode", "devin": "Devin", "haze": "Haze team API",
+         "opencode": "sub", "opencode-go": "sub", "devin": "sub",
+         "haze": "team"}
+LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
+          "devin": "Devin", "haze": "Haze team API",
           "claude": "Claude", "codex": "Codex"}
 # Hermes billing_provider -> ledger id. Omarchy's codex/claude snapshot
 # collectors never scan Hermes paths (0 hits grepping for hermes), so folding
 # these onto the merged ids cannot double-count the snapshot lane.
-HERMES_PROVIDER_MAP = {"anthropic": "claude", "openai-codex": "codex"}
+# `opencode-go` gets its OWN id, not a fold onto `opencode`: the local
+# opencode.db lane (collect_opencode) and the Hermes crew lane are disjoint
+# event feeds of the same product — rendered as separate labelled lanes
+# (OCG crew / OCG CLI on DP-2), never summed silently.
+HERMES_PROVIDER_MAP = {"anthropic": "claude", "openai-codex": "codex",
+                       "opencode-go": "opencode-go"}
 SID_TS = re.compile(r"^(\d{8})_(\d{6})")          # hermes session_id prefix
 
 
@@ -447,8 +454,10 @@ def collect_hermes(led):
     exist here (state.db is the superset), so the 4 rollup rows with
     provider=openai-codex land in BOTH `haze` and `codex`, dated 2026-08-10
     — outside every rendered window, left uncorrected rather than coupling
-    the two collectors. `opencode-go`/`nous`/`ollama-cloud` rows are skipped
-    (no ledger id; folding them is a product decision, not a data problem).
+    the two collectors. `opencode-go` rows land on their own ledger id (the
+    Hermes crew lane — disjoint from the local opencode.db `opencode` lane,
+    both rendered as labelled lanes on DP-2). `nous`/`ollama-cloud` rows are
+    still skipped (no ledger id; folding them is a product decision).
     """
     marks = led.cur.setdefault("sqlite", {}).setdefault("hermes", {})
     stores = [(HOME / ".hermes/state.db", "default")]
