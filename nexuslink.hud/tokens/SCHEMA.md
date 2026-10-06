@@ -79,6 +79,25 @@ Bucket semantics:
 Use `in`/`out` (or `total` when they're null) for sparklines; `msgs` is a
 fallback activity series.
 
+## `sessions` rows (top 10 by tokens, last 14 days, all Hermes stores)
+
+```json
+{"id": "20261005_175320_c70720", "bot": "neji", "provider": "opencode-go",
+ "model": "deepseek-v4.1-flash", "title": "HUD verify WS-05",
+ "in": 8110000, "out": 220000, "tokens": 8330000, "calls": 150,
+ "start": 1791230000.0, "last": 1791240000.0}
+```
+
+Additive top-level key from `collect_sessions` (reads the `sessions` table
+of `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db`, read-only —
+the same store list as `collect_hermes`). Rebuilt fresh every run, ranked
+by `in`+`out` desc, capped at `SESS_TOP = 10`. `provider` is the RAW
+`billing_provider` (`opencode-go`, `anthropic`, `openai-codex`, `haze`,
+`nous`, …) — session attribution, not the `HERMES_PROVIDER_MAP` fold used
+for day buckets. `bot` is the profile dir name (`default` for the shared
+store). `start`/`last` are epoch seconds; sessions with `archived`/`hidden`
+set or zero tokens are skipped.
+
 ## Sources → provider mapping
 
 | Provider | Source | Record / dedupe key | Timestamp |

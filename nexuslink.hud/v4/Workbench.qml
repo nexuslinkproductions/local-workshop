@@ -3,14 +3,14 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Widgets
 
 // Workbench.qml — HDMI-A-3 "WORKBENCH + APPS NAV" (lane D3).
 // Visual spec: candidates/mock2/B/hdmi.html. Left column is the operations
 // ledger (workspaces+windows with click-to-focus, agent sessions, process
-// ledger, github activity, token ledger). Right column is a tabbed pane —
-// APPS NAVIGATOR (AppGrid.qml — installed .desktop apps, type-to-filter,
-// gtk-launch) | DEVICES (DeviceBay.qml — connected peripherals, lane W1).
+// ledger, github activity, token ledger). Right column stacks two panes —
+// DEVICES (DeviceBay.qml — connected peripherals + hotplug cards, lane W1)
+// over APPS NAVIGATOR (AppGrid.qml — installed .desktop apps,
+// type-to-filter, gtk-launch). No tab gate: both render at all times.
 // A shared UtilityDock strip anchors the bottom (owned by lane D1).
 // Lane W1 additions: static-lit KnotField watermark behind the panes,
 // window-row app icons, tightened ledger density, and the token ledger's
@@ -20,7 +20,7 @@ import Quickshell.Widgets
 // LANE-SB2 (visual quality pass) — the same screen, built on one grid:
 //   * met (pad/headH/footH/innerGap/gap + the hover wash) is the only place
 //     the rhythm is written down; GlassPane's own `padding` owns the pane
-//     inset, so the five ledger panes, the tab strip and DeviceBay all sit
+//     inset, so the five ledger panes and the two right-column panes all sit
 //     on the same 12px column.
 //   * PaneHead / PaneFoot / EmptyNote are the chassis primitives: accent tick
 //     + Michroma title + quiet mono sub, a hairline + status line, and one
@@ -95,7 +95,7 @@ Item {
         // tracking for the display type, named so the masthead and the pane
         // chassis can never drift apart
         readonly property real lsHead: 3
-        readonly property real lsMast: 4
+        readonly property real lsMast: Style.f.lsMast
         readonly property real lsTag: 2
         // hover wash + lit line, one value for every card in this screen
         readonly property color wash: Qt.rgba(0.56, 0.85, 0.91, 0.07)
@@ -274,8 +274,6 @@ Item {
     }
     // process ledger selection (click = select/detail; no kill actions)
     property int selProc: -1
-    // right pane tab: 0 = APPS (default), 1 = DEVICES (DeviceBay, lane W1)
-    property int rightTab: 0
 
     // ------------------------------------------------ workspaces/windows
     // -1 = key absent → unknown (the glyph renders downstream), never a
@@ -430,11 +428,34 @@ Item {
         });
         return a;
     }
+    // Row models: the *Live builders re-run with every stats frame, but the
+    // published model only swaps when its content changed, so the Repeaters
+    // keep their delegates instead of tearing the ledger down at 1 Hz.
+    function syncModel(nm) {
+        var live = root[nm + "Live"];
+        var sg = JSON.stringify(live);
+        if (sg !== root[nm + "Sig"]) {
+            root[nm + "Sig"] = sg;
+            root[nm] = live;
+        }
+    }
+    Component.onCompleted: {
+        syncModel("winAll");
+        syncModel("wsAll");
+        syncModel("procAll");
+        syncModel("ghevAll");
+    }
     // Memoised row models — one evaluation per stats delta feeds the fit
     // math, the pane foot and the Repeater alike, instead of each of them
     // calling the builder independently.
-    readonly property var winAll: winList()
-    readonly property var wsAll: wsList()
+    readonly property var winAllLive: winList()
+    property var winAll: []
+    property string winAllSig: ""
+    onWinAllLiveChanged: syncModel("winAll")
+    readonly property var wsAllLive: wsList()
+    property var wsAll: []
+    property string wsAllSig: ""
+    onWsAllLiveChanged: syncModel("wsAll")
 
     // ------------------------------------------------------ agent lane
     readonly property var harnessIds: ["devin", "opencode", "haze"]
@@ -482,7 +503,7 @@ Item {
         }
         return m;
     }
-    readonly property var procAll: {
+    readonly property var procAllLive: {
         var a = [];
         for (var i = 0; i < procCount; i++)
             a.push({
@@ -491,6 +512,9 @@ Item {
             });
         return a;
     }
+    property var procAll: []
+    property string procAllSig: ""
+    onProcAllLiveChanged: syncModel("procAll")
     function procName(i) {
         return has("proc" + i + "_name") ? String(stats["proc" + i + "_name"]) : "";
     }
@@ -503,7 +527,10 @@ Item {
     readonly property bool ghOk: num(stats.gh_ok) > 0
     readonly property int ghUnread: has("gh_unread") ? Math.max(0, num(stats.gh_unread)) : -1
     readonly property int ghEvCount: has("ghev_count") ? Math.min(6, Math.max(0, num(stats.ghev_count))) : -1
-    readonly property var ghevAll: ghevList()
+    readonly property var ghevAllLive: ghevList()
+    property var ghevAll: []
+    property string ghevAllSig: ""
+    onGhevAllLiveChanged: syncModel("ghevAll")
     // "PULLRE" is not a label — substr(0,6) on "PullRequestEvent" produced
     // it. Map GitHub's event names onto a short tag that fits the ledger's
     // type column at its natural width and still reads as a word.
@@ -748,17 +775,16 @@ Item {
 
     // ------------------------------------------------------------ clock
     property date now: new Date()
-    // Sole wall-clock tick in this screen: 1 Hz UI clock, off while hidden.
-    // Nothing here animates on it — the knot is a static lit frame, every
-    // card is a plain Rectangle, and GlassPane's busy rim is never armed
-    // here. The tick exists only so the masthead can show HH:mm:ss.
+    // Sole wall-clock tick in this screen: 1 Hz, off while hidden. The
+    // masthead clock is gone (dedupe map v2 row 14: CH owns the clock);
+    // the tick survives because minuteTick below quantises it for the
+    // token ledger's age/burn bindings.
     Timer {
         interval: 1000
         running: root.visible
         repeat: true
         onTriggered: root.now = new Date()
     }
-    readonly property string clockText: Qt.formatTime(root.now, "HH:mm:ss")
     // Ledger age and burn pace read a minute-quantised stamp instead of the
     // 1 Hz clock, so those two bindings (and the token model behind them)
     // re-evaluate once a minute instead of once a second. Still no new
@@ -837,12 +863,37 @@ Item {
     // this pane hold" is always answered in the same place, and slack in a
     // pane reads as deliberate air above a status bar instead of a list
     // that was cut off.
+    // Mast quick key: tinted icon well that fires one argv. Hover brightens.
+    component QuickKey: Item {
+        id: qk
+        property string glyph: ""
+        property var argv: []
+        width: 28
+        height: 28
+        IconWell {
+            anchors.fill: parent
+            size: 28
+            glyph: qk.glyph
+            tint: Style.c.azure
+            hovered: qkMa.containsMouse
+        }
+        MouseArea {
+            id: qkMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.execArgv(qk.argv)
+        }
+    }
+
     component PaneFoot: Item {
         id: pf
         property string note: ""
         property string meta: ""
         property color noteTone: pal.t40
         property color metaTone: pal.t40
+        property string act: ""             // optional action pill label
+        signal acted
         width: parent ? parent.width : 0
         height: met.footH
         Rectangle {
@@ -857,13 +908,42 @@ Item {
             anchors.left: parent.left
             anchors.top: parent.top
             anchors.topMargin: 4
-            anchors.right: pfM.left
-            anchors.rightMargin: pf.meta === "" ? 0 : 10
+            anchors.right: pfAct.visible ? pfAct.left : pfM.left
+            anchors.rightMargin: pf.meta === "" && !pfAct.visible ? 0 : 10
             font.family: pal.fMono
             font.pixelSize: root.fs("pxMicro", 8)
             color: pf.noteTone
             elide: Text.ElideRight
             text: pf.note
+        }
+        Rectangle {
+            id: pfAct
+            visible: pf.act !== ""
+            anchors.right: pfM.left
+            anchors.rightMargin: 10
+            anchors.verticalCenter: pfM.verticalCenter
+            width: actTxt.implicitWidth + 12
+            height: 11
+            radius: Style.r.disc
+            color: actMa.containsMouse ? Style.c.azureWash : "transparent"
+            border.width: 1
+            border.color: actMa.containsMouse ? Style.tone(Style.c.accent2, 0.55) : Style.c.azureDim
+            Text {
+                id: actTxt
+                anchors.centerIn: parent
+                text: pf.act
+                color: actMa.containsMouse ? pal.txt : pal.t55
+                font.family: pal.fMono
+                font.pixelSize: root.fs("pxMicro", 8)
+                font.letterSpacing: 1
+            }
+            MouseArea {
+                id: actMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: pf.acted()
+            }
         }
         Text {
             id: pfM
@@ -1067,6 +1147,10 @@ Item {
                         color: pal.accent2
                     }
                     GradientStop {
+                        position: 0.30
+                        color: Style.c.azure
+                    }
+                    GradientStop {
                         position: 0.42
                         color: "#ff7ad9"
                     }
@@ -1103,7 +1187,7 @@ Item {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 12
-                    width: Math.min(implicitWidth, Math.max(120, mastRow.width - mastStats.width - 24))
+                    width: Math.min(implicitWidth, Math.max(120, mastRow.width - mastStats.width - mastQuick.width - 48))
 
                     Text {
                         id: mastTitle
@@ -1132,6 +1216,24 @@ Item {
                     }
                 }
 
+                // one-tap launchers and capture tools, using the existing omarchy
+                // commands (no data, pure utility)
+                Row {
+                    id: mastQuick
+                    anchors.right: mastStats.left
+                    anchors.rightMargin: 24
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 6
+                    QuickKey { glyph: Style.ico.term; argv: ["omarchy-launch-terminal"] }
+                    QuickKey { glyph: Style.ico.robot; argv: ["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"] }
+                    QuickKey { glyph: Style.ico.folder; argv: ["omarchy-launch-nautilus"] }
+                    QuickKey { glyph: Style.ico.rocket; argv: ["omarchy-launch-browser"] }
+                    QuickKey { glyph: Style.ico.shot; argv: ["omarchy-capture-screenshot"] }
+                    QuickKey { glyph: Style.ico.pick; argv: ["hyprpicker", "-a"] }
+                    QuickKey { glyph: Style.ico.palette; argv: ["omarchy-theme-bg-next"] }
+                    QuickKey { glyph: Style.ico.menu; argv: ["omarchy-menu"] }
+                }
+
                 Row {
                     id: mastStats
                     anchors.right: parent.right
@@ -1147,23 +1249,7 @@ Item {
                         elide: Text.ElideRight
                         // "PROC 3/6" is a slot fill count, not a process count —
                         // the collector only fills a slot above 0.5% of a core
-                        text: root.cnt(root.wsCount) + " WS · " + root.cnt(root.winCount) + " WINDOWS · PROC " + root.procCount + "/" + root.procSlots
-                    }
-                    Rectangle {
-                        id: mastRule
-                        anchors.verticalCenter: mastStats.verticalCenter
-                        width: 1
-                        height: 14
-                        color: pal.edge
-                    }
-                    Text {
-                        id: mastClock
-                        anchors.verticalCenter: mastStats.verticalCenter
-                        font.family: pal.fDisp
-                        font.pixelSize: 16
-                        font.letterSpacing: 1.5
-                        color: pal.accent2
-                        text: root.clockText
+                        text: "PROC " + root.procCount + "/" + root.procSlots
                     }
                 }
             }
@@ -1391,28 +1477,13 @@ Item {
                                             // resolved from win{i}_class; ▢ glyph
                                             // when the theme and the desktop
                                             // entries both miss.
-                                            Rectangle {
-                                                width: 24
-                                                height: 24
-                                                radius: 6
+                                            IconWell {
+                                                size: 24
                                                 anchors.verticalCenter: wcardRow.verticalCenter
-                                                color: pal.well
-                                                border.color: pal.edge
-                                                border.width: 1
-                                                IconImage {
-                                                    anchors.centerIn: parent
-                                                    implicitSize: 17
-                                                    source: wcard.modelData.icon
-                                                    visible: source.toString() !== ""
-                                                }
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    visible: wcard.modelData.icon === ""
-                                                    text: "▢"
-                                                    color: pal.t40
-                                                    font.family: pal.fMono
-                                                    font.pixelSize: root.fs("pxBody", 13)
-                                                }
+                                                tint: Style.c.accent2
+                                                hovered: wma.containsMouse
+                                                source: wcard.modelData.icon
+                                                glyph: wcard.modelData.icon === "" ? Style.ico.layers : ""
                                             }
                                             Column {
                                                 anchors.verticalCenter: wcardRow.verticalCenter
@@ -1477,6 +1548,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "EXPOSE"
+                            onActed: root.execArgv(["qs", "ipc", "-p", "/usr/share/omarchy/shell", "-t", "expose", "call", "toggle", ""])
                             note: winPanel.fit < winPanel.rows.length || root.winCount > winPanel.rows.length ? "showing " + winPanel.rows.length + " of " + root.cnt(root.winCount) + " windows" : root.cnt(root.winCount) + " windows"
                             meta: root.wsCount < 0 ? root.unk + " ws" : root.wsAll.length + "/" + root.wsCount + " ws"
                         }
@@ -1613,6 +1686,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "HERMES"
+                            onActed: root.execArgv(["omarchy-launch-tui", "--app-id=org.nexus.hermes", "hermes"])
                             note: agPanel.fit < root.harnessIds.length ? "showing " + agPanel.rows.length + " of " + root.harnessIds.length : root.harnessIds.length + " harnesses"
                             meta: root.agLiveProcs > 0 ? root.agLiveProcs + " live proc" + (root.agLiveProcs === 1 ? "" : "s") : "no live proc"
                         }
@@ -1747,6 +1822,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "BTOP"
+                            onActed: root.execArgv(["omarchy-launch-tui", "btop"])
                             note: procPanel.fit < root.procCount ? "showing " + procPanel.rows.length + " of " + root.procSlots + " slots" : root.procCount + " of " + root.procSlots + " slots"
                             meta: root.procPeak < 0 ? "peak " + root.unk : "peak " + Math.round(root.procPeak) + "%"
                         }
@@ -1867,6 +1944,8 @@ Item {
                         }
 
                         PaneFoot {
+                            act: "GITHUB"
+                            onActed: root.execArgv(["xdg-open", "https://github.com/notifications"])
                             note: repoPanel.fit < root.ghevAll.length ? "showing " + repoPanel.rows.length + " of " + root.cnt(root.ghEvCount) + " events" : root.cnt(root.ghEvCount) + " events"
                             meta: root.ghUnread < 0 ? root.unk + " unread" : (root.ghUnread > 0 ? root.ghUnread + " unread" : "0 unread")
                             // only the unread figure earns the warn tone — the
@@ -2165,132 +2244,44 @@ Item {
                 }
             }
 
-            // ======================= RIGHT : APPS | DEVICES
+            // ======================= RIGHT : DEVICES + APPS
+            // DEVICES first, always rendered: hotplug is the live signal and
+            // the bay must be readable without a click (HANDOFF item 5).
+            // The bay asks for the height its grid needs (DeviceBay.natHeight,
+            // rows at the nominal card size); APPS takes the remainder under a
+            // floor so the launcher stays usable. Both children keep the
+            // self-sizing contract — GlassPane reparents them into its content
+            // item, so nothing anchors to a pane id here.
             Column {
                 id: rightCol
                 width: grid.width - leftCol.width - grid.spacing
                 height: grid.height
                 spacing: met.gap
 
-                // ---- tabbed pane (lane W1): APPS NAVIGATOR (AppGrid.qml —
-                // lane D3, stays the default tab) | DEVICES (DeviceBay.qml —
-                // connected peripherals). Both share the pane's full extent
-                // below a small pill tab strip; each self-sizes to its parent
-                // (the GlassPane content-reparenting workaround — never
-                // anchor to the pane id here). `padding` stays 0 here: the tab
-                // strip owns its own inset so the two tab pages keep the
-                // geometry AppGrid already lays out for.
+                GlassPane {
+                    id: devPanel
+                    width: rightCol.width
+                    // when the bay asks for more than the column can give, the
+                    // pane stops at the cap and the grid compresses toward
+                    // DeviceBay.cardMinH before anything clips
+                    height: Math.max(devPanel.floor, Math.min(devBay.natHeight, rightCol.height - devPanel.appsFloor - rightCol.spacing))
+                    busy: false
+                    readonly property int appsFloor: 200   // APPS pane minimum
+                    readonly property int floor: 320        // DEVICES pane minimum
+
+                    DeviceBay {
+                        id: devBay
+                        stats: root.stats
+                    }
+                }
+
                 GlassPane {
                     id: appsPanel
                     width: rightCol.width
-                    height: rightCol.height
+                    height: Math.max(0, rightCol.height - devPanel.height - rightCol.spacing)
                     busy: false
 
-                    Column {
-                        id: appsBody
-                        width: parent ? parent.width : 0
-                        height: parent ? parent.height : 0
-                        spacing: 0
-
-                        // ---- tab strip
-                        Item {
-                            id: tabStrip
-                            width: appsBody.width
-                            height: 36
-
-                            Row {
-                                id: tabRow
-                                anchors.left: parent.left
-                                anchors.leftMargin: met.pad
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 9
-                                spacing: 6
-                                Repeater {
-                                    model: ["APPS", "DEVICES"]
-                                    delegate: Rectangle {
-                                        id: tabChip
-                                        required property int index
-                                        required property string modelData
-                                        readonly property bool active: root.rightTab === tabChip.index
-                                        width: tabTxt.implicitWidth + 24
-                                        height: 20
-                                        radius: 10
-                                        color: tabChip.active ? pal.ink : (tabMa.containsMouse ? pal.well : "transparent")
-                                        border.width: 1
-                                        border.color: tabChip.active ? pal.accent : (tabMa.containsMouse ? met.litLine : "transparent")
-                                        Text {
-                                            id: tabTxt
-                                            anchors.centerIn: parent
-                                            font.family: pal.fDisp
-                                            font.pixelSize: root.fs("pxTag", 9)
-                                            font.letterSpacing: met.lsTag
-                                            color: tabChip.active ? pal.accent : (tabMa.containsMouse ? pal.txt : pal.t55)
-                                            text: tabChip.modelData
-                                        }
-                                        // active marker: a 2px accent bar riding
-                                        // the strip's own hairline, so the
-                                        // selected tab is legible even when the
-                                        // two pills sit side by side
-                                        Rectangle {
-                                            visible: tabChip.active
-                                            anchors.horizontalCenter: parent.horizontalCenter
-                                            y: parent.height - 2
-                                            width: parent.width - 8
-                                            height: 2
-                                            radius: 1
-                                            color: pal.accent
-                                        }
-                                        MouseArea {
-                                            id: tabMa
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            onClicked: root.rightTab = tabChip.index
-                                        }
-                                    }
-                                }
-                            }
-                            // right-hand hint, baseline-matched to the chips
-                            // and elided against them so a long subtitle can
-                            // never shove the tabs off the pane
-                            Text {
-                                anchors.left: tabRow.right
-                                anchors.leftMargin: met.pad
-                                anchors.right: parent.right
-                                anchors.rightMargin: met.pad
-                                anchors.verticalCenter: tabRow.verticalCenter
-                                font.family: pal.fMono
-                                font.pixelSize: root.fs("pxMicro", 8)
-                                color: pal.t40
-                                elide: Text.ElideRight
-                                text: root.rightTab === 0 ? "installed apps · gtk-launch" : "usb · hid · audio · bt"
-                            }
-                            // hairline under the strip
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.leftMargin: met.pad
-                                anchors.rightMargin: met.pad
-                                height: 1
-                                color: pal.edge
-                            }
-                        }
-
-                        // ---- tab pages (both stay alive; visibility swaps)
-                        Item {
-                            id: tabStack
-                            width: appsBody.width
-                            height: Math.max(0, appsBody.height - tabStrip.height)
-
-                            AppGrid {
-                                visible: root.rightTab === 0
-                            }
-                            DeviceBay {
-                                visible: root.rightTab === 1
-                                stats: root.stats
-                            }
-                        }
-                    }
+                    AppGrid {}
                 }
             }
         }

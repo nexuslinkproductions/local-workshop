@@ -5,7 +5,6 @@ import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Widgets
 
 // AppGrid.qml — APPS NAVIGATOR pane (lane D3, replaces the HDMI-A-3 patch
 // bay). An integrated launcher the operator can actually use:
@@ -66,6 +65,7 @@ Item {
         readonly property color accent: root.col("accent", "#c8f31d")
         readonly property color accentDim: root.col("accentDim", Qt.rgba(0.78, 0.95, 0.11, 0.55))
         readonly property color accent2: root.col("accent2", "#8fd8e8")
+        readonly property color accent2Dim: root.col("accent2Dim", Qt.rgba(0.56, 0.85, 0.91, 0.55))
         readonly property color unknown: root.col("unknown", "#5a646c")
         readonly property color txt: root.col("txt", "#d9e2ea")
         readonly property color t55: root.col("dim", "#8b959e")
@@ -93,9 +93,9 @@ Item {
         readonly property int wCount: 34
         readonly property int wMeta: 200
         // selection / hover washes — a selected row is lifted and barred, not
-        // outlined in full acid; hover is a separate, weaker step
+        // outlined in full acid; hover is the sibling met.wash step (cyan 7%)
         readonly property color selFill: Qt.rgba(255, 255, 255, 0.05)
-        readonly property color hovFill: Qt.rgba(255, 255, 255, 0.022)
+        readonly property color hovFill: Qt.rgba(0.56, 0.85, 0.91, 0.07)
     }
 
     // ============================================================ model
@@ -822,10 +822,12 @@ Item {
                         // constant 1px so the row's contents never shift when
                         // the selection state changes
                         border.width: 1
-                        border.color: appRow.active ? pal.accentDim
-                            : (rowMouse.containsMouse ? pal.ruleDark : "transparent")
-                        color: appRow.active ? pal.selFill
-                            : (rowMouse.containsMouse ? pal.hovFill : "transparent")
+                        border.color: rowMouse.containsMouse
+                            ? (appRow.active ? pal.accent : pal.accent2Dim)
+                            : (appRow.active ? pal.accentDim : "transparent")
+                        color: rowMouse.containsMouse
+                            ? pal.hovFill
+                            : (appRow.active ? pal.selFill : "transparent")
                         Behavior on color {
                             NumberAnimation {
                                 duration: 180
@@ -851,30 +853,15 @@ Item {
                             anchors { fill: parent; leftMargin: pal.g3; rightMargin: pal.g3 }
                             // themed icon in a recessed well, or the fallback
                             // mark — never a fake image
-                            Rectangle {
+                            IconWell {
                                 id: iconWell
                                 anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-                                width: pal.iconWell
-                                height: pal.iconWell
-                                radius: pal.rKey
-                                color: pal.well
-                                border.width: 1
-                                border.color: pal.ruleDark
-                                IconImage {
-                                    anchors.centerIn: parent
-                                    implicitSize: 18
-                                    source: root.iconSrc(appRow.modelData.icon)
-                                    asynchronous: true
-                                    visible: source.toString() !== ""
-                                }
-                                Text {
-                                    anchors.centerIn: parent
-                                    visible: root.iconSrc(appRow.modelData.icon) === ""
-                                    text: "▢"
-                                    color: pal.t40
-                                    font.family: pal.fMono
-                                    font.pixelSize: 11
-                                }
+                                size: pal.iconWell
+                                tint: Style.c.accent2
+                                active: appRow.active
+                                hovered: rowMouse.containsMouse
+                                source: root.iconSrc(appRow.modelData.icon)
+                                glyph: root.iconSrc(appRow.modelData.icon) === "" ? Style.ico.grid : ""
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
@@ -906,7 +893,7 @@ Item {
                                 }
                                 elide: Text.ElideRight
                                 text: appRow.modelData.name
-                                color: appRow.active ? pal.txt : pal.t55
+                                color: (appRow.active || rowMouse.containsMouse) ? pal.txt : pal.t55
                                 font.family: pal.fMono
                                 font.pixelSize: 12
                             }

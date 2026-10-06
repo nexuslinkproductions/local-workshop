@@ -6,10 +6,16 @@ singleton FlowBus 1.0 FlowBus.qml
 # LANE-S-BEGIN (style singletons + chrome components)
 singleton Style 1.0 Style.qml
 singleton Theme 1.0 Theme.qml
+singleton DockState 1.0 DockState.qml
 GlassPane 1.0 GlassPane.qml
 EmbossedTile 1.0 EmbossedTile.qml
 Tag 1.0 Tag.qml
 ScanOverlay 1.0 ScanOverlay.qml
+IconWell 1.0 IconWell.qml
+ActionRow 1.0 ActionRow.qml
+ActionToggle 1.0 ActionToggle.qml
+ActionDockCell 1.0 ActionDockCell.qml
+RingGauge 1.0 RingGauge.qml
 KnotField 1.0 KnotField.qml
 # LANE-S-END
 # LANE-D/N-BEGIN (screens + shared dock — lane D1/D2/D3/N components)
@@ -23,6 +29,19 @@ AppGrid 1.0 AppGrid.qml
 # LANE-W1: workbench DEVICES tab — glyph-drawn peripheral cards + vitals popover
 DeviceBay 1.0 DeviceBay.qml
 UtilityDock 1.0 UtilityDock.qml
-# LANE-G2: compact-dock media cell (album art body for UtilityDock)
-MediaCell 1.0 MediaCell.qml
 # LANE-D/N-END
+# M1 kit — FUI instrument primitives (docs/m1; decks: DeckCommand/DeckTokens/DeckSystem)
+singleton FuiTokens 1.0 fui/FuiTokens.qml
+FuiFrame 1.0 fui/FuiFrame.qml
+TickRing 1.0 fui/TickRing.qml
+ConcentricRings 1.0 fui/ConcentricRings.qml
+HairBar 1.0 fui/HairBar.qml
+Sparkline 1.0 fui/Sparkline.qml
+SwimLane 1.0 fui/SwimLane.qml
+LeaderLine 1.0 fui/LeaderLine.qml
+HexWell 1.0 fui/HexWell.qml
+Ruler 1.0 fui/Ruler.qml
+EngravedButton 1.0 fui/EngravedButton.qml
+DeckCommand 1.0 DeckCommand.qml
+DeckTokens 1.0 DeckTokens.qml
+DeckSystem 1.0 DeckSystem.qml

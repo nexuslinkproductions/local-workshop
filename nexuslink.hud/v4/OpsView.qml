@@ -2,15 +2,16 @@ pragma ComponentBehavior: Bound
 
 import QtQml.Models
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 // OpsView.qml — DP-2 second view "OPS" (lane B4): a live system feed.
 // Hosted by BoardView.qml's tab bar (BOARD | OPS); receives the same parsed
 // `stats` map the collector emits. Everything is driven by Topology.statsRev
-// (the collector batch tick) — the perf sparkline samples on the tick, the
-// journal tail is re-read every Nth tick, and the event feed diffs frame n
-// against frame n-1. One watchdog Timer exists solely to detect a DEAD
-// collector (statsRev stops bumping); it runs only while this tab is shown.
+// (the collector batch tick) — the journal tail is re-read every Nth tick and
+// the event feed diffs frame n against frame n-1. One watchdog Timer exists
+// solely to detect a DEAD collector (statsRev stops bumping); it runs only
+// while this tab is shown.
 //
 // Honesty rules (BRIEF-V4-BUILD §3/§4), same as the board:
 //   * a vital the collector does not emit renders "—", never fabricated
@@ -64,25 +65,6 @@ Item {
     }
     function ss(k) {
         return has(k) ? String(stats[k]) : dash;
-    }
-    function fmtBytes(b) {
-        if (!isFinite(b))
-            return dash;
-        if (b >= 1099511627776)
-            return (b / 1099511627776).toFixed(2) + " TB";
-        if (b >= 1073741824)
-            return (b / 1073741824).toFixed(1) + " GB";
-        if (b >= 1048576)
-            return (b / 1048576).toFixed(1) + " MB";
-        if (b >= 1024)
-            return (b / 1024).toFixed(1) + " KB";
-        return Math.round(b) + " B";
-    }
-    function fmtRate(bps) {
-        return isFinite(bps) ? fmtBytes(bps) + "/s" : dash;
-    }
-    function fmtGb(kb) {
-        return isFinite(kb) ? (kb / 1048576).toFixed(1) + "G" : dash;
     }
     function fmtUp(s) {
         if (!isFinite(s))
@@ -140,24 +122,6 @@ Item {
     property int _sessPrev: -1
     property bool _seeded: false
 
-    // perf sparkline ring buffers (sampled on statsRev — no timers)
-    readonly property int histN: 120
-    property var histCpu: []
-    property var histMem: []
-    property var histGpu: []
-    property int histRev: 0           // bumps per sample — drives legend text
-    property real _prevCpuIdle: -1
-    property real _prevCpuTotal: -1
-
-    // net rates (cumulative counters -> B/s via wall-clock dt between frames)
-    property real _prevRx: -1
-    property real _prevTx: -1
-    property real _prevNetMs: 0
-    property real rxRate: NaN
-    property real txRate: NaN
-    property real rxPeak: 0
-    property real txPeak: 0
-
     // proc snapshot rows for the rail repeater
     property var procRows: []
 
@@ -181,6 +145,7 @@ Item {
     }
     readonly property int feedCap: 80
 
+    // Uptime-derived stamp on feed rows (M7): functional event time, not a readout.
     function feedTs() {
         var u = sn("uptime_s");
         return isFinite(u) ? "u" + fmtUp(u) : dash;
@@ -463,8 +428,6 @@ Item {
         }
 
         applySvc();
-        samplePerf();
-        sampleNet(now);
 
         // journal tail at stats cadence — every 3rd tick, only while shown
         if (root.active && _tick % 3 === 1 && !jrnlProc.running) {
@@ -479,9 +442,9 @@ Item {
         return [
             { "id": "qs", "label": "QUICKSHELL", "match": ["quickshell"], "what": "this shell" },
             { "id": "hc", "label": "HUD-COLLECT", "match": null, "what": "frame feed" },
-            { "id": "pw", "label": "PIPEWIRE", "match": ["pipewire", "wireplumber", "pipewire-pulse"], "what": "audio" },
-            { "id": "nm", "label": "NETMGR", "match": ["NetworkManager"], "what": "net" },
-            { "id": "bt", "label": "BLUETOOTHD", "match": ["bluetoothd"], "what": "hci" }
+            { "id": "pw", "label": "PIPEWIRE", "match": ["pipewire", "wireplumber", "pipewire-pulse"], "what": "audio", "act": ["omarchy-restart-audio"] },
+            { "id": "nm", "label": "NETMGR", "match": ["NetworkManager"], "what": "net", "act": ["omarchy-restart-wifi"] },
+            { "id": "bt", "label": "BLUETOOTHD", "match": ["bluetoothd"], "what": "hci", "act": ["omarchy-restart-bluetooth"] }
         ];
     }
     function applySvc() {
@@ -517,7 +480,8 @@ Item {
                     "label": d.label,
                     "state": state,
                     "ev": ev,
-                    "what": d.what
+                    "what": d.what,
+                    "act": d.act !== undefined ? d.act : []
                 });
         }
         svcRows = rows;
@@ -535,109 +499,6 @@ Item {
             }
         }
         return null;
-    }
-
-    // ======================== PERF SAMPLING ===============================
-    function samplePerf() {
-        // cpu busy: /proc/stat jiffies delta between consecutive frames
-        var idle = sn("cpu_idle"), tot = sn("cpu_total");
-        var cpu = NaN;
-        if (isFinite(idle) && isFinite(tot) && _prevCpuTotal >= 0 && tot > _prevCpuTotal)
-            cpu = 100 * (1 - (idle - _prevCpuIdle) / (tot - _prevCpuTotal));
-        if (isFinite(idle) && isFinite(tot)) {
-            _prevCpuIdle = idle;
-            _prevCpuTotal = tot;
-        }
-        var mt = sn("mem_total_kb"), ma = sn("mem_avail_kb");
-        var mem = (isFinite(mt) && mt > 0 && isFinite(ma)) ? 100 * (1 - ma / mt) : NaN;
-        var gpu = sn("i_util");
-        if (!isFinite(gpu))
-            gpu = sn("a_util");
-        if (!isFinite(gpu))
-            gpu = sn("gpu_util");
-        pushHist("cpu", cpu);
-        pushHist("mem", mem);
-        pushHist("gpu", gpu);
-        perfCv.requestPaint();
-    }
-    function pushHist(which, v) {
-        var arr = which === "cpu" ? histCpu : which === "mem" ? histMem : histGpu;
-        arr.push(v);
-        if (arr.length > histN)
-            arr.shift();
-        histRev++;                     // notify even though `arr` is same ref
-    }
-    function histLast(which) {
-        var arr = which === "cpu" ? histCpu : which === "mem" ? histMem : histGpu;
-        return arr.length ? arr[arr.length - 1] : NaN;
-    }
-    function rateFor(k) {
-        return k === "rx" ? rxRate : txRate;
-    }
-    function peakFor(k) {
-        return k === "rx" ? rxPeak : txPeak;
-    }
-    function netCol(k) {
-        return k === "rx" ? root.cIce : root.cMag;
-    }
-    // Host vitals lookup — delegate text binds on root.stats, so every row
-    // re-evaluates with each collector frame (no stale snapshot literal).
-    function hostVal(kk) {
-        switch (kk) {
-        case "uptime":
-            return fmtUp(sn("uptime_s"));
-        case "load":
-            return ss("load1") + " / " + ss("load5") + " / " + ss("load15");
-        case "mem":
-            return fmtGb(sn("mem_total_kb") - sn("mem_avail_kb")) + " / " + fmtGb(sn("mem_total_kb"));
-        case "swap":
-            return fmtGb(sn("swap_total_kb") - sn("swap_free_kb")) + " / " + fmtGb(sn("swap_total_kb"));
-        case "zram":
-            return has("zram_used_mb") ? ss("zram_used_mb") + "M@" + ss("zram_ratio") + "x" : dash;
-        case "cpu":
-            return ss("cpu_temp") + "° · " + ss("cpu_mhz_avg") + "/" + ss("cpu_mhz_max") + "MHz · " + ss("cpu_cores") + "c";
-        case "fs":
-            return ss("fs_root_pct") + "% · " + fmtBytes(sn("fs_root_used"));
-        case "disk":
-            return "r " + fmtRate(sn("disk_read_bps")) + " w " + fmtRate(sn("disk_write_bps"));
-        case "psi":
-            return "cpu " + ss("psi_cpu_some") + " io " + ss("psi_io_some") + " mem " + ss("psi_mem_some");
-        case "theme":
-            return ss("theme_name");
-        case "gh":
-            return ss("gh_user") + " · unread " + ss("gh_unread");
-        case "agents":
-            return ss("agents_procs") + " procs · " + ss("agents_tmux") + " tmux";
-        case "pkg":
-            return ss("pkg_updates") + " updates";
-        case "bat":
-            return ss("bat0_name") + " " + ss("bat0_pct") + "% " + ss("bat0_state");
-        case "wx":
-            return ss("weather");
-        default:
-            return dash;
-        }
-    }
-
-    // ======================== NET RATES ===================================
-    function sampleNet(now) {
-        var rx = sn("net_rx"), tx = sn("net_tx");
-        if (isFinite(rx) && isFinite(tx) && _prevNetMs > 0 && now > _prevNetMs) {
-            var dt = (now - _prevNetMs) / 1000;
-            var r = Math.max(0, (rx - _prevRx) / dt);
-            var t = Math.max(0, (tx - _prevTx) / dt);
-            rxRate = r;
-            txRate = t;
-            if (r > rxPeak)
-                rxPeak = r;
-            if (t > txPeak)
-                txPeak = t;
-        }
-        if (isFinite(rx) && isFinite(tx)) {
-            _prevRx = rx;
-            _prevTx = tx;
-            _prevNetMs = now;
-        }
     }
 
     // ============================ LAYOUT ==================================
@@ -789,7 +650,8 @@ Item {
             Rectangle {
                 id: svcPane
                 width: rail.width
-                height: 94
+                // sole survivor of the rail after D2 — takes the whole rail
+                height: rail.height
                 radius: Style.r.pane
                 color: root.cInk
                 border.color: root.cEdge
@@ -831,6 +693,23 @@ Item {
                                         color: root.cRecess
                                     }
                                 }
+                                // hover lights the rim; click restarts the service
+                                // through its omarchy-restart-* helper (none for hud-collect)
+                                Rectangle {
+                                    anchors.fill: svc
+                                    radius: Style.r.emboss
+                                    color: svcMa.containsMouse && svc.md.act.length > 0 ? Style.c.azureWash : "transparent"
+                                    border.width: 1
+                                    border.color: svcMa.containsMouse && svc.md.act.length > 0 ? Style.tone(Style.c.accent2, 0.50) : "transparent"
+                                }
+                                MouseArea {
+                                    id: svcMa
+                                    anchors.fill: svc
+                                    hoverEnabled: true
+                                    enabled: svc.md.act.length > 0
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops"].concat(svc.md.act))
+                                }
                                 Column {
                                     anchors.fill: svc
                                     anchors.leftMargin: 7
@@ -865,434 +744,50 @@ Item {
                             }
                         }
                     }
-                }
-            }
 
-            // ---------------- perf sparkline (statsRev samples) -----------
-            Rectangle {
-                id: perfPane
-                width: rail.width
-                height: Math.max(150, Math.round(rail.height * 0.22))
-                radius: Style.r.pane
-                color: root.cInk
-                border.color: root.cEdge
-                border.width: 1
-                Column {
-                    anchors.fill: perfPane
-                    anchors.margins: 12
-                    spacing: 8
-                    Row {
-                        width: perfPane.width - 24
-                        height: 14
-                        Text {
-                            id: perfLab
-                            anchors.verticalCenter: parent.verticalCenter
-                            font.family: root.fMono
-                            font.pixelSize: 8
-                            font.letterSpacing: 1.7
-                            color: root.cMute
-                            text: "PERF · " + root.histN + " frames"
-                        }
-                        Item {
-                            width: Math.max(1, perfPane.width - 24 - perfLegend.implicitWidth - perfLab.implicitWidth - 8)
-                            height: 1
-                        }
-                        Text {
-                            id: perfLegend
-                            anchors.verticalCenter: parent.verticalCenter
-                            font.family: root.fMono
-                            font.pixelSize: 8
-                            color: root.cDim
-                            text: {
-                                root.histRev;  // re-eval per stats tick
-                                return "cpu " + root.pctS(root.histLast("cpu")) + " · mem " + root.pctS(root.histLast("mem")) + " · gpu " + root.pctS(root.histLast("gpu"));
-                            }
-                        }
-                    }
-                    Canvas {
-                        id: perfCv
-                        width: perfPane.width - 24
-                        height: perfPane.height - 24 - 14 - 8 - 20 - 8
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            ctx.clearRect(0, 0, width, height);
-                            if (width <= 4 || height <= 4)
-                                return;
-                            // grid 25/50/75%
-                            ctx.strokeStyle = "rgba(143,216,232,0.10)";
-                            ctx.lineWidth = 1;
-                            for (var g = 1; g <= 3; g++) {
-                                var gy = height * (1 - g * 0.25);
-                                ctx.beginPath();
-                                ctx.moveTo(0, gy);
-                                ctx.lineTo(width, gy);
-                                ctx.stroke();
-                            }
-                            var series = [
-                                { "arr": root.histCpu, "col": "#c8f31d" },
-                                { "arr": root.histMem, "col": "#8fd8e8" },
-                                { "arr": root.histGpu, "col": "#ff7ad9" }
-                            ];
-                            for (var s = 0; s < series.length; s++) {
-                                var a = series[s].arr;
-                                if (a.length < 2)
-                                    continue;
-                                ctx.strokeStyle = series[s].col;
-                                ctx.globalAlpha = 0.9;
-                                ctx.lineWidth = 1.4;
-                                ctx.beginPath();
-                                var pen = false;
-                                var n = a.length;
-                                for (var i = 0; i < n; i++) {
-                                    var v = a[i];
-                                    if (!isFinite(v)) {
-                                        pen = false;
-                                        continue;
-                                    }
-                                    var x = width * i / (root.histN - 1);
-                                    var y = height * (1 - Math.max(0, Math.min(100, v)) / 100);
-                                    if (!pen) {
-                                        ctx.moveTo(x, y);
-                                        pen = true;
-                                    } else {
-                                        ctx.lineTo(x, y);
-                                    }
-                                }
-                                ctx.stroke();
-                                ctx.globalAlpha = 1;
-                            }
-                        }
-                    }
-                    Row {
-                        width: perfPane.width - 24
-                        spacing: 14
-                        Repeater {
-                            model: [
-                                { "t": "CPU", "c": "#c8f31d" },
-                                { "t": "MEM", "c": "#8fd8e8" },
-                                { "t": "GPU", "c": "#ff7ad9" }
-                            ]
-                            delegate: Row {
-                                required property var modelData
-                                spacing: 5
-                                Rectangle {
-                                    width: 7
-                                    height: 7
-                                    radius: 2
-                                    color: parent.modelData.c
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                                Text {
-                                    font.family: root.fMono
-                                    font.pixelSize: 8
-                                    color: root.cMute
-                                    text: parent.modelData.t
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ------------------------ net rx/tx ----------------------------
-            Rectangle {
-                id: netPane
-                width: rail.width
-                height: 120
-                radius: Style.r.pane
-                color: root.cInk
-                border.color: root.cEdge
-                border.width: 1
-                Column {
-                    anchors.fill: netPane
-                    anchors.margins: 12
-                    spacing: 8
-                    Row {
-                        width: netPane.width - 24
-                        height: 14
-                        Text {
-                            id: netLab
-                            anchors.verticalCenter: parent.verticalCenter
-                            font.family: root.fMono
-                            font.pixelSize: 8
-                            font.letterSpacing: 1.7
-                            color: root.cMute
-                            text: "NET · /proc/net/dev"
-                        }
-                        Item {
-                            width: Math.max(1, netPane.width - 24 - netCap.implicitWidth - netLab.implicitWidth - 8)
-                            height: 1
-                        }
-                        Text {
-                            id: netCap
-                            anchors.verticalCenter: parent.verticalCenter
-                            font.family: root.fMono
-                            font.pixelSize: 8
-                            color: root.cFaint
-                            text: "peak ▼" + root.fmtRate(root.rxPeak) + " ▲" + root.fmtRate(root.txPeak)
-                        }
-                    }
-                    Repeater {
-                        model: [
-                            { "t": "RX ▼", "key": "rx" },
-                            { "t": "TX ▲", "key": "tx" }
-                        ]
-                        delegate: Item {
-                            id: nrow
-                            required property var modelData
-                            readonly property real rate: root.rateFor(modelData.key)
-                            readonly property real peak: root.peakFor(modelData.key)
-                            readonly property color tone: root.netCol(modelData.key)
-                            width: netPane.width - 24
-                            height: 24
-                            Text {
-                                id: nLab
-                                anchors.left: nrow.left
-                                anchors.verticalCenter: nrow.verticalCenter
-                                width: 46
-                                font.family: root.fMono
-                                font.pixelSize: 8
-                                color: nrow.tone
-                                text: nrow.modelData.t
-                            }
-                            Rectangle {
-                                anchors.left: nLab.right
-                                anchors.verticalCenter: nrow.verticalCenter
-                                width: nrow.width - 46 - 92 - 14
-                                height: 10
-                                radius: Style.r.chip
-                                color: root.cRecess
-                                border.width: 1
-                                border.color: Qt.rgba(0, 0, 0, 0.4)
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    anchors.margins: 1
-                                    radius: Style.r.chip - 1
-                                    width: {
-                                        var p = nrow.peak;
-                                        var r = nrow.rate;
-                                        if (!isFinite(r) || !isFinite(p) || p <= 0)
-                                            return 0;
-                                        return Math.max(2, (parent.width - 2) * Math.min(1, r / p));
-                                    }
-                                    color: nrow.tone
-                                    opacity: 0.85
-                                    Behavior on width {
-                                        NumberAnimation {
-                                            duration: 300
-                                            easing.type: Easing.OutCubic
-                                        }
-                                    }
-                                }
-                            }
-                            Text {
-                                anchors.right: nrow.right
-                                anchors.verticalCenter: nrow.verticalCenter
-                                width: 92
-                                horizontalAlignment: Text.AlignRight
-                                font.family: root.fMono
-                                font.pixelSize: 9
-                                color: root.cTxt
-                                text: root.fmtRate(nrow.rate)
-                            }
-                        }
-                    }
                     Text {
-                        font.family: root.fMono
-                        font.pixelSize: 7
-                        color: root.cFaint
-                        text: "bars scale to session peak · counters: rx " + root.fmtBytes(root.sn("net_rx")) + " tx " + root.fmtBytes(root.sn("net_tx"))
-                    }
-                }
-            }
-
-            // --------------------- top procs snapshot ----------------------
-            Rectangle {
-                id: procPane
-                width: rail.width
-                height: Math.max(120, Math.round(rail.height * 0.25))
-                // adaptive row pitch so all 8 slots fit whatever the deck
-                // height is — measured: pane - 2*12 margins - header/gap - 7 gaps
-                readonly property int rowH: Math.max(14, Math.floor((height - 24 - 16 - 7 * 5) / 8))
-                radius: Style.r.pane
-                color: root.cInk
-                border.color: root.cEdge
-                border.width: 1
-                clip: true
-                Column {
-                    anchors.fill: procPane
-                    anchors.margins: 12
-                    spacing: 5
-                    Text {
+                        topPadding: 10
                         font.family: root.fMono
                         font.pixelSize: 8
                         font.letterSpacing: 1.7
                         color: root.cMute
-                        text: "TOP PROCS · procN_name/cpu"
+                        text: "QUICK ACTIONS"
                     }
-                    Repeater {
-                        model: root.procRows
-                        delegate: Item {
-                            id: prow
-                            required property var modelData
-                            required property int index
-                            width: procPane.width - 24
-                            height: procPane.rowH
-                            Text {
-                                id: pRank
-                                anchors.left: prow.left
-                                anchors.verticalCenter: prow.verticalCenter
-                                width: 16
-                                font.family: root.fMono
-                                font.pixelSize: 8
-                                color: root.cFaint
-                                text: (prow.index + 1)
-                            }
-                            Text {
-                                id: pName
-                                anchors.left: pRank.right
-                                anchors.leftMargin: 4
-                                anchors.verticalCenter: prow.verticalCenter
-                                width: Math.max(40, prow.width - 16 - 4 - 96 - 60 - 12)
-                                font.family: root.fMono
-                                font.pixelSize: 9
-                                color: root.cTxt
-                                elide: Text.ElideRight
-                                text: prow.modelData.name
-                            }
-                            Rectangle {
-                                id: pBarBg
-                                anchors.left: pName.right
-                                anchors.leftMargin: 6
-                                anchors.verticalCenter: prow.verticalCenter
-                                width: 96
-                                height: 8
-                                radius: 3
-                                color: root.cRecess
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    anchors.margins: 1
-                                    radius: 2
-                                    width: isFinite(prow.modelData.cpu) ? Math.max(2, (parent.width - 2) * Math.min(1, prow.modelData.cpu / 100)) : 0
-                                    color: isFinite(prow.modelData.cpu) && prow.modelData.cpu >= 90 ? root.cAlert : root.cAcc
-                                    opacity: 0.85
-                                    Behavior on width {
-                                        NumberAnimation {
-                                            duration: 300
-                                            easing.type: Easing.OutCubic
-                                        }
-                                    }
-                                }
-                            }
-                            Text {
-                                anchors.left: pBarBg.right
-                                anchors.leftMargin: 6
-                                anchors.verticalCenter: prow.verticalCenter
-                                width: 54
-                                horizontalAlignment: Text.AlignRight
-                                font.family: root.fMono
-                                font.pixelSize: 9
-                                color: isFinite(prow.modelData.cpu) && prow.modelData.cpu >= 90 ? root.cAlert : root.cDim
-                                text: isFinite(prow.modelData.cpu) ? Math.round(prow.modelData.cpu) + "%" : root.dash
-                            }
+                    Column {
+                        width: svcPane.width - 24
+                        spacing: 4
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.broom
+                            label: "CLEAR FEED"
+                            hint: "LOCAL"
+                            onTriggered: feedModel.clear()
                         }
-                    }
-                    Text {
-                        visible: root.procRows.length === 0
-                        font.family: root.fMono
-                        font.pixelSize: 9
-                        color: root.cFaint
-                        text: "procN_* keys not in frame"
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.term
+                            label: "JOURNAL FOLLOW"
+                            hint: "TUI"
+                            onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops", "omarchy-launch-tui", "journalctl", "--user", "-f"])
+                        }
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.chip
+                            label: "SYSTEM MONITOR"
+                            hint: "BTOP"
+                            onTriggered: Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "ops", "omarchy-launch-tui", "btop"])
+                        }
+                        ActionRow {
+                            width: parent.width
+                            glyph: Style.ico.layers
+                            label: "WORKBENCH"
+                            hint: "HDMI"
+                            onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "focusmonitor", "HDMI-A-3"])
+                        }
                     }
                 }
             }
 
-            // ------------------------- host vitals -------------------------
-            // 15 keys in two columns of ≤8 rows; row pitch adapts to the pane
-            // height so nothing clips (pane eats whatever rail space is left).
-            Rectangle {
-                id: hostPane
-                width: rail.width
-                height: Math.max(60, rail.height - svcPane.height - perfPane.height - netPane.height - procPane.height - 4 * rail.spacing)
-                readonly property var hostRows: [
-                    { "k": "UPTIME", "kk": "uptime" },
-                    { "k": "LOAD", "kk": "load" },
-                    { "k": "MEM", "kk": "mem" },
-                    { "k": "SWAP", "kk": "swap" },
-                    { "k": "ZRAM", "kk": "zram" },
-                    { "k": "CPU", "kk": "cpu" },
-                    { "k": "FS /", "kk": "fs" },
-                    { "k": "DISK", "kk": "disk" },
-                    { "k": "PSI", "kk": "psi" },
-                    { "k": "THEME", "kk": "theme" },
-                    { "k": "GH", "kk": "gh" },
-                    { "k": "AGENTS", "kk": "agents" },
-                    { "k": "PKG", "kk": "pkg" },
-                    { "k": "BAT0", "kk": "bat" },
-                    { "k": "WX", "kk": "wx" }
-                ]
-                // pane - margins - header/gap - 7 inter-row gaps, / 8 rows a col
-                readonly property int rowH: Math.max(11, Math.min(17, Math.floor((height - 24 - 16 - 7 * 3) / 8)))
-                radius: Style.r.pane
-                color: root.cInk
-                border.color: root.cEdge
-                border.width: 1
-                clip: true
-                Column {
-                    anchors.fill: hostPane
-                    anchors.margins: 12
-                    spacing: 5
-                    Text {
-                        font.family: root.fMono
-                        font.pixelSize: 8
-                        font.letterSpacing: 1.7
-                        color: root.cMute
-                        text: "HOST · raw stats keys"
-                    }
-                    Row {
-                        width: hostPane.width - 24
-                        spacing: 14
-                        Repeater {
-                            model: 2
-                            delegate: Column {
-                                required property int index
-                                readonly property var rows: hostPane.hostRows.slice(index * 8, index * 8 + 8)
-                                width: (hostPane.width - 24 - 14) / 2
-                                spacing: 3
-                                Repeater {
-                                    model: parent.rows
-                                    delegate: Row {
-                                        id: hrow
-                                        required property var modelData
-                                        width: parent.width
-                                        height: hostPane.rowH
-                                        spacing: 6
-                                        Text {
-                                            width: 54
-                                            font.family: root.fMono
-                                            font.pixelSize: 8
-                                            color: root.cFaint
-                                            text: hrow.modelData.k
-                                        }
-                                        Text {
-                                            width: hrow.width - 60
-                                            font.family: root.fMono
-                                            font.pixelSize: 9
-                                            color: root.cDim
-                                            elide: Text.ElideRight
-                                            text: root.hostVal(hrow.modelData.kk)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }
