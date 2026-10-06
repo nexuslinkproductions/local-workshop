@@ -16,8 +16,25 @@ Item {
     property bool shown: true
 
     property double now: Date.now() / 1000
-    readonly property double windowStart: now - 6 * 3600
+    // auto-fit the axis to the earliest event in the last 24h (min 2h) —
+    // a fixed 6h window reads as empty bars when the crew went quiet early.
+    readonly property double windowStart: {
+        var t0 = now - 2 * 3600;
+        var cutoff = now - 24 * 3600;
+        for (var i = 0; i < bots.length; i++) {
+            var ev = bots[i].events;
+            if (!ev || ev.length === undefined)
+                continue;
+            for (var j = 0; j < ev.length; j++) {
+                var s0 = Number(ev[j][0]);
+                if (isFinite(s0) && s0 > cutoff && s0 < t0)
+                    t0 = s0;
+            }
+        }
+        return t0;
+    }
     readonly property double windowEnd: now + 15 * 60   // NOW sits at -15min zone edge
+    readonly property double spanMin: (tNow - windowStart) / 60
 
     Timer {
         interval: 60000
@@ -45,7 +62,11 @@ Item {
             rb._rank = rank(String(b.state || "dormant"));
             out.push(rb);
         }
-        out.sort(function (a, b) { return a._rank - b._rank || a._ord - b._ord; });
+        out.sort(function (a, b) {
+            return a._rank - b._rank
+                   || (Number(b.last_active) || 0) - (Number(a.last_active) || 0)
+                   || a._ord - b._ord;
+        });
         return out;
     }
 
@@ -77,9 +98,9 @@ Item {
     }
 
     function tx(ts) {
-        // spans the 6h track AND the +15m future zone so an event may bleed
-        // into it; the NOW line sits at trackX0+trackW.
-        return trackX0 + (ts - windowStart) / 60 * (trackW / 360);
+        // spans the fitted track AND the +15m future zone so an event may
+        // bleed into it; the NOW line sits at trackX0+trackW.
+        return trackX0 + (ts - windowStart) / 60 * (trackW / Math.max(1, spanMin));
     }
 
     function modelTag(m) {
@@ -140,7 +161,9 @@ Item {
             ctx.moveTo(root.trackX0, base + 0.5);
             ctx.lineTo(root.trackX0 + root.trackW + root.futW, base + 0.5);
             ctx.stroke();
-            var step = 600;
+            // tick step follows the fitted span: 10min under 4h, 30min
+            // under 12h, hourly beyond (a 24h window would bury 10min ticks)
+            var step = root.spanMin <= 240 ? 600 : (root.spanMin <= 720 ? 1800 : 3600);
             var first = Math.ceil(root.windowStart / step) * step;
             var rowsBottom = root.rowsY + root.nRows * root.rowH;
             for (var t = first; t <= root.windowEnd; t += step) {
@@ -523,7 +546,7 @@ Item {
             anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
             text: "window " + FuiTokens.fmtHm(root.windowStart) + "-" + FuiTokens.fmtHm(root.tNow)
                   + " · " + root.bots.length + " crew"
-                  + " · 1 min = " + (root.trackW / 360).toFixed(1) + " px"
+                  + " · 1 min = " + (root.trackW / Math.max(1, root.spanMin)).toFixed(1) + " px"
             color: FuiTokens.dim
             font.family: FuiTokens.mono
             font.pixelSize: FuiTokens.px.micro

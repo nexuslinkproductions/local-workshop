@@ -115,7 +115,9 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
-            wrapMode: Text.WrapAnywhere
+            // word-boundary wrap, second line elides — "OBS STUDIO" stays
+            // whole instead of splitting "STUDI O"
+            wrapMode: Text.WordWrap
             maximumLineCount: 2
             lineHeight: 0.95
             text: root.label.toUpperCase()

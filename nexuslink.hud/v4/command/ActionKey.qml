@@ -96,11 +96,11 @@ Item {
             font.pixelSize: FuiTokens.px.micro
         }
     }
-    Text {                         // label — wraps to 2 lines before eliding
+    Text {                         // label — wraps at word boundaries, 2 lines max
         x: 12; y: 36
         width: parent.width - 24
         elide: Text.ElideRight
-        wrapMode: Text.WrapAnywhere
+        wrapMode: Text.WordWrap
         maximumLineCount: 2
         lineHeight: 0.95
         text: root.label

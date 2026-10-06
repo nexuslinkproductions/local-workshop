@@ -41,7 +41,7 @@ Item {
           "cmd": "omarchy.clipboard",
           "argv": ["omarchy-shell", "shell", "toggle", "omarchy.clipboard"] },
         { "label": "AI CENTER", "kb": "unbound", "gl": FuiTokens.ico.folder,
-          "cmd": "nautilus ~/NEXUS_AI_CENTER",
+          "cmd": "~/NEXUS_AI_CENTER",
           "argv": ["uwsm-app", "--", "nautilus",
                    Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
         { "label": "RELOAD HUD", "kb": "unbound", "gl": FuiTokens.ico.sync,
