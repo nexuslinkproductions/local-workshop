@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC
 import Quickshell
 import "tokens" as Tk
 
@@ -43,24 +44,25 @@ Item {
     // opencode.db CLI lane stays `opencode` and renders as its own skyline
     // segment + ledger row — two labelled lanes, never silently summed.
     readonly property var pdesc: [
-        { "id": "opencode-go", "key": "ocg", "name": "OPENCODE GO",
+        { "id": "opencode-go", "key": "ocg", "name": "Go (Hermes)",
           "code": "PRV-OCG", "col": FuiTokens.ice,   "dash": null },
-        { "id": "claude",   "key": "cld", "name": "CLAUDE",
+        { "id": "claude",   "key": "cld", "name": "Claude",
           "code": "PRV-CLD", "col": FuiTokens.white, "dash": null },
-        { "id": "codex",    "key": "cdx", "name": "OPENAI / CODEX",
+        { "id": "codex",    "key": "cdx", "name": "Codex",
           "code": "PRV-CDX", "col": FuiTokens.azure, "dash": "double" },
-        { "id": "devin",    "key": "dvn", "name": "DEVIN",
+        { "id": "devin",    "key": "dvn", "name": "Devin",
           "code": "PRV-DVN", "col": FuiTokens.dim,   "dash": [1.5, 2.5] }
     ]
     // skyline stack order incl. opencode CLI lane + codex snapshot lane + haze
+    // label: short readable name for legend / readout (key stays the stack id)
     readonly property var stackDef: [
-        { "key": "ocg",    "col": FuiTokens.ice,   "dash": null },
-        { "key": "ocgcli", "col": FuiTokens.ice,   "dash": [2, 2] },
-        { "key": "cld",    "col": FuiTokens.white, "dash": null },
-        { "key": "cdx",    "col": FuiTokens.azure, "dash": null },
-        { "key": "cdxs",   "col": FuiTokens.azure, "dash": "double" },
-        { "key": "dvn",    "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
-        { "key": "hze",    "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
+        { "key": "ocg",    "label": "Go (Hermes)",    "col": FuiTokens.ice,   "dash": null },
+        { "key": "ocgcli", "label": "OpenCode CLI",   "col": FuiTokens.ice,   "dash": [2, 2] },
+        { "key": "cld",    "label": "Claude",         "col": FuiTokens.white, "dash": null },
+        { "key": "cdx",    "label": "Codex",          "col": FuiTokens.azure, "dash": null },
+        { "key": "cdxs",   "label": "Codex snapshot", "col": FuiTokens.azure, "dash": "double" },
+        { "key": "dvn",    "label": "Devin",          "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
+        { "key": "hze",    "label": "Haze",           "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
     ]
     readonly property var ledgerOrder: ["claude", "codex", "devin",
                                          "opencode-go", "opencode", "haze",
@@ -314,7 +316,7 @@ Item {
                     "winlab": wms > 0
                               ? Math.round(wms / 3600e3) + "h window elapsed "
                                 + ((isFinite(ms) ? Math.min(1, Math.max(0, (wms - (ms - root.nowMs)) / wms)) : 0) * 100).toFixed(1)
-                                + "% calc"
+                                + "%"
                               : "window n/a",
                     "action": act,
                     "ord": sev === "alert" ? 0 : sev === "warn" ? 1 : sev === "ok" ? 2 : 3
@@ -523,7 +525,7 @@ Item {
             var sh = (hv.sum > 0 && dv !== null && dv > 0) ? dv / hv.sum : null;
             if (sh !== null) cum += sh;
             rows.push({
-                "prv": { "v": d.key.toUpperCase(), "c": d.col },
+                "prv": { "v": d.name, "c": d.col },
                 "v":   { "v": dv !== null ? FuiTokens.fmtTok(dv) : FuiTokens.unknownGlyph },
                 "sh":  { "v": sh !== null ? (sh * 100).toFixed(2) + "%" : FuiTokens.unknownGlyph },
                 "cum": { "v": hv.sum > 0 ? (cum * 100).toFixed(1) : FuiTokens.unknownGlyph }
@@ -533,7 +535,7 @@ Item {
             "prv": { "v": "Σ", "c": FuiTokens.white },
             "v":   { "v": hv.sum > 0 ? FuiTokens.fmtTok(hv.sum) : "0" },
             "sh":  { "v": hv.sum > 0 ? "100.00%" : FuiTokens.unknownGlyph },
-            "cum": { "v": "calc" }
+            "cum": { "v": "" }
         });
         m.compRows = rows;
         return rows;
@@ -546,8 +548,10 @@ Item {
         var m = root._mm();
         if (m.ledgerRows)
             return m.ledgerRows;
-        // the two opencode lanes need distinct row tags (labels truncate at 9)
-        var shortPrv = { "opencode-go": "OCG·HRM", "opencode": "OCG·CLI" };
+        // display aliases — readable provider names (keys/order untouched)
+        var shortPrv = { "claude": "Claude", "codex": "Codex", "devin": "Devin",
+                         "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
+                         "haze": "Haze", "fireworks": "Fireworks" };
         var rows = [];
         for (var i = 0; i < ledgerOrder.length; i++) {
             var pid = ledgerOrder[i], p = provs()[pid];
@@ -558,7 +562,7 @@ Item {
             var kind = String(p.kind || "sub") + (st ? "·" + st.slice(0, 7) : "");
             rows.push({
                 "prv": { "v": shortPrv[pid]
-                              || String(p.label || pid).toUpperCase().slice(0, 9),
+                              || String(p.label || pid).slice(0, 14),
                          "c": st ? FuiTokens.faint : FuiTokens.ice },
                 "kind": { "v": kind, "c": st ? FuiTokens.faint : FuiTokens.mute },
                 "wi": lnum(w["in"]), "wo": lnum(w["out"]), "wc": { "v": fmtMoney(w["cost"]) },
@@ -690,7 +694,7 @@ Item {
         x: root.mg; y: root.mg
         width: root.heroW; height: root.row1H
         code: "TKN-01"
-        title: "Token Flux / Today"
+        title: "Today"
         meta: "src: tokens.json · event lanes · " + root.ledgerStamp()
 
         Item {
@@ -704,22 +708,17 @@ Item {
                 width: heroArea.colW
                 spacing: 4
                 Tk.Tx { role: "hdr"; text: "COMPOSITION" }
-                Tk.Tx { role: "cap"; text: "arc = share of Σ today on 0-100% bezel" }
-                Tk.Tx { role: "cap"; text: "major 10% · minor 2% · micro 0.5%" }
                 Tk.MiniTable {
                     width: parent.width
                     columns: [
-                        { "key": "prv", "label": "PRV" },
-                        { "key": "v",   "label": "24H",   "align": "r" },
-                        { "key": "sh",  "label": "SHARE", "align": "r" },
-                        { "key": "cum", "label": "CUM%",  "align": "r", "role": "dim" }
+                        { "key": "prv", "label": "PROVIDER", "flex": 1 },
+                        { "key": "v",   "label": "TODAY",    "align": "r", "w": 72 },
+                        { "key": "sh",  "label": "SHARE",    "align": "r", "w": 56 }
                     ]
                     rows: root.compRows()
                     total: true
                     rowH: 16
                 }
-                Tk.Tx { role: "cap"; text: "outer ring Σ: stacked end-to-end"; topPadding: 6 }
-                Tk.Tx { role: "cap"; text: "green index = 0% / ring origin" }
                 Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3
                             visible: burnBlock.visible }
                 Column {
@@ -743,7 +742,7 @@ Item {
                             }
                         }
                     }
-                    Tk.Tx { role: "cap"; text: "avg since midnight · calc" }
+                    Tk.Tx { role: "cap"; text: "avg since midnight" }
                     Item {
                         width: parent.width; height: 14
                         Tk.Tx { role: "lbl"; text: "24H AVG"; anchors.left: parent.left }
@@ -757,14 +756,13 @@ Item {
                             }
                         }
                     }
-                    Tk.Tx { role: "cap"; text: "Σ today / 24h, flat average" }
                 }
             }
 
             Tk.PrvCard {
                 anchors { left: parent.left; bottom: parent.bottom }
                 width: heroArea.colW
-                name: "OPENCODE GO"
+                name: "Go (Hermes)"
                 code: "PRV-OCG"
                 color: FuiTokens.ice
                 valueText: {
@@ -775,27 +773,18 @@ Item {
                     var hv = root.heroVals(), v = hv.v["ocg"];
                     return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
                 }
-                shareSuffix: "calc"
                 costLine: {
                     var mo = root.bk("opencode-go", "month");
-                    var t = "cost n/a · hrm crew lane";
-                    if (mo["cost"] !== null && mo["cost"] !== undefined)
-                        t += " · month " + root.fmtMoney(mo["cost"]);
-                    return t;
+                    return (mo["cost"] !== null && mo["cost"] !== undefined)
+                           ? "month " + root.fmtMoney(mo["cost"]) : "";
                 }
-                // two disjoint event lanes under one product: Hermes crew
-                // (this card's headline) + the local opencode.db CLI feed
+                // real warning only: stale/missing history is the only
+                // extra line worth keeping on the card
                 extraLine: {
-                    var cw = root.bk("opencode-go", "week"),
-                        cl = root.bk("opencode", "week");
-                    var hrm = (cw["in"] || 0) + (cw["out"] || 0);
-                    var cli = (cl["in"] || 0) + (cl["out"] || 0);
-                    var s = "hrm " + FuiTokens.fmtTok(hrm)
-                          + " + cli " + FuiTokens.fmtTok(cli) + " · disjoint";
                     var lag = root.histLag("opencode-go");
-                    if (lag === "no rows") s += " · no history rows";
-                    else if (lag !== "") s += " · history lags (" + lag + ")";
-                    return s;
+                    if (lag === "no rows") return "no history rows";
+                    if (lag !== "") return "history lags (" + lag + ")";
+                    return "";
                 }
                 warned: root.histLag("opencode-go") !== ""
                 spark: root.sparkSeries("opencode-go", root.nowMs)
@@ -859,17 +848,12 @@ Item {
                         Tk.Tx {
                             anchors.horizontalCenter: parent.horizontalCenter
                             role: "cap"; tone: FuiTokens.dim
-                            text: "Σ " + (root.heroVals().sum / 1e6).toFixed(1) + " M · calc"
+                            text: "Σ " + (root.heroVals().sum / 1e6).toFixed(1) + " M"
                         }
                         Tk.Tx {
                             anchors.horizontalCenter: parent.horizontalCenter
                             role: "cap"
-                            text: "event lanes · cdx snap wk/mo only"
-                        }
-                        Tk.Tx {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            role: "micro"
-                            text: "limit ring outer arc · reset at tip"
+                            text: "Codex snapshot lane counted separately"
                         }
                     }
                 }
@@ -889,7 +873,7 @@ Item {
 
                 Tk.PrvCard {
                     width: parent.width
-                    name: "DEVIN"; code: "PRV-DVN"
+                    name: "Devin"; code: "PRV-DVN"
                     color: FuiTokens.dim; dash: [1.5, 2.5]
                     valueText: {
                         var v = root.dayVal("devin");
@@ -899,22 +883,20 @@ Item {
                         var hv = root.heroVals(), v = hv.v["dvn"];
                         return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
                     }
-                    shareSuffix: "calc"
-                    costLine: "cost n/a · ledger kind sub"
+                    costLine: ""
                     extraLine: {
                         var mo = root.bk("devin", "month");
-                        var s = "ring 4 · dotted";
                         var mi = mo["in"], mout = mo["out"];
-                        if (mi || mout)
-                            s = "month " + FuiTokens.fmtTok((mi||0)+(mout||0)) + " · no limit feed";
-                        return s;
+                        return (mi || mout)
+                               ? "month " + FuiTokens.fmtTok((mi||0)+(mout||0))
+                                 + " · no limit feed" : "";
                     }
                     spark: root.sparkSeries("devin", root.nowMs)
                     sparkMax: root.sparkMaxOf("devin")
                 }
                 Tk.PrvCard {
                     width: parent.width
-                    name: "OPENAI / CODEX"; code: "PRV-CDX"
+                    name: "Codex"; code: "PRV-CDX"
                     color: FuiTokens.azure; dash: "double"
                     valueText: {
                         var v = root.dayVal("codex");
@@ -924,23 +906,22 @@ Item {
                         var hv = root.heroVals(), v = hv.v["cdx"];
                         return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
                     }
-                    shareSuffix: "calc"
-                    costLine: "cost n/a · snapshot lane separate"
+                    costLine: ""
                     extraLine: {
                         var l = root.laneSplit("codex", "week");
                         var s = "";
-                        if (l.hrm > 0) s = "HRM " + FuiTokens.fmtTok(l.hrm);
+                        if (l.hrm > 0) s = "events " + FuiTokens.fmtTok(l.hrm);
                         if (l.snap !== null)
-                            s += (s ? " + " : "") + "CLI " + FuiTokens.fmtTok(l.snap) + " snap";
-                        if (s === "") s = "ring 3 · two disjoint lanes";
-                        return s + " · disjoint";
+                            s += (s ? " + " : "") + FuiTokens.fmtTok(l.snap)
+                               + " snapshot";
+                        return s;
                     }
                     spark: root.sparkSeries("codex", root.nowMs)
                     sparkMax: root.sparkMaxOf("codex")
                 }
                 Tk.PrvCard {
                     width: parent.width
-                    name: "CLAUDE"; code: "PRV-CLD"
+                    name: "Claude"; code: "PRV-CLD"
                     color: FuiTokens.white
                     valueText: {
                         var v = root.dayVal("claude");
@@ -950,21 +931,19 @@ Item {
                         var hv = root.heroVals(), v = hv.v["cld"];
                         return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
                     }
-                    shareSuffix: "calc"
                     costLine: {
                         var dd = root.bk("claude", "day"), wk = root.bk("claude", "week");
-                        var t = "cost n/a";
+                        var t = "";
                         if (dd["cost"] !== null && dd["cost"] !== undefined)
                             t = "today " + root.fmtMoney(dd["cost"]);
                         if (wk["cost"] !== null && wk["cost"] !== undefined)
-                            t += " · wk " + root.fmtMoney(wk["cost"]);
+                            t += (t !== "" ? " · " : "") + "wk " + root.fmtMoney(wk["cost"]);
                         return t;
                     }
+                    // real warning only — auth state, not the feed census
                     extraLine: {
                         var mt = root.meta("claude");
-                        var s = root.isAuth(mt) ? "auth pending" : "nominal";
-                        var n = (mt.limits || []).length;
-                        return s + " · " + n + " limit feeds · ring 2";
+                        return root.isAuth(mt) ? "auth pending" : "";
                     }
                     warned: root.isAuth(root.meta("claude"))
                     spark: root.sparkSeries("claude", root.nowMs)
@@ -1031,19 +1010,17 @@ Item {
                         border.color: FuiTokens.tone(FuiTokens.warn, 0.4)
                     }
                     Tk.Tx {
-                        role: "code"; text: cmp.modelData.code
-                        anchors { left: parent.left; leftMargin: 8
-                                  verticalCenter: parent.verticalCenter }
-                    }
-                    Tk.Tx {
                         role: "lbl"; text: cmp.modelData.name; tone: FuiTokens.white
-                        anchors { left: parent.left; leftMargin: 96
+                        width: Math.min(implicitWidth, 150)
+                        anchors { left: parent.left; leftMargin: 8
                                   verticalCenter: parent.verticalCenter }
                     }
                     Tk.Tx {
                         role: "cap"; tone: FuiTokens.warn
                         text: cmp.modelData.statusLine + " · " + cmp.modelData.sub.toLowerCase()
-                        anchors { left: parent.left; leftMargin: 200
+                        width: Math.min(implicitWidth,
+                                        cmp.width - 174 - 112)
+                        anchors { left: parent.left; leftMargin: 174
                                   verticalCenter: parent.verticalCenter }
                     }
                     EngravedButton {
@@ -1104,8 +1081,6 @@ Item {
                     spacing: 3
                     Item {
                         width: parent.width; height: 13
-                        Tk.Tx { role: "code"; text: "LIM-BUS"; font.pixelSize: FuiTokens.px.micro + 1
-                                anchors.left: parent.left }
                         Tk.Tx {
                             role: "tag"
                             anchors { right: parent.right }
@@ -1123,7 +1098,7 @@ Item {
                             }
                         }
                     }
-                    Tk.Tx { role: "lbl"; text: "LIMIT BUS"; tone: FuiTokens.white; topPadding: 4 }
+                    Tk.Tx { role: "lbl"; text: "Rate limits"; tone: FuiTokens.white; topPadding: 4 }
                     Tk.MiniTable {
                         width: parent.width
                         header: false
@@ -1147,10 +1122,6 @@ Item {
                             ];
                         }
                     }
-                    Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
-                    Tk.Tx { role: "cap"; text: "E429 window exhausted" }
-                    Tk.Tx { role: "cap"; text: "A401 auth pending (no %)" }
-                    Tk.Tx { role: "cap"; text: "N/A  no limit source" }
                 }
             }
 
@@ -1171,14 +1142,16 @@ Item {
                 Tk.Tx {
                     role: "cap"
                     anchors { left: parent.left; leftMargin: 8
+                              right: parent.right; rightMargin: 8
                               verticalCenter: parent.verticalCenter }
-                    text: "NO LIMIT FEED: " + root.noFeedProviders.join(" · ")
+                    text: "Limits unavailable: " + root.noFeedProviders.join(" · ")
                 }
-                Tk.Tx {
-                    role: "micro"; tone: FuiTokens.faint
-                    anchors { right: parent.right; rightMargin: 8
-                              verticalCenter: parent.verticalCenter }
-                    text: "usage rows still counted · ledger only"
+                HoverHandler { id: stripHover }   // explains the strip on hover;
+                QQC.ToolTip {                     // no buttons, nothing swallowed
+                    y: parent.height + 4
+                    visible: stripHover.hovered
+                    delay: 250
+                    text: "Token usage is recorded; these providers do not supply live rate limits."
                 }
             }
 
@@ -1190,11 +1163,6 @@ Item {
                     width: parent.width; height: 14
                     Tk.Tx { role: "lbl"; text: "RESET TIMELINE"; tone: FuiTokens.white
                             anchors.left: parent.left }
-                    Tk.Tx {
-                        role: "cap"
-                        anchors { right: parent.right }
-                        text: "T0 = now · auto horizon · diamonds = resets · chips = countdown"
-                    }
                 }
                 Tk.ResetTimeline {
                     width: parent.width
@@ -1221,19 +1189,19 @@ Item {
         Item {
             anchors.fill: parent
 
-            // KEY legend — parked in the skyline's empty upper-left apron,
-            // off the bars (tall days only reach high on the right)
-            Row {
-                id: keyRow
+            // legend — a wrapping Flow with a reserved strip above the bars so
+            // the readable provider labels can never overlay the skyline
+            Flow {
+                id: keyFlow
                 anchors { left: parent.left; top: parent.top; leftMargin: 58
-                          topMargin: 2 }
-                spacing: 10
-                Tk.Tx { role: "code"; text: "KEY" }
+                          right: readRail.left; rightMargin: 12; topMargin: 2 }
+                spacing: 6
                 Repeater {
                     model: root.stackDef
                     delegate: Row {
                         required property var modelData
                         spacing: 4
+                        rightPadding: 8
                         Canvas {
                             width: 20; height: 10
                             anchors.verticalCenter: parent.verticalCenter
@@ -1254,14 +1222,14 @@ Item {
                             }
                             onMdChanged: requestPaint()
                         }
-                        Tk.Tx { role: "micro"; text: String(parent.modelData.key).toUpperCase() }
+                        Tk.Tx { role: "tag"; text: String(parent.modelData.label) }
                     }
                 }
             }
 
             Tk.IsoSkyline {
                 anchors { left: parent.left; right: readRail.left; top: parent.top
-                          bottom: parent.bottom; rightMargin: 10 }
+                          bottom: parent.bottom; rightMargin: 10; topMargin: 46 }
                 rows: root.skyRows(root.nowMs)
                 providers: root.stackDef
             }
@@ -1289,8 +1257,6 @@ Item {
                     Tk.Tx { role: "num"; tone: FuiTokens.ice; font.pixelSize: FuiTokens.px.mid
                             text: "B"; anchors { left: sumNum.right; leftMargin: 6
                                                  bottom: sumNum.bottom; bottomMargin: 4 } }
-                    Tk.Tx { role: "cap"; text: "calc"; anchors { right: parent.right
-                                                                 bottom: sumNum.bottom } }
                 }
                 Tk.MiniTable {
                     width: parent.width
@@ -1317,10 +1283,10 @@ Item {
                                  : vv >= 10 ? vv.toFixed(1) + "M" : vv.toFixed(2) + "M";
                         }
                         return [
-                            { "nm": "avg / day",     "v": fm(s / 30),        "t": "calc" },
-                            { "nm": "median / day",  "v": fm(med),           "t": "calc" },
-                            { "nm": "avg active day","v": nz ? fm(s / nz) : "—", "t": "calc" },
-                            { "nm": "active days",   "v": nz + " / 30",      "t": "calc" },
+                            { "nm": "avg / day",     "v": fm(s / 30),        "t": "" },
+                            { "nm": "median / day",  "v": fm(med),           "t": "" },
+                            { "nm": "avg active day","v": nz ? fm(s / nz) : "—", "t": "" },
+                            { "nm": "active days",   "v": nz + " / 30",      "t": "" },
                             { "nm": "peak day",      "v": fm(mx),            "t": mxl }
                         ];
                     }
@@ -1332,8 +1298,8 @@ Item {
                     header: false
                     rowH: 15
                     columns: [
-                        { "key": "prv", "label": "", "w": 44 },
-                        { "key": "v",   "label": "", "align": "r" },
+                        { "key": "prv", "label": "", "flex": 1 },
+                        { "key": "v",   "label": "", "align": "r", "w": 64 },
                         { "key": "sh",  "label": "", "align": "r", "role": "code", "w": 46 }
                     ]
                     rows: {
@@ -1348,7 +1314,7 @@ Item {
                             var kk = root.stackDef[i].key, vv = pv[kk] || 0;
                             if (vv <= 0) continue;
                             out.push({
-                                "prv": { "v": kk.toUpperCase(), "c": root.stackDef[i].col },
+                                "prv": { "v": root.stackDef[i].label, "c": root.stackDef[i].col },
                                 "v":   { "v": vv >= 1000 ? (vv/1000).toFixed(2)+"B"
                                             : vv.toFixed(1) + "M" },
                                 "sh":  { "v": tot > 0 ? (vv / tot * 100).toFixed(1) + "%" : "—" }
@@ -1358,22 +1324,25 @@ Item {
                     }
                 }
                 Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
-                Tk.Tx { role: "cap"; text: "axis linear · stack OCG+OCLI CLD CDX+SNP DVN HZE" }
-                Tk.Tx { role: "cap"; text: "dashed footprint = zero / no record" }
+                Tk.Tx { role: "cap"; text: "dashed footprint = no record" }
                 Tk.Tx {
                     role: "cap"; tone: FuiTokens.warn
                     visible: text !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
                     text: {
-                        var lags = [], i;
+                        var lags = [];
                         var today = root.isoDay(new Date(root.nowMs || Date.now()));
-                        var map = { "opencode-go": "OCG", "opencode": "OCLI",
-                                    "devin": "DVN", "claude": "CLD", "codex": "CDX" };
+                        var map = { "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
+                                    "devin": "Devin", "claude": "Claude", "codex": "Codex" };
                         for (var pid in map) {
                             var lh = root.lastHist(pid);
-                            if (lh && lh < today) lags.push(map[pid] + " last " + lh.slice(5));
-                            if (!lh) lags.push(map[pid] + " no rows");
+                            if (lh && lh < today) lags.push(map[pid] + " updated " + lh.slice(5));
+                            else if (!lh) lags.push(map[pid] + " no rows");
                         }
-                        return lags.length ? "history lags: " + lags.join(" · ") : "";
+                        return lags.join("\n");
                     }
                 }
             }
@@ -1439,7 +1408,7 @@ Item {
                     text: {
                         var s = root.heatStats(root.heatCells(root.nowMs));
                         return "26w Σ " + (s.sum >= 1000 ? (s.sum / 1000).toFixed(2) + "B"
-                                           : s.sum.toFixed(1) + "M") + " calc";
+                                           : s.sum.toFixed(1) + "M");
                     }
                 }
                 Tk.Tx {
@@ -1451,7 +1420,6 @@ Item {
                             : "max —";
                     }
                 }
-                Tk.Tx { role: "micro"; text: "log steps · all providers + snap" }
             }
         }
     }
@@ -1473,13 +1441,9 @@ Item {
                 grid: true
                 rowH: 16
                 columns: [
-                    { "key": "n",   "label": "#",     "w": 22, "role": "faint" },
-                    { "key": "bot", "label": "BOT",   "w": 62 },
-                    { "key": "ti",  "label": "TITLE", "flex": 1, "role": "dim" },
-                    { "key": "mo",  "label": "MODEL", "w": 88, "role": "faint" },
-                    { "key": "iN",  "label": "IN",    "w": 56, "align": "r" },
-                    { "key": "oN",  "label": "OUT",   "w": 52, "align": "r" },
-                    { "key": "t",   "label": "T",     "w": 40, "align": "r", "role": "faint" }
+                    { "key": "ti",  "label": "SESSION", "flex": 1, "role": "dim" },
+                    { "key": "mo",  "label": "MODEL",   "w": 88, "role": "faint" },
+                    { "key": "iN",  "label": "INPUT",   "w": 70, "align": "r" }
                 ]
                 rows: root.sessionRows()
             }
@@ -1488,13 +1452,6 @@ Item {
                 visible: root.sessionRows().length === 0
                 width: parent.width
                 text: "— awaiting ledger sessions feed —"
-            }
-            Tk.Tx {
-                role: "micro"; tone: FuiTokens.faint
-                visible: root.sessionRows().length === 0
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: "installed ledger emits no top-level sessions[] yet; schema rev. ≥ 33d7cb3 required"
             }
             Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3
                         visible: root.sessionRows().length > 0 }
@@ -1507,7 +1464,7 @@ Item {
                     text: {
                         var s = root.sessionStats();
                         return "top" + root.sessionRows().length + " Σ "
-                             + FuiTokens.fmtTok(s.tin) + " calc";
+                             + FuiTokens.fmtTok(s.tin);
                     }
                 }
                 Tk.Tx {
@@ -1542,14 +1499,11 @@ Item {
                 grid: true
                 rowH: 16
                 columns: [
-                    { "key": "prv",  "label": "PRV",    "w": 66 },
-                    { "key": "kind", "label": "KIND",   "w": 62, "role": "faint" },
-                    { "key": "wi",   "label": "WK IN",  "align": "r" },
-                    { "key": "wo",   "label": "WK OUT", "align": "r" },
-                    { "key": "wc",   "label": "WK $",   "align": "r", "role": "dim" },
-                    { "key": "mi",   "label": "MO IN",  "align": "r" },
-                    { "key": "mo",   "label": "MO OUT", "align": "r" },
-                    { "key": "mc",   "label": "MO $",   "align": "r", "role": "dim" }
+                    { "key": "prv",  "label": "PROVIDER",  "w": 108 },
+                    { "key": "wi",   "label": "WEEK IN",   "align": "r" },
+                    { "key": "wo",   "label": "WEEK OUT",  "align": "r" },
+                    { "key": "mi",   "label": "MONTH IN",  "align": "r" },
+                    { "key": "mc",   "label": "MONTH $",   "align": "r", "role": "dim" }
                 ]
                 rows: root.ledgerRows()
             }
@@ -1561,7 +1515,7 @@ Item {
                     anchors.left: parent.left
                     text: {
                         var s = root.costSumMonth();
-                        return "known cost Σ month " + (s !== null ? root.fmtMoney(s) : "n/a") + " calc";
+                        return "known cost Σ month " + (s !== null ? root.fmtMoney(s) : "n/a");
                     }
                 }
                 Tk.Tx {
@@ -1569,19 +1523,8 @@ Item {
                     text: {
                         var mo = root.bk("opencode", "month");
                         return mo["msgs"] !== undefined && mo["msgs"] !== null
-                               ? "OCG·CLI " + mo["msgs"] + " msgs/mo" : "";
+                               ? "OpenCode CLI " + mo["msgs"] + " msgs/mo" : "";
                     }
-                }
-            }
-            Tk.Tx {
-                role: "cap"; tone: FuiTokens.faint
-                width: parent.width
-                text: {
-                    var mt = root.meta("haze"), ups = mt.upstreams || [];
-                    var s = "haze upstreams " + (ups.length ? ups.join(" + ") : "none");
-                    var f = root.meta("fireworks");
-                    if (f.status) s += " · fireworks " + String(f.status).toLowerCase();
-                    return s;
                 }
             }
             Tk.Tx {
@@ -1591,10 +1534,10 @@ Item {
                 text: {
                     var l = root.laneSplit("codex", "week");
                     var mo = root.bk("codex", "month");
-                    var s = "cdx lanes: wk hrm " + FuiTokens.fmtTok(l.hrm);
-                    if (l.snap !== null) s += " + cli snap " + FuiTokens.fmtTok(l.snap);
-                    if (mo["total"]) s += " · mo snap " + FuiTokens.fmtTok(mo["total"]);
-                    return s + " — disjoint, never summed";
+                    var s = "Codex: " + FuiTokens.fmtTok(l.hrm) + " events";
+                    if (l.snap !== null) s += " + " + FuiTokens.fmtTok(l.snap) + " snapshot";
+                    if (mo["total"]) s += " · month snapshot " + FuiTokens.fmtTok(mo["total"]);
+                    return s + " — separate lanes, never summed";
                 }
             }
         }

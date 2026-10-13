@@ -1,17 +1,22 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC
 
 // FuiFrame.qml — chamfered/bracketed instrument panel (M1 .frame).
 // Hairline box + optional corner registration brackets + header strip
 // (CODE / TITLE ......... meta). `live` flips border + brackets to acid —
 // at most one live frame per deck (acid means live state only).
+// Instrument codes + source metadata are quiet by default
+// (showDiagnostics:false); the same text stays available as a header
+// hover tooltip.
 Item {
     id: root
 
     property string code: ""        // instrument id, e.g. "CRW-TL"
     property string title: ""       // e.g. "CREW ACTIVITY" (auto-uppercased)
     property string meta: ""        // right-aligned src/stamp string
+    property bool showDiagnostics: false   // code + meta visible in the header
     property bool live: false
     property bool bare: false       // no fill, no border (brackets + header only)
     property bool brackets: true
@@ -86,7 +91,7 @@ Item {
 
         Text {
             id: codeTxt
-            visible: root.code !== ""
+            visible: root.code !== "" && root.showDiagnostics
             anchors { left: parent.left; leftMargin: root.pad; verticalCenter: parent.verticalCenter }
             text: root.code
             color: FuiTokens.ice
@@ -95,10 +100,14 @@ Item {
             font.letterSpacing: FuiTokens.ls.tag
         }
         Text {
+            id: titleTxt
             visible: root.title !== ""
             anchors { left: codeTxt.visible ? codeTxt.right : parent.left
                       leftMargin: codeTxt.visible ? 10 : root.pad
+                      right: metaTxt.visible ? metaTxt.left : parent.right
+                      rightMargin: metaTxt.visible ? 8 : root.pad
                       verticalCenter: parent.verticalCenter }
+            elide: Text.ElideRight
             text: root.title.toUpperCase()
             color: FuiTokens.white
             font.family: FuiTokens.display
@@ -106,13 +115,35 @@ Item {
             font.letterSpacing: FuiTokens.ls.title
         }
         Text {
-            visible: root.meta !== ""
+            id: metaTxt
+            visible: root.meta !== "" && root.showDiagnostics
             anchors { right: parent.right; rightMargin: root.pad; verticalCenter: parent.verticalCenter }
             text: root.meta
             color: FuiTokens.mute
             font.family: FuiTokens.mono
             font.pixelSize: FuiTokens.px.code
             font.letterSpacing: FuiTokens.ls.cap
+        }
+        // diagnostics stay reachable: hovering the header shows code + meta
+        MouseArea {
+            id: headerHover
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+        }
+        QQC.ToolTip {
+            // child of the header strip: opens just below it, non-modal,
+            // takes no mouse input — the deck's drag pad still sees presses
+            y: header.height + 4
+            visible: headerHover.containsMouse && text !== ""
+            delay: 250
+            text: {
+                var parts = [];
+                if (root.code !== "") parts.push(root.code);
+                if (root.title !== "") parts.push(root.title);
+                if (root.meta !== "") parts.push(root.meta);
+                return parts.join("  ·  ");
+            }
         }
         Rectangle {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -123,6 +154,7 @@ Item {
 
     Item {
         id: content
+        clip: true
         anchors {
             left: parent.left; right: parent.right
             top: parent.top; bottom: parent.bottom

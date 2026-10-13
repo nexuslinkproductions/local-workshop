@@ -15,12 +15,12 @@ Item {
     property var dash: null            // null = solid | [1.5,2.5] dotted | "double"
     property string valueText: ""      // "1.46B" | "—"
     property var share: null           // 0..1 | null
-    property string shareSuffix: ""    // "calc" etc.
     property string costLine: ""
     property string extraLine: ""
     property var spark: []             // 30-day series
     property string sparkMax: ""       // "max 626M 10-04"
     property bool warned: false        // warn-toned extra line (history lags)
+    property bool showDiagnostics: false   // instrument code + verbose captions
 
     implicitWidth: 276
     implicitHeight: col.height
@@ -62,9 +62,14 @@ Item {
             Tx {
                 role: "lbl"; text: root.name; tone: FuiTokens.white
                 font.pixelSize: FuiTokens.px.body
+                width: Math.min(implicitWidth,
+                                parent.width - swatch.width - 8
+                                - (codeTxt.visible ? codeTxt.implicitWidth + 8 : 0))
                 anchors { left: swatch.right; leftMargin: 8; verticalCenter: parent.verticalCenter }
             }
             Tx {
+                id: codeTxt
+                visible: root.showDiagnostics && root.code !== ""
                 role: "code"; text: root.code
                 anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             }
@@ -77,6 +82,7 @@ Item {
                 role: "num"
                 text: root.valueText
                 font.pixelSize: FuiTokens.px.big + 6
+                width: Math.min(implicitWidth, parent.width * 0.62)
                 anchors { left: parent.left; verticalCenter: parent.verticalCenter }
             }
             Tx {
@@ -85,11 +91,11 @@ Item {
                     if (root.share === null || root.share === undefined
                             || !isFinite(Number(root.share)))
                         return FuiTokens.unknownGlyph;
-                    return (Number(root.share) * 100).toFixed(2) + "%" +
-                           (root.shareSuffix !== "" ? " " + root.shareSuffix : "");
+                    return (Number(root.share) * 100).toFixed(2) + "%";
                 }
                 tone: FuiTokens.ice
                 font.pixelSize: FuiTokens.px.mid
+                width: Math.min(implicitWidth, parent.width * 0.34)
                 anchors { right: parent.right; bottom: parent.bottom; bottomMargin: 4 }
             }
         }
@@ -103,9 +109,16 @@ Item {
             trackH: 8
         }
 
-        Tx { role: "cap"; text: root.costLine; tone: FuiTokens.dim; visible: text !== "" }
         Tx {
-            role: "cap"; text: root.extraLine; visible: text !== ""
+            role: "cap"; text: root.costLine; tone: FuiTokens.dim
+            width: parent.width
+            visible: text !== ""
+                     && (root.showDiagnostics || text.indexOf("n/a") < 0)
+        }
+        Tx {
+            role: "cap"; text: root.extraLine
+            width: parent.width
+            visible: text !== "" && (root.warned || root.showDiagnostics)
             tone: root.warned ? FuiTokens.warn : FuiTokens.mute
         }
 

@@ -19,50 +19,55 @@ Item {
     }
 
     readonly property var keys: [
-        { "label": "SCREENSHOT", "kb": "PRINT", "gl": FuiTokens.ico.shot,
+        { "label": "Screenshot", "kb": "PRINT", "gl": FuiTokens.ico.shot,
           "cmd": "omarchy-capture-screenshot",
           "argv": ["omarchy-capture-screenshot"] },
-        { "label": "REGION CAPTURE", "kb": "SUPER+SHIFT+S", "gl": FuiTokens.ico.region,
+        { "label": "Region capture", "kb": "SUPER+SHIFT+S", "gl": FuiTokens.ico.region,
           "cmd": "omarchy capture screenshot region",
           "argv": ["omarchy", "capture", "screenshot", "region"] },
-        { "label": "OCR TEXT", "kb": "SUPER+CTRL+PRINT", "gl": "\uf031",
+        { "label": "OCR text", "kb": "SUPER+CTRL+PRINT", "gl": "\uf031",
           "cmd": "omarchy-capture-text",
           "argv": ["omarchy-capture-text"] },
-        { "label": "COLOR PICKER", "kb": "SUPER+PRINT", "gl": FuiTokens.ico.pick,
+        { "label": "Color picker", "kb": "SUPER+PRINT", "gl": FuiTokens.ico.pick,
           "cmd": "hyprpicker -a",
           "argv": ["hyprpicker", "-a"] },
-        { "label": "SCREEN RECORD", "kb": "ALT+PRINT", "gl": FuiTokens.ico.rec,
+        { "label": "Record screen", "kb": "ALT+PRINT", "gl": FuiTokens.ico.rec,
           "cmd": "omarchy-capture-screenrec.",
           "shell": "omarchy-capture-screenrecording --stop-recording || omarchy-menu toggle trigger.capture.screenrecord" },
-        { "label": "CAPTURE MENU", "kb": "SUPER+CTRL+C", "gl": FuiTokens.ico.menu,
+        { "label": "Capture menu", "kb": "SUPER+CTRL+C", "gl": FuiTokens.ico.menu,
           "cmd": "omarchy-menu toggle capture",
           "argv": ["omarchy-menu", "toggle", "capture"] },
-        { "label": "CLIPBOARD", "kb": "SUPER+CTRL+V", "gl": FuiTokens.ico.clip,
+        { "label": "Clipboard", "kb": "SUPER+CTRL+V", "gl": FuiTokens.ico.clip,
           "cmd": "omarchy.clipboard",
           "argv": ["omarchy-shell", "shell", "toggle", "omarchy.clipboard"] },
-        { "label": "AI CENTER", "kb": "unbound", "gl": FuiTokens.ico.folder,
+        { "label": "AI center", "kb": "unbound", "gl": FuiTokens.ico.folder,
           "cmd": "~/NEXUS_AI_CENTER",
           "argv": ["uwsm-app", "--", "nautilus",
                    Quickshell.env("HOME") + "/NEXUS_AI_CENTER"] },
-        { "label": "RELOAD HUD", "kb": "unbound", "gl": FuiTokens.ico.sync,
+        { "label": "Reload HUD", "kb": "unbound", "gl": FuiTokens.ico.sync,
           "cmd": "nexuslink.hud reload",
           "argv": ["qs", "ipc", "-p", "/usr/share/omarchy/shell",
                    "call", "nexuslink.hud", "reload"] },
-        { "label": "KEYBINDINGS", "kb": "SUPER+K", "gl": "\uf11c",
+        { "label": "Keybindings", "kb": "SUPER+K", "gl": "\uf11c",
           "cmd": "omarchy-menu-keybindings",
           "argv": ["omarchy-menu-keybindings"] },
-        { "label": "LOCK", "kb": "SUPER+CTRL+L", "gl": FuiTokens.ico.lock,
+        { "label": "Lock", "kb": "SUPER+CTRL+L", "gl": FuiTokens.ico.lock,
           "cmd": "omarchy-system-lock", "danger": false,
           "argv": ["omarchy-system-lock"] },
-        { "label": "POWER MENU", "kb": "SUPER+ESCAPE", "gl": FuiTokens.ico.power,
+        { "label": "Power menu", "kb": "SUPER+ESCAPE", "gl": FuiTokens.ico.power,
           "cmd": "omarchy-menu toggle system", "danger": true,
           "argv": ["omarchy-menu", "toggle", "system"] }
     ]
 
+    // 12 rows share the panel height: 12px inset + 6px gaps. Target minimum
+    // is 44px but the floor is never forced — a shorter panel just gets
+    // shorter keys, every action stays reachable.
+    readonly property real rowH: Math.max(1, (root.height - 24 - 11 * 6) / 12)
+
     Column {
-        x: 12; y: 40
+        x: 12; y: 12
         width: parent.width - 24
-        spacing: 7
+        spacing: 6
         Repeater {
             model: root.keys
             delegate: ActionKey {
@@ -70,12 +75,10 @@ Item {
                 required property int index
                 required property var modelData
                 width: parent.width
-                height: Math.max(60, (root.height - 40 - 34 - 11 * 7) / 12)
+                height: root.rowH
                 label: String(key.modelData.label)
                 glyph: String(key.modelData.gl)
                 keybind: String(key.modelData.kb)
-                code: "QA-" + (key.index + 1 < 10 ? "0" : "") + (key.index + 1)
-                command: String(key.modelData.cmd)
                 danger: key.modelData.danger === true
                 onActivated: {
                     if (key.modelData.shell)
@@ -85,14 +88,5 @@ Item {
                 }
             }
         }
-    }
-
-    Text {
-        x: 16
-        anchors { bottom: parent.bottom; bottomMargin: 12 }
-        text: "src: omarchy keybindings"
-        color: FuiTokens.mute
-        font.family: FuiTokens.mono
-        font.pixelSize: FuiTokens.px.micro
     }
 }

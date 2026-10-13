@@ -3,10 +3,12 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import ".."
 
-// NetPci.qml — NET-PCI frame content: interface table (IF STATE ADDR HW)
+// NetPci.qml — NET-PCI frame content: interface table (IF STATE ADDR)
 // with since-boot counters + live rate, and the PCIe link table
-// (BDF DEVICE GEN WIDTH x1-x16 segment strip). All live-fed: nic state from
-// dev_nic_*_up, addresses from `ip`, gen/width from dev_pcie_* via Topology.
+// (DEVICE LINK LANES x1-x16 segment strip, adaptive). All live-fed: nic
+// state from dev_nic_*_up, addresses from `ip`, gen/width from dev_pcie_*
+// via Topology. Column widths are fractions of the panel — nothing is
+// pinned past the frame edge.
 Item {
     id: root
 
@@ -59,14 +61,7 @@ Item {
                 ? (String(up) === "1" || String(up).toLowerCase() === "up" ? "UP" : "DOWN")
                 : FuiTokens.unknownGlyph;
             var addr = root.poll !== null && root.poll.ifAddrs[ifn] !== undefined ? root.poll.ifAddrs[ifn] : "";
-            var hw = "";
-            if (ifn === "enp15s0") hw = "RTL8125 2.5G";
-            else if (ifn === "wlp16s0") hw = "MT7922 ax";
-            else if (/^docker|^br-/.test(ifn)) hw = "bridge";
-            else if (/^veth/.test(ifn)) hw = "veth";
-            else if (/^wlan|^wlp/.test(ifn)) hw = "wifi";
-            out.push({ "if": ifn, "st": st, "addr": addr !== "" ? addr : (st === "DOWN" ? "no carrier" : FuiTokens.unknownGlyph),
-                       "hw": hw });
+            out.push({ "if": ifn, "st": st, "addr": addr !== "" ? addr : (st === "DOWN" ? "no carrier" : FuiTokens.unknownGlyph) });
         }
         return out;
     }
@@ -108,15 +103,23 @@ Item {
         id: netCol
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         width: Math.round(parent.width * 0.45)
+        readonly property real cIf: 0
+        readonly property real cSt: width * 0.30
+        readonly property real cAddr: width * 0.46
+        readonly property real wIf: width * 0.30
+        readonly property real wSt: width * 0.16
+        readonly property real wAddr: width - cAddr
         Item {
             id: nh; height: 18
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Repeater {
-                model: [["IF", 0, 62], ["STATE", 68, 60], ["ADDR", 134, 112], ["HW", 252, 0]]
+                model: [["INTERFACE", netCol.cIf, netCol.wIf],
+                        ["STATE", netCol.cSt, netCol.wSt],
+                        ["ADDRESS", netCol.cAddr, netCol.wAddr]]
                 delegate: Text {
                     required property var modelData
                     x: modelData[1]
-                    width: modelData[2] > 0 ? modelData[2] : implicitWidth
+                    width: modelData[2]
                     elide: Text.ElideRight
                     text: modelData[0]
                     color: FuiTokens.mute
@@ -136,10 +139,9 @@ Item {
                     required property var modelData
                     width: netCol.width
                     height: 19
-                    Text { x: 0; width: 62; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData["if"]; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 68; width: 50; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.st; color: ifRow.modelData.st === "UP" ? FuiTokens.acid : FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
-                    Text { x: 134; width: 112; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.addr; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 252; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.hw; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: netCol.cIf; width: netCol.wIf; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData["if"]; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: netCol.cSt; width: netCol.wSt; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.st; color: ifRow.modelData.st === "UP" ? FuiTokens.acid : FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: netCol.cAddr; width: netCol.wAddr; anchors.verticalCenter: parent.verticalCenter; text: ifRow.modelData.addr; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
                     Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair3 }
                 }
             }
@@ -163,15 +165,23 @@ Item {
         id: pcieCol
         anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
         width: Math.round(parent.width * 0.52)
+        readonly property real cDev: 0
+        readonly property real cLink: width * 0.50
+        readonly property real cLanes: width * 0.72
+        readonly property real wDev: width * 0.50
+        readonly property real wLink: width * 0.22
+        readonly property real wLanes: width - cLanes
         Item {
             id: ph; height: 18
             anchors { left: parent.left; right: parent.right; top: parent.top }
             Repeater {
-                model: [["BDF", 0, 52], ["DEVICE", 56, 138], ["GEN", 200, 44], ["WIDTH x1-x16", 250, 0]]
+                model: [["DEVICE", pcieCol.cDev, pcieCol.wDev],
+                        ["LINK", pcieCol.cLink, pcieCol.wLink],
+                        ["LANES", pcieCol.cLanes, pcieCol.wLanes]]
                 delegate: Text {
                     required property var modelData
                     x: modelData[1]
-                    width: modelData[2] > 0 ? modelData[2] : implicitWidth
+                    width: modelData[2]
                     elide: Text.ElideRight
                     text: modelData[0]
                     color: FuiTokens.mute
@@ -191,31 +201,51 @@ Item {
                     required property var modelData
                     width: pcieCol.width
                     height: 20
-                    Text { x: 0; width: 52; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.bdf; color: FuiTokens.mute; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
-                    Text { x: 56; width: 138; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.nm; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
-                    Text { x: 200; width: 44; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.gen !== "" ? pcieRow.modelData.gen : FuiTokens.unknownGlyph; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body }
-                    Canvas {
-                        x: 250; width: 112; height: 12
+                    // lane strip scales its pitch to the column; below the
+                    // legibility floor it collapses to the bare "xN" text
+                    readonly property real laneW: pcieCol.wLanes
+                    readonly property real segPitch: Math.min(7, Math.max(0, (laneW - 30) / 16))
+                    readonly property bool showSeg: segPitch * 16 >= 40
+                    Text { x: pcieCol.cDev; width: pcieCol.wDev - 4; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.nm; color: FuiTokens.white; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Text { x: pcieCol.cLink; width: pcieCol.wLink; anchors.verticalCenter: parent.verticalCenter; text: pcieRow.modelData.gen !== "" ? pcieRow.modelData.gen : FuiTokens.unknownGlyph; color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body; elide: Text.ElideRight }
+                    Item {
+                        x: pcieCol.cLanes; width: pcieRow.laneW
                         anchors.verticalCenter: parent.verticalCenter
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            ctx.clearRect(0, 0, width, height);
-                            var wd = pcieRow.modelData.wd;
-                            for (var k = 0; k < 16; k++) {
-                                ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.45));
-                                ctx.lineWidth = FuiTokens.lwHair;
-                                ctx.strokeRect(k * 7 + 0.5, 2, 5.5, 8);
-                                if (wd !== null && k < wd) {
-                                    ctx.fillStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.8));
-                                    ctx.fillRect(k * 7 + 0.5, 2, 5.5, 8);
+                        height: 12
+                        Canvas {
+                            visible: pcieRow.showSeg
+                            width: pcieRow.segPitch * 16; height: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                var wd = pcieRow.modelData.wd;
+                                var pitch = pcieRow.segPitch;
+                                var sw = Math.max(2, pitch - 1.5);
+                                for (var k = 0; k < 16; k++) {
+                                    ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.45));
+                                    ctx.lineWidth = FuiTokens.lwHair;
+                                    ctx.strokeRect(k * pitch + 0.5, 2, sw, 8);
+                                    if (wd !== null && k < wd) {
+                                        ctx.fillStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.azure, 0.8));
+                                        ctx.fillRect(k * pitch + 0.5, 2, sw, 8);
+                                    }
                                 }
                             }
+                            Connections {
+                                target: pcieRow
+                                function onSegPitchChanged() { laneCanvas.requestPaint(); }
+                            }
+                            id: laneCanvas
                         }
-                    }
-                    Text {
-                        anchors { left: parent.left; leftMargin: 366; verticalCenter: parent.verticalCenter }
-                        text: pcieRow.modelData.wd !== null ? "x" + pcieRow.modelData.wd : FuiTokens.unknownGlyph
-                        color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
+                        Text {
+                            x: pcieRow.showSeg ? laneCanvas.width + 6 : 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(implicitWidth, parent.width - x)
+                            elide: Text.ElideRight
+                            text: pcieRow.modelData.wd !== null ? "x" + pcieRow.modelData.wd : FuiTokens.unknownGlyph
+                            color: FuiTokens.dim; font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
+                        }
                     }
                     Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: FuiTokens.hair3 }
                 }

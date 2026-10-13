@@ -287,24 +287,6 @@ Item {
         font.family: FuiTokens.display
         font.pixelSize: 30 * Math.max(0.6, root.s)
     }
-    Text {
-        x: root.dcx - 150; y: root.dcy + 38 * root.s
-        width: 300; horizontalAlignment: Text.AlignHCenter
-        text: "APPS " + root.nApps + " · FILES " + FuiTokens.unknownGlyph
-              + " · CMDS " + FuiTokens.unknownGlyph
-        color: FuiTokens.mute
-        font.family: FuiTokens.mono
-        font.pixelSize: FuiTokens.px.micro
-    }
-    Text {
-        x: root.dcx - 150; y: root.dcy + 54 * root.s
-        width: 300; horizontalAlignment: Text.AlignHCenter
-        text: "rank: launches desc"
-        color: FuiTokens.mute
-        font.family: FuiTokens.mono
-        font.pixelSize: FuiTokens.px.micro
-    }
-
     // ------------------------------------------------------------- search field
     Item {
         x: root.dcx - 172 * root.s

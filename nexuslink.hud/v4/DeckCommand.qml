@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell.Io
+import "background" as Bg
 import "command" as Cmd
 
 // DeckCommand.qml — M1 DP-1 command deck. Panel layout follows
@@ -100,6 +101,14 @@ Item {
 
     Rectangle { anchors.fill: parent; color: FuiTokens.bg }
 
+    Bg.PixelLogo {                  // knot watermark behind grid + frames
+        width: Math.min(root.width * 0.45, root.height * 0.72)
+        height: width
+        x: root.width * 0.5 - width / 2
+        y: root.height * 0.48 - height / 2
+        shown: root.shown
+    }
+
     Canvas {                        // 16/128 px schematic grid (paint once per size)
         id: grid
         anchors.fill: parent
@@ -148,7 +157,7 @@ Item {
         x: root.mx; y: root.row1Y
         width: root.tlW; height: root.row1H
         code: "CRW-TL"
-        title: "Crew activity // 6h swim-lane"
+        title: "Crew activity"
         meta: "src: crew.json · " + (root.crew.generated
                                      ? FuiTokens.fmtHm(root.crew.generated)
                                      : FuiTokens.unknownGlyph)
@@ -164,7 +173,7 @@ Item {
         x: root.mx + root.tlW + root.gx; y: root.row1Y
         width: root.orW; height: root.row1H
         code: "CRW-OR"
-        title: "Crew orbit // model lanes"
+        title: "Models"
         meta: "src: crew.json + tokens.json · " + (root.crew.generated
                                                    ? FuiTokens.fmtHm(root.crew.generated)
                                                    : FuiTokens.unknownGlyph)
@@ -180,7 +189,7 @@ Item {
         x: root.mx; y: root.appY
         width: root.dlW; height: root.appH
         code: "APP-DL"
-        title: "Launcher // search dial + pinned targets"
+        title: "Launcher"
         meta: "src: /usr/share/applications · appuse.json"
         live: true                        // the deck's one live frame: launcher
         Cmd.AppDial {
@@ -198,7 +207,7 @@ Item {
         x: root.mx + root.dlW + root.gx; y: root.appY
         width: root.rkW; height: root.appH
         code: "APP-RK"
-        title: "Most used // ladder"
+        title: "Most used"
         meta: "src: appuse.json"
         Cmd.AppLadder {
             anchors { fill: parent; margins: 2 }
@@ -215,7 +224,7 @@ Item {
         x: root.ixX; y: root.appY
         width: root.ixW; height: root.appH
         code: "APP-IX"
-        title: "App index"
+        title: "Apps"
         meta: "src: .desktop Categories"
         Cmd.AppIndex {
             anchors { fill: parent; margins: 2 }
@@ -240,37 +249,4 @@ Item {
         }
     }
 
-    // ================================================== footer strip ======
-    Item {
-        x: root.mx
-        anchors { top: parent.bottom; topMargin: -root.height * (30 / 1440) }
-        width: root.width - 2 * root.mx
-        height: root.height * (18 / 1440)
-        Row {
-            spacing: 24
-            Repeater {
-                model: [
-                    "M1 / " + root.screenName + " / " + Math.round(root.width)
-                        + "x" + Math.round(root.height) + " / layer: background",
-                    "grid " + FuiTokens.gridMinor + " / " + FuiTokens.gridMajor + " px",
-                    "render " + Qt.formatDateTime(new Date(), "dd.MM.yyyy HH:mm")
-                ]
-                delegate: Text {
-                    required property string modelData
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: modelData
-                    color: FuiTokens.mute
-                    font.family: FuiTokens.mono
-                    font.pixelSize: FuiTokens.px.micro
-                }
-            }
-        }
-        Text {
-            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-            text: "NX-HUD-M1 // SHEET 1 OF 3"
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.micro
-        }
-    }
 }

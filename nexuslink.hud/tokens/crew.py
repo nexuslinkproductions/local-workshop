@@ -129,11 +129,16 @@ def scan_store(db, name, cfg, cutoff, now):
             "SELECT MAX(%s) FROM sessions WHERE %s" % (LAST, WHERE)).fetchone()
         if last and last[0] is not None:
             bot["last_active"] = float(last[0])
+        current_model = "model" if "model" in cols else "NULL"
+        current_provider = "billing_provider" if "billing_provider" in cols else "NULL"
         cur = con.execute(
-            "SELECT title FROM sessions WHERE %s "
-            "ORDER BY %s DESC LIMIT 1" % (WHERE, LAST)).fetchone()
+            "SELECT title, %s, %s FROM sessions WHERE %s "
+            "ORDER BY %s DESC LIMIT 1"
+            % (current_model, current_provider, WHERE, LAST)).fetchone()
         if cur:
             bot["current_title"] = cur[0]
+            bot["model"] = cur[1] or model
+            bot["provider"] = cur[2] or provider
         n24, c24, t24 = con.execute(
             "SELECT COUNT(*), COALESCE(SUM(api_call_count),0),"
             " COALESCE(SUM(%s),0) FROM sessions"

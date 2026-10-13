@@ -1,12 +1,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls as QQC
 import ".."
 
-// ActionKey.qml — tall QA key (M1 action rail): octagon plate, glyph chip +
-// keybind hint on the top row, big label, QA-NN serial + command caption.
-// Local to command/ because EngravedButton is a single-row control and the
-// rail spec is a three-row cell.
+// ActionKey.qml — tall QA key (M1 action rail): octagon plate with the glyph
+// chip + one/two-line action name centred in the cell. Serials and raw
+// command strings are never rendered; the keybind lives in a hover tooltip
+// (hidden when "unbound"). Local to command/ because EngravedButton is a
+// single-row control.
 Item {
     id: root
 
@@ -52,12 +54,6 @@ Item {
                                         : FuiTokens.tone(FuiTokens.ice, 0.5)));
             ctx.lineWidth = root.hov ? 1.5 : 1;
             ctx.stroke();
-            // mid hairline under the glyph/keybind row
-            ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.1));
-            ctx.beginPath();
-            ctx.moveTo(10.5, 29.5);
-            ctx.lineTo(w - 10.5, 29.5);
-            ctx.stroke();
         }
         Connections {
             target: root
@@ -69,12 +65,13 @@ Item {
         onHeightChanged: requestPaint()
     }
 
-    Row {                          // glyph chip + keybind
-        x: 12; y: 7
-        width: parent.width - 24
-        spacing: 8
+    Row {                          // glyph chip + action name, centred in the cell
+        anchors.centerIn: parent    // 8px horizontal insets — narrow QA column
+        width: parent.width - 16
+        spacing: 6
         Rectangle {
-            width: 20; height: 15
+            anchors.verticalCenter: parent.verticalCenter
+            width: 14; height: 14
             color: "transparent"
             border.width: 1
             border.color: FuiTokens.hair
@@ -83,52 +80,28 @@ Item {
                 text: root.glyph
                 color: FuiTokens.ice
                 font.family: FuiTokens.icons
-                font.pixelSize: 11
+                font.pixelSize: 9
             }
         }
-        Text {
+        Text {                     // plain text; shrinks 11->10 to fit, 2 lines max
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 28
-            horizontalAlignment: Text.AlignRight
-            text: root.keybind
-            color: root.keybind === "unbound" ? FuiTokens.faint : FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.micro
-        }
-    }
-    Text {                         // label — wraps at word boundaries, 2 lines max
-        x: 12; y: 36
-        width: parent.width - 24
-        elide: Text.ElideRight
-        wrapMode: Text.WordWrap
-        maximumLineCount: 2
-        lineHeight: 0.95
-        text: root.label
-        color: root.danger ? FuiTokens.warn : (root.hov ? FuiTokens.white : FuiTokens.txt)
-        font.family: FuiTokens.display
-        font.pixelSize: FuiTokens.px.cap
-        font.letterSpacing: 1.0
-    }
-    Row {                          // serial + command caption
-        anchors { left: parent.left; leftMargin: 12
-                  bottom: parent.bottom; bottomMargin: 9 }
-        width: parent.width - 24
-        spacing: 6
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.code
-            color: FuiTokens.ice
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.micro
-        }
-        Text {
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 40
+            width: parent.width - 20
+            height: root.height - 16
+            textFormat: Text.PlainText
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
-            text: root.command
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.micro
+            // Text.Wrap — word wrap with character fallback so long single
+            // words ("Keybindings") still fill two lines instead of eliding
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            lineHeight: 0.95
+            fontSizeMode: Text.Fit
+            minimumPixelSize: 10
+            text: root.label
+            color: root.danger ? FuiTokens.warn : (root.hov ? FuiTokens.white : FuiTokens.txt)
+            font.family: FuiTokens.display
+            font.pixelSize: FuiTokens.px.cap
+            font.letterSpacing: 1.0
         }
     }
 
@@ -142,5 +115,12 @@ Item {
         onReleased: root.pressedState = false
         onCanceled: root.pressedState = false
         onClicked: root.activated()
+    }
+
+    QQC.ToolTip {                  // keybind on hover only; "unbound" stays hidden
+        visible: root.hov && root.keybind !== "" && root.keybind !== "unbound"
+        delay: 250
+        text: root.keybind
+        font.family: FuiTokens.mono
     }
 }

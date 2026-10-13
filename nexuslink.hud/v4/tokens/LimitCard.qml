@@ -10,6 +10,7 @@ Item {
     id: root
 
     property string code: ""          // LIM-CLD-WK
+    property bool showCode: false     // instrument code quiet by default
     property string sub: ""           // WEEKLY 7D
     property string name: ""          // CLAUDE
     property string stag: ""          // E429 | A401 | N/A | OK
@@ -47,13 +48,16 @@ Item {
             id: headRow
             width: parent.width
             spacing: 8
-            Tx { id: codeTx; role: "code"; text: root.code; font.pixelSize: FuiTokens.px.micro + 1 }
+            Tx { id: codeTx; role: "code"; text: root.code
+                 font.pixelSize: FuiTokens.px.micro + 1
+                 visible: root.showCode && root.code !== "" }
             Tx {
                 role: "cap"
                 text: root.sub
                 font.pixelSize: FuiTokens.px.micro + 1
-                width: Math.max(10, headRow.width - codeTx.implicitWidth
-                                - tagTx.implicitWidth - 2 * headRow.spacing)
+                width: Math.max(10, headRow.width
+                                - (codeTx.visible ? codeTx.implicitWidth + headRow.spacing : 0)
+                                - tagTx.implicitWidth - headRow.spacing)
             }
             Tx {
                 id: tagTx

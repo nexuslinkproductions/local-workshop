@@ -11,6 +11,7 @@ Item {
     id: root
 
     property string code: ""
+    property bool showCode: false       // instrument code tag is quiet by default
 
     // gauge (aliased through to the embedded dial)
     property alias gaugeV: gauge.value
@@ -68,6 +69,7 @@ Item {
 
     Text {
         id: codeTxt
+        visible: root.showCode && root.code !== ""
         x: 8; y: 5
         text: root.code
         color: FuiTokens.mute
@@ -101,6 +103,8 @@ Item {
                     text: statRow.modelData.l
                     color: FuiTokens.mute
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, parent.width * 0.45)
                 }
                 Text {
                     anchors.right: parent.right
@@ -108,7 +112,7 @@ Item {
                     color: statRow.modelData.vc !== undefined ? statRow.modelData.vc : FuiTokens.dim
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, parent.width - 40)
+                    width: Math.min(implicitWidth, parent.width * 0.52)
                 }
             }
         }
@@ -121,6 +125,8 @@ Item {
                   topMargin: 24 + Math.min(root.statRows.length, 6) * 17 + 14 }
         spacing: 3
         Text {
+            width: barCol.width
+            elide: Text.ElideRight
             text: root.barsCap
             color: FuiTokens.mute
             font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.tag
@@ -143,6 +149,8 @@ Item {
         anchors { left: statCol.left; right: statCol.right; bottom: parent.bottom; bottomMargin: 10 }
         spacing: 2
         Text {
+            width: sparkCol.width
+            elide: Text.ElideRight
             text: root.sparkCap
             color: FuiTokens.mute
             font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.tag
@@ -167,16 +175,19 @@ Item {
                 required property var modelData
                 spacing: 6
                 Text {
+                    id: ftLbl
                     text: ftRow.modelData.l
                     color: FuiTokens.mute
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
+                    elide: Text.ElideRight
+                    width: Math.min(implicitWidth, 52)
                 }
                 Text {
                     text: ftRow.modelData.v
                     color: ftRow.modelData.vc !== undefined ? ftRow.modelData.vc : FuiTokens.dim
                     font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
                     elide: Text.ElideRight
-                    width: Math.min(implicitWidth, statCol.x - 68)
+                    width: Math.min(implicitWidth, statCol.x - 10 - ftLbl.width - 6)
                 }
             }
         }

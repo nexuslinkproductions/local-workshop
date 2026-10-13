@@ -5,17 +5,23 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
+import "ScreenRoles.js" as ScreenRoles
+import "GpuCards.js" as GpuCards
+
 // HudV4.qml — lane H integration root for the NexusHud.V4 module.
 //
 // One PanelWindow per Hyprland output on the wlr BACKGROUND layer with
 // ExclusionMode.Auto and no keyboard focus (the chrome-cybercore HUD is a
 // read-only desktop surface; the Navigator overlay owns focus when open).
 //
-// Role map (M1 kit — docs/m1):
-//   DP-1      command  -> DeckCommand (crew + launch, SwimLane hero)
-//   DP-2      hardware -> DeckTokens  (token flux, concentric limit rings)
-//   HDMI-A-3  ops      -> DeckSystem  (device topology + system ledger)
-//   unknown   -> command fallback so no output ever renders empty
+// Role map (M1 kit — docs/m1): roles follow display identity (EDID model /
+// serial via ScreenRoles.js), never the connector name — connector names can
+// renumber after GPU/topology changes and must not move a role.
+//   Samsung LC27G7xT  command  -> DeckCommand (crew + launch, SwimLane hero)
+//   HP E24i G4        hardware -> DeckTokens  (token flux, concentric limit rings)
+//   HP Z24n G3        ops      -> DeckSystem  (device topology + system ledger)
+//   Nreal/XREAL       excluded -> glasses get no HUD window (see hudScreens)
+//   unknown           -> command fallback so no output ever renders empty
 // (the v4 screens CommandHub/BoardView/Workbench stay in the tree and in
 // qmldir for reference; they are no longer instantiated)
 //
@@ -37,7 +43,7 @@ import Quickshell.Wayland
 // absent so the screens can render Style.unknownGlyph.
 //
 // IPC (`omarchy-shell nexuslink.hud <m>`): status panels say focus move
-// resize show hide layout version selftest framesAlive reload.
+// resize show hide layout version selftest roleprobe framesAlive gpus reload.
 // `nexuslink.nav` belongs to Navigator.qml — do not re-declare it.
 
 Item {
@@ -100,6 +106,16 @@ Item {
     property bool sayFlash: false
 
     property var navScreenObj: null
+
+    // Outputs that get a HUD window: every connected screen minus glasses
+    // (XREAL/Nreal). Re-evaluates on Quickshell.screensChanged.
+    readonly property var hudScreens: {
+        var all = Quickshell.screens
+        var list = []
+        for (var i = 0; i < all.length; i++)
+            if (ScreenRoles.hasHudWindow(all[i])) list.push(all[i])
+        return list
+    }
 
     // ------------------------------------------------------------- helpers
     function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)) }
@@ -362,6 +378,15 @@ Item {
         triggeredOnStart: true
         onTriggered: {
             if (!ledgerProc.running) ledgerProc.running = true
+        }
+    }
+    Timer {
+        id: crewTimer
+        interval: 10000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
             if (!crewProc.running) crewProc.running = true
         }
     }
@@ -432,15 +457,15 @@ Item {
     // --------------------------------------------------------- IPC routing
     function winForPanel(pid) {
         var ins = winVariants.instances
-        var aliases = { "command": "hub", "hardware": "board", "ops": "bench",
-                        "dp-1": "hub", "dp-2": "board", "hdmi-a-3": "bench" }
+        var aliases = { "command": "hub", "hardware": "board", "ops": "bench" }
         var want = String(pid)
         var alias = aliases[want.toLowerCase()]
         for (var i = 0; i < ins.length; i++) {
             var w = ins[i]
             if (w !== null && w.roleIds !== undefined
                     && (w.roleIds.indexOf(want) >= 0
-                        || (alias !== undefined && w.roleIds.indexOf(alias) >= 0)))
+                        || (alias !== undefined && w.roleIds.indexOf(alias) >= 0)
+                        || String(w.screenName).toLowerCase() === want.toLowerCase()))
                 return w
         }
         return null
@@ -565,7 +590,8 @@ Item {
 
     // The modal Navigator overlay — exactly once at root. It owns its own
     // nexuslink.nav IPC target, its overlay window, and its open state;
-    // HudV4 only feeds it stats and a deterministic default screen (DP-1).
+    // HudV4 only feeds it stats and a deterministic default screen (the
+    // command-role monitor — resolveNavScreen prefers isCommand).
     Navigator {
         id: nav
         stats: hud.stats
@@ -575,7 +601,9 @@ Item {
     // ------------------------------------------------------------- windows
     Variants {
         id: winVariants
-        model: Quickshell.screens
+        // glasses never reach this model — no deck, no invisible polling
+        // window on the wearable output
+        model: hud.hudScreens
 
         PanelWindow {
             id: win
@@ -583,10 +611,9 @@ Item {
             screen: modelData
 
             readonly property string screenName: String(modelData.name)
-            // unknown output names fall back to the command cockpit
-            readonly property string role: screenName === "DP-2" ? "hardware"
-                                       : screenName === "HDMI-A-3" ? "ops"
-                                       : "command"
+            // role from EDID identity (ScreenRoles.js); connector names are
+            // deliberately ignored and unknown identity falls back to command
+            readonly property string role: ScreenRoles.roleForScreen(modelData)
             readonly property bool isCommand:  role === "command"
             readonly property bool isHardware: role === "hardware"
             readonly property string deckId: isCommand ? "hub" : isHardware ? "board" : "bench"
@@ -1095,7 +1122,7 @@ Item {
 
                     // ------- role screen (exactly one is instantiated per window)
                     // M1 kit: the three decks share one input contract —
-                    // stats/tokData/crew/screenName/shown (+navigator/say on DP-1).
+                    // stats/tokData/crew/screenName/shown (+navigator/say on command).
                     // The Loader gates CREATION on role, not just visibility:
                     // each window builds only its own deck tree.
                     Loader {
@@ -1243,8 +1270,22 @@ Item {
         function hide(id: string): string { return hud.ipcShowHide(id, true) }
         function layout(name: string): string { return hud.ipcLayout(name) }
         function selftest(): string { return JSON.stringify(hud.selftestData()) }
+        function roleprobe(): string {
+            var out = []
+            var ins = winVariants.instances
+            for (var i = 0; i < ins.length; i++) {
+                var md = ins[i].screen
+                out.push({ name: String(md.name),
+                           ident: ScreenRoles.identityOf(md),
+                           role: ScreenRoles.roleForScreen(md) })
+            }
+            return JSON.stringify(out)
+        }
         // raw ingest frame path — the last committed TSV batch verbatim
         function framesAlive(): string { return hud.lastFrameRaw }
+        // grounded GPU attribution: inventory cards + live dev_gpuN_*
+        // readings exactly as the DeckSystem graphics cell sees them
+        function gpus(): string { return JSON.stringify(GpuCards.cards(hud.stats)) }
         function reload(): string {
             if (!streamProc.running) streamProc.running = true
             if (!probeProc.running) probeProc.running = true

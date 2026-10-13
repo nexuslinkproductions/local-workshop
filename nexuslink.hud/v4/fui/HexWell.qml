@@ -7,8 +7,10 @@ import Quickshell.Widgets
 // HexWell.qml — flat-top hex hairline well holding a real app icon
 // (M1 APP-DL hex targets). `icon` is a themed icon name or absolute path
 // resolved through Quickshell.iconPath (AppGrid's iconSrc contract); when
-// nothing resolves, `glyph` falls back to an FA glyph. count < 0 reads
-// "untracked" — the honest v1 appuse state.
+// nothing resolves, `glyph` falls back to an FA glyph. Default render is
+// icon + name only; serial/launch-count/sub captions sit behind
+// showDiagnostics:false (FuiFrame contract — count < 0 still reads
+// "untracked" when diagnostics are on).
 Item {
     id: root
 
@@ -17,10 +19,11 @@ Item {
     property string label: ""
     property string sub: ""         // category / caption
     property string serial: ""      // APP-0xNN
-    property int count: -1          // <0 -> "untracked"
+    property int count: -1          // <0 -> "untracked" (diagnostics only)
     property bool live: false       // acid hairline (launch/tracked-live state)
     property bool hovered: false    // fed externally; MouseArea also sets it
     property int margin: 5
+    property bool showDiagnostics: false   // serial + count + sub captions
 
     signal activated()
 
@@ -76,7 +79,7 @@ Item {
     }
 
     Text {                  // serial, top-right outside the icon column
-        visible: root.serial !== ""
+        visible: root.showDiagnostics && root.serial !== ""
         anchors { top: parent.top; topMargin: 9; right: parent.right; rightMargin: 14 }
         text: root.serial
         color: FuiTokens.mute
@@ -127,6 +130,7 @@ Item {
             font.letterSpacing: 1.2
         }
         Text {
+            visible: root.showDiagnostics
             anchors.horizontalCenter: parent.horizontalCenter
             text: root.count >= 0 ? "LAUNCH " + (root.count < 10 ? "0" : "")
                                     + root.count + " : " + root.count + "x"
@@ -136,7 +140,7 @@ Item {
             font.pixelSize: FuiTokens.px.micro
         }
         Text {
-            visible: root.sub !== ""
+            visible: root.showDiagnostics && root.sub !== ""
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width
             horizontalAlignment: Text.AlignHCenter

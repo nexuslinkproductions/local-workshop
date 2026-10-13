@@ -148,41 +148,17 @@ Item {
             spacing: 18
             anchors { left: parent.left; top: parent.top; topMargin: 8 }
             Text {
-                text: root.screenName !== "" ? root.screenName : "HDMI-A-3"
+                textFormat: Text.StyledText
+                text: 'DEVICES <span style="color:' + FuiTokens.css(FuiTokens.acid) + '">&amp;</span> SYSTEM'
                 color: FuiTokens.white
                 font.family: FuiTokens.display; font.pixelSize: 22; font.letterSpacing: 6
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.StyledText
-                text: 'DEVICES <span style="color:' + FuiTokens.css(FuiTokens.acid) + '">//</span> SYSTEM'
-                color: FuiTokens.white
-                font.family: FuiTokens.display; font.pixelSize: FuiTokens.px.num; font.letterSpacing: FuiTokens.ls.label
+                text: root.screenName
+                color: FuiTokens.mute
+                font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.tag; font.letterSpacing: FuiTokens.ls.tag
             }
-            Repeater {
-                model: {
-                    var geom = sp.monGeom[root.screenName];
-                    return ["SH M1-HDMI-03",
-                            geom !== undefined ? geom : "1920x1200",
-                            "REV M1.04"];
-                }
-                delegate: Text {
-                    required property var modelData
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: modelData
-                    color: FuiTokens.mute
-                    font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.tag; font.letterSpacing: FuiTokens.ls.tag
-                }
-            }
-        }
-        Text {
-            anchors { left: parent.left; top: parent.top; topMargin: 44 }
-            textFormat: Text.StyledText
-            text: 'deck owns: usb + audio devices, cpu/mem/gpu/storage telemetry, net, pcie, system ledger'
-                  + ' <span style="color:' + FuiTokens.css(FuiTokens.faint) + '">|</span>'
-                  + ' defers: clock + crew + apps + actions to DP-1, tokens + limits to DP-2'
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono; font.pixelSize: FuiTokens.px.body
         }
         Row {
             anchors { right: parent.right; top: parent.top; topMargin: 4 }
@@ -190,10 +166,7 @@ Item {
             Repeater {
                 model: [
                     { "cap": "HOST", "v": String(root.stats.host !== undefined ? root.stats.host : FuiTokens.unknownGlyph).toUpperCase(), "hero": true },
-                    { "cap": "KERNEL", "v": String(root.stats.kernel !== undefined ? root.stats.kernel : FuiTokens.unknownGlyph) },
-                    { "cap": "OMARCHY", "v": sp.omarchyVer !== "" ? sp.omarchyVer : FuiTokens.unknownGlyph },
-                    { "cap": "UPTIME", "v": root._uptimeTxt(root.stats.uptime_s), "sub": root.has("uptime_s") ? String(Math.round(root.num(root.stats.uptime_s))) + " s" : "" },
-                    { "cap": "SAMPLE", "v": root._tick > 0 ? root._fmtNow() : FuiTokens.unknownGlyph }
+                    { "cap": "UPTIME", "v": root._uptimeTxt(root.stats.uptime_s) }
                 ]
                 delegate: Column {
                     id: mcol
@@ -268,15 +241,12 @@ Item {
                 }
                 gaugeColor: root.num(root.stats.cpu_temp) >= 80 ? FuiTokens.warn : FuiTokens.ice
                 gaugeUnit: "C TCTL"
-                gaugeTitle: "CPU"
+                gaugeTitle: "CPU temperature"
                 gaugeSub: "tjmax 95"
                 statRows: [
                     { "l": "cores", "v": (root.has("cpu_cores") ? root.stats.cpu_cores : "?") + "C / " + (root.has("cpu_count") ? root.stats.cpu_count : "?") + "T" },
                     { "l": "busy", "v": isFinite(root.cpuBusy) ? Math.round(root.cpuBusy) + "%" : FuiTokens.unknownGlyph, "vc": root.cpuBusy >= 90 ? FuiTokens.warn : FuiTokens.dim },
-                    { "l": "ccd0", "v": root.tNum(root.stats.dev_ccd0_t) + " C" },
-                    { "l": "ccd1", "v": root.tNum(root.stats.dev_ccd1_t) + " C" },
-                    { "l": "clk avg", "v": root.tNum(root.stats.cpu_mhz_avg) + " MHz" },
-                    { "l": "clk max", "v": root.tNum(root.stats.cpu_mhz_max) + " MHz" }
+                    { "l": "clk avg", "v": root.tNum(root.stats.cpu_mhz_avg) + " MHz" }
                 ]
                 barsCap: "CORE MHZ 0-11"
                 bars: root.coreMhz
@@ -294,10 +264,6 @@ Item {
                 sparkCap: "TCTL LAST 90S"
                 spark: root._cpuH
                 sparkColor: root.num(root.stats.cpu_temp) >= 80 ? FuiTokens.warn : FuiTokens.ice
-                footLines: [
-                    { "l": "load", "v": (root.stats.load1 !== undefined ? root.stats.load1 : "?") + " " + (root.stats.load5 !== undefined ? root.stats.load5 : "?") + " " + (root.stats.load15 !== undefined ? root.stats.load15 : "?") },
-                    { "l": "psi cpu", "v": root.stats.psi_cpu_some !== undefined ? String(root.stats.psi_cpu_some) : FuiTokens.unknownGlyph }
-                ]
             }
 
             // ---- MEM ----
@@ -312,16 +278,13 @@ Item {
                 }
                 gaugeColor: FuiTokens.ice
                 gaugeUnit: "GB USED"
-                gaugeTitle: "MEMORY"
+                gaugeTitle: "Memory"
                 gaugeSub: isFinite(root.memPct) ? Math.round(root.memPct) + "% of " + Math.round(root.memTotalGb) + " GB" : ""
                 statRows: [
                     { "l": "avail", "v": root._gbTxt(root.gbOfKb(root.stats.mem_avail_kb), 1) },
                     { "l": "swap", "v": root.has("swap_total_kb")
                           ? root._gbTxt(root.gbOfKb(root.stats.swap_total_kb) - root.gbOfKb(root.stats.swap_free_kb), 1) + " / " + root._gbTxt(root.gbOfKb(root.stats.swap_total_kb), 0)
                           : FuiTokens.unknownGlyph },
-                    { "l": "zram", "v": root.has("zram_ratio") ? String(root.stats.zram_ratio) + "x" : FuiTokens.unknownGlyph },
-                    { "l": "zram use", "v": root.has("zram_used_mb") ? String(root.stats.zram_used_mb) + " MB" : FuiTokens.unknownGlyph },
-                    { "l": "psi mem", "v": root.stats.psi_mem_some !== undefined ? String(root.stats.psi_mem_some) : FuiTokens.unknownGlyph },
                     { "l": "dimm0/1", "v": root.tNum(root.stats.dev_dimm0_t !== undefined ? root.stats.dev_dimm0_t : root.stats.dimm0_temp) + " / " + root.tNum(root.stats.dev_dimm1_t !== undefined ? root.stats.dev_dimm1_t : root.stats.dimm1_temp) + " C",
                       "vc": sp.dimmLim !== null && (root.num(root.stats.dev_dimm0_t) >= sp.dimmLim[0] || root.num(root.stats.dev_dimm1_t) >= sp.dimmLim[0]) ? FuiTokens.warn : FuiTokens.dim }
                 ]
@@ -333,47 +296,12 @@ Item {
                 barsColor: FuiTokens.ice
                 sparkCap: "USED GB 90S"
                 spark: root._memH
-                footLines: [
-                    { "l": "dimm lim", "v": sp.dimmLim !== null ? "high " + sp.dimmLim[0] + "C  crit " + sp.dimmLim[1] + "C" : "awaiting spd5118" },
-                    { "l": "psi mem full", "v": root.stats.psi_mem_full !== undefined ? String(root.stats.psi_mem_full) : FuiTokens.unknownGlyph }
-                ]
             }
 
-            // ---- GPU ----
-            Sys.TCell {
+            // ---- GPU — every inventoried adapter, Intel first (GpuCards) ----
+            Sys.GpuPair {
                 x: 0; y: parent.ch + 16; width: parent.cw; height: parent.ch
-                code: "T-03"
-                gaugeV: isFinite(root.gpuTemp) ? root.gpuTemp : null
-                gaugeMin: 20; gaugeMax: 105
-                gaugeMajors: [20, 40, 60, 80, 100]
-                gaugeRedFrom: 100; gaugeRedTo: 105
-                gaugeMarkers: {
-                    var v = root.gpuVramC;
-                    return isFinite(v) ? [{ "v": v, "t": "V" }] : [];
-                }
-                gaugeColor: root.gpuTemp >= 90 ? FuiTokens.warn : FuiTokens.ice
-                gaugeUnit: "C PKG"
-                gaugeTitle: "GPU"
-                gaugeSub: root.stats.gpu_name !== undefined ? String(root.stats.gpu_name) : (root.stats.gpu0_name !== undefined ? String(root.stats.gpu0_name) : "")
-                statRows: [
-                    { "l": "vram", "v": root.tNum(root.stats.i_temp_vram) + " C" },
-                    { "l": "mctrl", "v": root.tNum(root.stats.i_temp_mctrl) + " C" },
-                    { "l": "pcie", "v": root.tNum(root.stats.i_temp_pcie) + " C" },
-                    { "l": "clk", "v": isFinite(root.gpuClk) ? Math.round(root.gpuClk) + " MHz" : FuiTokens.unknownGlyph },
-                    { "l": "pwr", "v": root.has("dev_gpu0_pw") ? root.tNum(root.stats.dev_gpu0_pw) + " W" : FuiTokens.unknownGlyph },
-                    { "l": "link", "v": root.gpuLink }
-                ]
-                barsCap: "VRAM CH MAX/AVG"
-                bars: [root.num(root.stats.i_vram_ch_max), root.num(root.stats.i_vram_ch_avg)]
-                barsMin: 20; barsMax: 100
-                barsHi: 100
-                barsColor: FuiTokens.ice
-                sparkCap: "PKG TEMP 90S"
-                spark: root._gpuH
-                footLines: [
-                    { "l": "igpu", "v": root.has("a_util") ? root.tNum(root.stats.a_util) + "% " + root.tNum(root.stats.a_temp) + "C " + root.tNum(root.stats.a_freq_mhz) + "MHz " + root.tNum(root.stats.a_pwr_w) + "W" : FuiTokens.unknownGlyph },
-                    { "l": "util", "v": isFinite(root.num(root.stats.dev_gpu0_pct)) ? Math.round(root.num(root.stats.dev_gpu0_pct)) + "%" : FuiTokens.unknownGlyph }
-                ]
+                stats: root.stats
             }
 
             // ---- STO ----
@@ -386,29 +314,16 @@ Item {
                 gaugeRedFrom: 90; gaugeRedTo: 100
                 gaugeColor: root.num(root.stats.fs_root_pct) >= 90 ? FuiTokens.alert : FuiTokens.ice
                 gaugeUnit: "% ROOT"
-                gaugeTitle: "STORAGE"
+                gaugeTitle: "Storage"
                 gaugeSub: root.has("fs_root_used") && root.has("fs_root_size")
                           ? root._fmtBytes(root.stats.fs_root_used) + " / " + root._fmtBytes(root.stats.fs_root_size) : ""
                 statRows: [
                     { "l": "nvme0", "v": root.tNum(root.stats.dev_nvme0_t !== undefined ? root.stats.dev_nvme0_t : root.stats.nvme0_temp) + " C" },
-                    { "l": "", "v": root.stats.nvme0_model !== undefined ? String(root.stats.nvme0_model).slice(0, 20) : FuiTokens.unknownGlyph },
                     { "l": "nvme1", "v": root.tNum(root.stats.dev_nvme1_t !== undefined ? root.stats.dev_nvme1_t : root.stats.nvme1_temp) + " C" },
-                    { "l": "", "v": root.stats.nvme1_model !== undefined ? String(root.stats.nvme1_model).slice(0, 20) : FuiTokens.unknownGlyph },
-                    { "l": "home", "v": root.has("fs_home_pct") ? root.tNum(root.stats.fs_home_pct) + "% used" : FuiTokens.unknownGlyph },
-                    { "l": "target", "v": root.stats.fs_root_target !== undefined ? String(root.stats.fs_root_target) : FuiTokens.unknownGlyph }
+                    { "l": "home", "v": root.has("fs_home_pct") ? root.tNum(root.stats.fs_home_pct) + "% used" : FuiTokens.unknownGlyph }
                 ]
-                barsCap: "PSI IO SOME/FULL"
-                bars: [root.num(root.stats.psi_io_some), root.num(root.stats.psi_io_full)]
-                barsMin: 0
-                barsMax: Math.max(1, root.num(root.stats.psi_io_some), root.num(root.stats.psi_io_full))
-                barsColor: FuiTokens.azure
                 sparkCap: "ROOT % 90S"
                 spark: root._stoH
-                footLines: [
-                    { "l": "io", "v": "rd " + (isFinite(root.num(root.stats.disk_rd_sectors)) ? Math.round(root.num(root.stats.disk_rd_sectors) * 512 / 1073741824) + " GB" : "?")
-                          + "  wr " + (isFinite(root.num(root.stats.disk_wr_sectors)) ? Math.round(root.num(root.stats.disk_wr_sectors) * 512 / 1073741824) + " GB" : "?") },
-                    { "l": " ", "v": "since boot" }
-                ]
             }
         }
     }
@@ -465,13 +380,4 @@ Item {
         }
     }
 
-    // ---------------------------------------------------------------- footer
-    Text {
-        anchors { left: parent.left; leftMargin: root.m; bottom: parent.bottom; bottomMargin: 6 }
-        text: "M1-HDMI-03 · devices+system · canvas+card · src: /sys/bus/usb, pactl, ip, hyprctl, collector dev_*"
-        color: FuiTokens.mute      // faint read too dark on HDMI at 11px
-        font.family: FuiTokens.mono
-        font.pixelSize: FuiTokens.px.micro
-        font.letterSpacing: FuiTokens.ls.cap
-    }
 }

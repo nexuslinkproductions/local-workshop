@@ -4,11 +4,10 @@ import QtQuick
 import Quickshell
 import ".."
 
-// MastHead.qml — M1 masthead strip. Four blocks:
-//   A wordmark + serial + tags + OWNS/DEFERS
-//   B hero clock (HH:MM across-the-room) + 0-60 s ruler + date/ISO-week/DOY
-//   C WS-MAP monitor schematic (WsMap)
-//   D layout table
+// MastHead.qml — M1 masthead strip. Three blocks:
+//   A wordmark (auto pixel-size fit) + host name — two bounded lines only
+//   B hero clock (HH:MM across-the-room) + 0-60 s ruler + date
+//   C WS-MAP monitor schematic (WsMap), spanning to the right edge
 // The deck's only 1 Hz element lives here: the clock timer, gated by shown.
 Item {
     id: root
@@ -32,7 +31,6 @@ Item {
 
     function has(k) { return stats[k] !== undefined && stats[k] !== ""; }
     function p2(x) { return (x < 10 ? "0" : "") + x; }
-    function p3(x) { return (x < 100 ? (x < 10 ? "00" : "0") : "") + x; }
     readonly property string hostName: {
         if (has("host"))
             return String(stats.host).toUpperCase();
@@ -41,23 +39,6 @@ Item {
     }
 
     // ---- date derivations -------------------------------------------------
-    readonly property int doy: {
-        var d = now;
-        return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())
-                          - Date.UTC(d.getFullYear(), 0, 1)) / 86400000) + 1;
-    }
-    readonly property int yearDays: {
-        var y = now.getFullYear();
-        return Math.floor((Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1)) / 86400000);
-    }
-    readonly property int isoWeek: {
-        var d = new Date(now.getTime());
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7)); // Thursday of week
-        var w1 = new Date(d.getFullYear(), 0, 4);
-        return 1 + Math.round(((d.getTime() - w1.getTime()) / 86400000
-                               - 3 + ((w1.getDay() + 6) % 7)) / 7);
-    }
     readonly property var weekDates: {          // Mon..Sun of this ISO week
         var d = new Date(now.getTime());
         var dow = (d.getDay() + 6) % 7;         // Mon=0
@@ -79,90 +60,38 @@ Item {
 
     // ================================================================ layout
     // Fractions of masthead width from gen_M1_dp1.py (2480 px reference):
-    //   A 0..0.236 | B 0.245..0.513 | C 0.524..0.766 | D 0.776..1
+    //   A 0..0.236 | B 0.245..0.513 | C 0.524..1 (blockD layout table removed)
     Item {
         id: blockA
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         width: parent.width * 0.236
 
-        Text {
-            x: 20; y: 22
-            text: "NEXUS <font color='" + FuiTokens.ice + "'>//</font> HERMES WORKSTATION"
-            textFormat: Text.RichText
-            color: FuiTokens.white
-            font.family: FuiTokens.display
-            font.pixelSize: 17
-            font.letterSpacing: 3
-        }
-        Text {
-            x: 20; y: 62
-            text: "SN NX-" + (root.hostName !== "" ? root.hostName : "HOST")
-                  + "-" + root.screenName + "-0A3  /  REV M1.04  /  LAYER BACKGROUND  /  QUICKSHELL TARGET"
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.cap
-            font.letterSpacing: FuiTokens.ls.cap
-        }
-        Row {
-            x: 20; y: 88
+        // two bounded lines: wordmark shrinks to fit blockA width, then host
+        Column {
+            x: 20
+            width: blockA.width - 32
+            anchors.verticalCenter: parent.verticalCenter
             spacing: 8
-            Repeater {
-                model: [
-                    "HOST " + (root.hostName !== "" ? root.hostName : FuiTokens.unknownGlyph),
-                    "OMARCHY / HYPRLAND",
-                    "DECK " + root.screenName + " CENTRE",
-                    "PRIMARY"
-                ]
-                delegate: Rectangle {
-                    id: tagCell
-                    required property string modelData
-                    height: 16
-                    width: tagText.implicitWidth + 10
-                    color: "transparent"
-                    border.width: 1
-                    border.color: FuiTokens.hair2
-                    Text {
-                        id: tagText
-                        anchors.centerIn: parent
-                        text: tagCell.modelData
-                        color: FuiTokens.dim
-                        font.family: FuiTokens.mono
-                        font.pixelSize: FuiTokens.px.micro
-                        font.letterSpacing: FuiTokens.ls.cap
-                    }
-                }
-            }
-        }
-        Row {
-            x: 20; y: 122
-            spacing: 22
             Text {
-                text: "OWNS"
-                color: FuiTokens.mute
+                width: parent.width
+                // plain text — RichText ignores fontSizeMode, which cut the
+                // wordmark on compact decks
+                text: "NEXUS // HERMES"
+                textFormat: Text.PlainText
+                color: FuiTokens.white
                 font.family: FuiTokens.display
-                font.pixelSize: FuiTokens.px.micro
-                font.letterSpacing: 1.6
+                font.pixelSize: 34
+                font.letterSpacing: 3
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: FuiTokens.px.cap
+                maximumLineCount: 1
+                clip: true
             }
             Text {
-                text: "clock · crew · launcher · actions · ws-map"
-                color: FuiTokens.mute
-                font.family: FuiTokens.mono
-                font.pixelSize: FuiTokens.px.cap
-                font.letterSpacing: FuiTokens.ls.cap
-            }
-        }
-        Row {
-            x: 20; y: 146
-            spacing: 22
-            Text {
-                text: "DEFERS"
-                color: FuiTokens.mute
-                font.family: FuiTokens.display
-                font.pixelSize: FuiTokens.px.micro
-                font.letterSpacing: 1.6
-            }
-            Text {
-                text: "tokens/limits → DP-2   system/ctrl → HDMI-A-3"
+                width: parent.width
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                text: root.hostName !== "" ? root.hostName : "HOST"
                 color: FuiTokens.mute
                 font.family: FuiTokens.mono
                 font.pixelSize: FuiTokens.px.cap
@@ -171,9 +100,10 @@ Item {
         }
     }
 
-    // block dividers (design x = 584, 1272, 1900 of 2480)
+    // block dividers (design x = 584, 1272 of 2480; the 0.766 split is gone
+    // with blockD)
     Repeater {
-        model: [0.2355, 0.513, 0.766]
+        model: [0.2355, 0.513]
         delegate: Rectangle {
             required property real modelData
             x: Math.round(root.width * modelData) - 1
@@ -274,13 +204,6 @@ Item {
                 }
                 onWidthChanged: requestPaint()
             }
-            Text {
-                anchors { left: parent.right; leftMargin: 10; verticalCenter: parent.verticalCenter }
-                text: "SEC " + root.p2(root.now.getSeconds())
-                color: FuiTokens.mute
-                font.family: FuiTokens.mono
-                font.pixelSize: FuiTokens.px.micro
-            }
         }
     }
 
@@ -306,14 +229,6 @@ Item {
             font.family: FuiTokens.display
             font.pixelSize: FuiTokens.px.big
             font.letterSpacing: 1
-        }
-        Text {
-            x: 0; y: 84
-            text: "ISO WEEK " + root.isoWeek + "  ·  DOY " + root.doy + "/" + root.yearDays
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.cap
-            font.letterSpacing: FuiTokens.ls.cap
         }
         // Mon..Sun cells, today acid; date numbers under
         Row {
@@ -358,105 +273,15 @@ Item {
         }
     }
 
-    // ---- C: workspace map --------------------------------------------------
+    // ---- C: workspace map (spans to the right edge) -----------------------
     WsMap {
         id: wsMap
         x: Math.round(root.width * 0.524)
-        width: root.width * 0.766 - x
+        width: root.width - x
         anchors { top: parent.top; bottom: parent.bottom; topMargin: 8; bottomMargin: 6 }
         mons: root.mons
         wsRows: root.wsRows
         winCount: root.winCount
         screenName: root.screenName
-    }
-
-    // ---- D: layout table ----------------------------------------------------
-    Item {
-        id: blockD
-        x: Math.round(root.width * 0.776)
-        width: parent.width - x
-        anchors { top: parent.top; bottom: parent.bottom }
-
-        Text {
-            x: 0; y: 12
-            text: "LAYOUT TABLE"
-            color: FuiTokens.dim
-            font.family: FuiTokens.display
-            font.pixelSize: FuiTokens.px.micro
-            font.letterSpacing: 1.6
-        }
-        // header + rows: MON / RES / ORIGIN / WS / DECK
-        Column {
-            x: 0; y: 40
-            width: parent.width
-            spacing: 0
-            Row {
-                width: parent.width
-                Repeater {
-                    model: [["MON", 0.20], ["RES", 0.24], ["ORIGIN", 0.20], ["WS", 0.22], ["DECK", 0.14]]
-                    delegate: Text {
-                        required property var modelData
-                        width: blockD.width * modelData[1]
-                        text: modelData[0]
-                        color: FuiTokens.mute
-                        font.family: FuiTokens.display
-                        font.pixelSize: FuiTokens.px.micro
-                        font.letterSpacing: 1.2
-                    }
-                }
-            }
-            Rectangle { width: parent.width; height: 1; color: FuiTokens.hair2 }
-            Repeater {
-                model: root.mons
-                delegate: Item {
-                    id: monRowWrap
-                    required property var modelData
-                    required property int index
-                    readonly property bool you: String(modelData.name) === root.screenName
-                    width: blockD.width
-                    height: monRow.height + 8
-                    Row {
-                        id: monRow
-                        width: parent.width
-                        y: 4
-                        Repeater {
-                            model: [
-                                [String(monRowWrap.modelData.name), 0.20],
-                                [String(monRowWrap.modelData.width) + "x" + String(monRowWrap.modelData.height), 0.24],
-                                [String(monRowWrap.modelData.x) + "," + String(monRowWrap.modelData.y), 0.20],
-                                [wsMap.wsText(monRowWrap.modelData.name).replace(/  +/g, " · "), 0.22],
-                                [String(monRowWrap.modelData.name) === "DP-1" ? "centre"
-                                   : String(monRowWrap.modelData.name) === "DP-2" ? "right" : "left", 0.14]
-                            ]
-                            delegate: Text {
-                                required property var modelData
-                                width: blockD.width * modelData[1]
-                                text: modelData[0]
-                                elide: Text.ElideRight
-                                color: monRowWrap.you ? FuiTokens.acid : FuiTokens.dim
-                                font.family: FuiTokens.mono
-                                font.pixelSize: FuiTokens.px.cap
-                            }
-                        }
-                    }
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        width: parent.width; height: 1
-                        color: FuiTokens.hair3
-                    }
-                }
-            }
-        }
-        Text {
-            x: 0
-            anchors { bottom: parent.bottom; bottomMargin: 8 }
-            text: (root.wsRows.length) + " ws · "
-                  + (root.winCount >= 0 ? root.winCount : FuiTokens.unknownGlyph)
-                  + " windows · src: hyprctl -j · " + Qt.formatDateTime(root.now, "HH:mm")
-            color: FuiTokens.mute
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.cap
-            font.letterSpacing: FuiTokens.ls.cap
-        }
     }
 }

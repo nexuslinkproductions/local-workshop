@@ -237,20 +237,8 @@ Item {
                 ctx.stroke();
                 ctx.fillStyle = ICE;
                 ctx.beginPath(); ctx.arc(top.x, top.y, 2, 0, Math.PI * 2); ctx.fill();
-                // top-2 contributors that day
-                var parts = R[ip].parts || {}, contrib = [];
-                for (var p2 = 0; p2 < PR.length; p2++) {
-                    var pv = parts[PR[p2].key] || 0;
-                    if (pv > 0) contrib.push({ k: PR[p2].key, v: pv });
-                }
-                contrib.sort(function (a, b) { return b.v - a.v; });
                 txt(labR, ly + 10, "PEAK " + String(R[ip].label) + " · Σ " + fmtM(R[ip].total),
                     WHITE, "right");
-                if (contrib.length)
-                    txt(labR, ly + 22, contrib.slice(0, 2).map(function (e) {
-                        return e.k.toUpperCase() + " " + fmtM(e.v)
-                             + " (" + (e.v / R[ip].total * 100).toFixed(1) + "%)";
-                    }).join(" + "), FuiTokens.css(FuiTokens.mute), "right", 11);
             }
             ctx.globalAlpha = 1;
         }

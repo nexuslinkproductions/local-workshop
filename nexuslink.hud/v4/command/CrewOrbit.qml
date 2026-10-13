@@ -18,7 +18,7 @@ Item {
     // ---------- data -------------------------------------------------------
     // crew provider -> tokens.json provider key (only confident aliases)
     readonly property var providerKey: ({
-            "opencode-go": "opencode",
+            "opencode-go": "opencode-go",
             "opencode": "opencode",
             "anthropic": "claude",
             "openai-codex": "codex",
@@ -44,8 +44,6 @@ Item {
         var map = {}, order = [];
         for (var i = 0; i < bots.length; i++) {
             var b = bots[i];
-            if (b.name === "default")
-                continue;
             var p = String(b.provider || "?");
             if (!map[p]) {
                 map[p] = { "provider": p, "models": [], "members": [] };
@@ -132,6 +130,11 @@ Item {
     function modelShort(m) {
         return String(m || "").replace("claude-", "").replace("deepseek-", "ds-")
                .replace("cursor/", "").replace("-flash", "f").replace("gpt-", "gpt");
+    }
+    // display name only — the shared store keeps name==="default" for identity
+    function displayName(n) {
+        var s = String(n || "");
+        return s === "default" ? "Hermes" : s;
     }
 
     // ---------- painted layer ----------------------------------------------
@@ -296,7 +299,7 @@ Item {
                 horizontalAlignment: onRight ? Text.AlignLeft : Text.AlignRight
                 rotation: onRight ? node.ang - 90 : node.ang + 90
                 transformOrigin: onRight ? Item.Left : Item.Right
-                text: String(node.bot.name || "")
+                text: root.displayName(node.bot.name)
                 elide: Text.ElideRight
                 color: node.bot.state === "dormant" ? FuiTokens.dim : FuiTokens.white
                 font.family: FuiTokens.mono
@@ -488,7 +491,7 @@ Item {
                 elide: Text.ElideRight
                 text: root.stalledLane
                       ? root.stalledLane.members.map(function (b) {
-                            return String(b.name); }).join(" ")
+                            return root.displayName(b.name); }).join(" ")
                       : ""
                 color: FuiTokens.mute
                 font.family: FuiTokens.mono
@@ -497,7 +500,7 @@ Item {
         }
     }
 
-    // ---------- nominal status (fills the banner slot when no lane is spent) --
+    // ---------- crew status (fills the banner slot when no lane is spent) --
     Rectangle {
         visible: root.stalledLane === null && root.groups.length > 0
         x: 16; y: root.height - 86
@@ -508,32 +511,26 @@ Item {
         Rectangle {                    // corner tab
             x: -1; y: -1; width: 10; height: 10
             color: "transparent"
-            Rectangle { x: 0; y: 0; width: 2; height: 10; color: FuiTokens.acid }
-            Rectangle { x: 0; y: 0; width: 10; height: 2; color: FuiTokens.acid }
+            Rectangle { x: 0; y: 0; width: 2; height: 10; color: FuiTokens.ice }
+            Rectangle { x: 0; y: 0; width: 10; height: 2; color: FuiTokens.ice }
         }
         Column {
             x: 12; y: 8
             spacing: 3
             Text {
-                text: "ALL LANES NOMINAL"
-                color: FuiTokens.acid
+                // neutral: with no stalled lane we only know crew state, not
+                // whether live limits are actually nominal
+                text: "Crew status"
+                color: FuiTokens.ice
                 font.family: FuiTokens.display
                 font.pixelSize: FuiTokens.px.cap
                 font.letterSpacing: FuiTokens.ls.cap
             }
             Text {
-                text: root.activeCount + " ACTIVE · " + root.totalSes + " SES/24H · 0 STALLED"
+                text: root.activeCount + " ACTIVE · " + root.totalSes + " SES/24H"
                 color: FuiTokens.dim
                 font.family: FuiTokens.mono
                 font.pixelSize: FuiTokens.px.cap
-            }
-            Text {
-                width: 376
-                elide: Text.ElideRight
-                text: "limits polled via tokens.json · none at 100%"
-                color: FuiTokens.mute
-                font.family: FuiTokens.mono
-                font.pixelSize: FuiTokens.px.micro
             }
         }
     }

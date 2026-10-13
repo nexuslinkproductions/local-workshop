@@ -3,12 +3,12 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import ".."
 
-// CrewSwimLane.qml — M1 CRW-TL crew activity table: LED/serial/handle cells,
+// CrewSwimLane.qml — M1 CRW-TL crew activity table: LED + handle cells,
 // 6h event track with two-row packing and in-lane titles, +15min hatched
 // future zone, S/24H odometer, LANE (model tag), LAST, STATE chips, NOW
-// cursor and footer legend. Rows come straight from crew.json (named bots
-// only; "default" is the shared store, filtered per contract). The now tick
-// runs at 60 s and only while shown.
+// cursor and footer legend. Rows come straight from crew.json — the shared
+// "default" store gets a lane too, displayed as HERMES (source name stays
+// "default" for identity). The now tick runs at 60 s and only while shown.
 Item {
     id: root
 
@@ -53,8 +53,6 @@ Item {
         function rank(s) { return s === "active" ? 0 : (s === "dormant" ? 2 : 1); }
         for (var i = 0; i < src.length; i++) {
             var b = src[i];
-            if (b.name === "default")
-                continue;
             var rb = {};
             for (var k in b)
                 rb[k] = b[k];
@@ -89,6 +87,10 @@ Item {
     readonly property int nRows: shownBots.length + (overflowed ? 1 : 0)
     readonly property real rowH: nRows > 0 ? Math.min(22, rowsH / nRows) : 22
     readonly property double tNow: windowEnd - 15 * 60
+    // ruler labels: px per hour from view geometry — label only major ticks
+    // with >=60px of room so dense windows don't avalanche into each other
+    readonly property real hourPx: trackW / Math.max(1, spanMin) * 60
+    readonly property int labelStepH: Math.max(1, Math.ceil(60 / Math.max(1, hourPx)))
     // scale for the S/24H micro bar: busiest lane fills the column
     readonly property int maxSes: {
         var m = 0;
@@ -113,6 +115,11 @@ Item {
     function laneTag(p) {
         var s = String(p || "");
         return s === "" ? FuiTokens.unknownGlyph : s.replace("-", " ").toUpperCase();
+    }
+    // display name only — the shared store keeps name==="default" for identity
+    function displayName(n) {
+        var s = String(n || "");
+        return s === "default" ? "Hermes" : s;
     }
 
     // greedy two-row packing of a bot's window events; returns
@@ -207,12 +214,13 @@ Item {
         onHeightChanged: requestPaint()
     }
 
-    // hour labels + window start label + +15M tag
+    // hour labels (only ticks with >=60px spacing) + window start + +15M tag
     Repeater {
         model: {
             var out = [];
+            var step = root.labelStepH * 3600;
             var first = Math.ceil(root.windowStart / 3600) * 3600;
-            for (var t = first; t <= root.windowEnd; t += 3600)
+            for (var t = first; t <= root.windowEnd; t += step)
                 out.push(t);
             return out;
         }
@@ -228,6 +236,8 @@ Item {
     }
     Text {
         x: root.trackX0; y: root.headH - 10
+        // hide when the first labelled tick would sit within 60px of it
+        visible: root.tx(Math.ceil(root.windowStart / 3600) * 3600) - root.trackX0 >= 60
         text: FuiTokens.fmtHm(root.windowStart)
         color: FuiTokens.mute
         font.family: FuiTokens.mono
@@ -289,10 +299,10 @@ Item {
                 width: root.width
                 height: root.rowH
 
-                Rectangle {                        // zebra
-                    visible: lane.index % 2 === 0
+                Rectangle {                        // zebra (root.rowH — parent
+                    visible: lane.index % 2 === 0  // may be null mid-reload)
                     x: 8; width: root.width - 16
-                    height: parent.height
+                    height: root.rowH
                     color: FuiTokens.tone(FuiTokens.ice, 0.022)
                 }
                 Rectangle {                        // LED
@@ -302,18 +312,11 @@ Item {
                          : lane.st === "warm" ? FuiTokens.warn
                          : FuiTokens.faint
                 }
-                Text {                             // serial
-                    x: 28; anchors.verticalCenter: parent.verticalCenter
-                    text: "CRW-" + root.p2(lane.bot._ord + 1)
-                    color: FuiTokens.tone(FuiTokens.azure, 0.75)
-                    font.family: FuiTokens.mono
-                    font.pixelSize: FuiTokens.px.micro
-                }
                 Text {                             // handle
-                    x: 78; anchors.verticalCenter: parent.verticalCenter
-                    width: root.trackX0 - 84
+                    x: 28; anchors.verticalCenter: parent.verticalCenter
+                    width: root.trackX0 - 34
                     elide: Text.ElideRight
-                    text: String(lane.bot.name || "").toUpperCase()
+                    text: root.displayName(lane.bot.name).toUpperCase()
                     color: lane.st === "dormant" ? FuiTokens.dim : FuiTokens.white
                     font.family: FuiTokens.display
                     font.pixelSize: FuiTokens.px.micro
@@ -334,8 +337,10 @@ Item {
                         readonly property var e: modelData
                         x: e.x0
                         width: e.ping ? 10 : Math.max(3, e.x1 - e.x0)
-                        y: e.row === 0 ? 3 : parent.height / 2 + 1
-                        height: e.row === 0 ? parent.height / 2 - 3 : parent.height / 2 - 4
+                        // root.rowH == lane.height, but stable when the
+                        // delegate's parent is null during model reload
+                        y: e.row === 0 ? 3 : root.rowH / 2 + 1
+                        height: e.row === 0 ? root.rowH / 2 - 3 : root.rowH / 2 - 4
 
                         Rectangle {
                             visible: !blk.e.ping
@@ -541,15 +546,6 @@ Item {
                     }
                 }
             }
-        }
-        Text {
-            anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
-            text: "window " + FuiTokens.fmtHm(root.windowStart) + "-" + FuiTokens.fmtHm(root.tNow)
-                  + " · " + root.bots.length + " crew"
-                  + " · 1 min = " + (root.trackW / Math.max(1, root.spanMin)).toFixed(1) + " px"
-            color: FuiTokens.dim
-            font.family: FuiTokens.mono
-            font.pixelSize: FuiTokens.px.micro
         }
     }
 
