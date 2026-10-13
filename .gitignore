@@ -4,9 +4,56 @@
 !/README.md
 !/nexuslink.*/
 !/docs/
+!/AGENTS.md
+!/CONTEXT.md
+!/local-ai/
+!/scripts/
+!/system/
+!/.github/
 *.bak
 *-bak
 *.v1bak
 __pycache__/
 !/collector/
 target/
+
+# --- Local Workshop safety block (non-anchored, applies inside local-ai/ too) ---
+# weights, engines, builds
+*.gguf
+*.safetensors
+*.onnx
+*.bin
+*.so
+*.unitrace
+**/models/
+**/engines/
+**/.venv*/
+**/node_modules/
+**/build/
+# logs and run output
+**/logs/
+*.log
+*.vram
+*.vram0
+.gpu.lock
+.gpu-reset-ack
+.lever-ts
+*.pid
+# backups and caches
+*.bak-*
+*.orig
+*.orig-*
+*.pyc
+# secrets
+.env
+.env.*
+*.env
+auth.json
+auth.lock
+*.pem
+*.key
+state.db*
+sessions/
+memories/
+# private scratch inside the tree
+local-ai/private/

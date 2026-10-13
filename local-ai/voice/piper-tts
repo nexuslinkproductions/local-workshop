@@ -1,0 +1,35 @@
+#!/home/nexuslink/NEXUS_AI_CENTER/LOCAL-AI-LAB/voice/.venv-piper/bin/python
+"""Piper TTS CLI (OHF-Voice piper1-gpl, pip piper-tts). Deliberately NOT named "piper":
+/usr/bin/piper is the libratbag gaming-mouse app.
+
+usage: piper-tts <voice-name> <out.wav> < text.txt
+env PIPER_THREADS (default 4): ONNX intra-op threads. Piper builds its session with default
+SessionOptions and exposes no knob, so the cap is patched in before the voice loads.
+Measured (voice/bench-piper-warm-t*.json): 2 thr RTF 0.21, 4 thr 0.11, ORT default ~0.13 (12 cores).
+"""
+import os
+import sys
+from pathlib import Path
+
+import onnxruntime
+
+_threads = int(os.environ.get("PIPER_THREADS", "4"))
+_Orig = onnxruntime.SessionOptions
+
+
+class _Capped(_Orig):
+    def __init__(self):
+        super().__init__()
+        self.intra_op_num_threads = _threads
+        self.inter_op_num_threads = 1
+
+
+onnxruntime.SessionOptions = _Capped
+
+from piper.__main__ import main  # noqa: E402  (after the patch on purpose)
+
+if __name__ == "__main__":
+    voice, out = sys.argv[1], sys.argv[2]
+    model = Path(__file__).resolve().parent / "piper-voices" / f"{voice}.onnx"
+    sys.argv = ["piper", "-m", str(model), "-f", out]
+    main()

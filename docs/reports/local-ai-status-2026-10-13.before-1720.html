@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local AI status, 13 Oct 2026</title>
+<style>
+:root{
+  --void:#0a1120; --panel:#0e1628; --ink:#eef6fd; --soft:#b8cce3; --mist:#8299b5; --faint:#536680;
+  --cyan:#00c8f0; --cyan-hi:#9df2ff; --line:rgba(0,200,240,.14); --hair:rgba(232,242,252,.08);
+  --jade:#46e3c2; --verm:#e8453a;
+  --sans:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--void);color:var(--soft);font:15px/1.55 var(--sans)}
+.top{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;
+  padding:10px 20px;background:rgba(10,17,32,.82);backdrop-filter:blur(8px);border-bottom:1px solid rgba(0,200,240,.35)}
+.mark{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:600;letter-spacing:.04em}
+.mono{width:26px;height:26px;border:1px solid var(--cyan);color:var(--cyan);border-radius:4px;display:grid;place-items:center;font:600 13px var(--mono)}
+.doc{font:12px var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--soft)}
+main{max-width:980px;margin:0 auto;padding:6px 20px 0}
+h1{font-size:clamp(1.7rem,4vw,2.3rem);color:var(--ink);letter-spacing:-.015em;margin:26px 0 4px;font-weight:650}
+.meta{font:13px var(--mono);color:var(--soft);text-transform:uppercase;letter-spacing:.12em;margin:0 0 6px}
+.s{margin:18px 0;padding:26px 24px;border-radius:10px;background:linear-gradient(180deg,rgba(14,22,40,.72),rgba(14,22,40,.25))}
+.eb{font:12px var(--mono);color:var(--cyan);text-transform:uppercase;letter-spacing:.16em}
+h2{font-size:1.3rem;color:var(--ink);font-weight:600;letter-spacing:-.01em;margin:8px 0 4px}
+.cap{font:13px var(--mono);color:var(--soft);margin:0 0 18px}
+.path{display:inline-block;margin:0 0 16px;padding:7px 10px;background:rgba(3,6,14,.7);border:1px solid var(--line);border-radius:4px;font:13px var(--mono);color:var(--cyan);user-select:all}
+.sub{font:12px var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--soft);margin:0 0 10px}
+.bars{display:grid;gap:12px}
+.bar{display:grid;grid-template-columns:170px 1fr 120px;gap:6px 14px;align-items:center;font:13px var(--mono);color:var(--soft)}
+.bar .k{color:var(--soft);text-transform:uppercase;letter-spacing:.06em;font-size:12px}
+.bar .v{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar .v.pend{color:var(--soft)}
+.bar .n{grid-column:2;font-size:12px;color:var(--soft);margin-top:4px}
+.tr{position:relative;height:14px;background:rgba(232,242,252,.07);border-radius:2px}
+.tr.dash{background:none;border:1px dashed var(--line)}
+.tr.ax{height:18px;background:none}
+.tr.ax span{position:absolute;top:0;transform:translateX(-50%);font:12px var(--mono);color:var(--soft);white-space:nowrap}
+.fi{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--cyan)}
+.fi.mist{background:rgba(130,153,181,.6)} .fi.verm{background:var(--verm)} .fi.cyan{background:var(--cyan)} .fi.jade{background:var(--jade)}
+.stop{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--ink)}
+.stopl{grid-column:2}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:34px}
+/* chief map */
+.map{display:grid;grid-template-columns:1fr 200px 1fr;gap:18px;align-items:center}
+.hub{width:200px;height:200px;margin:0 auto;border-radius:50%;border:1px solid var(--cyan);outline:1px solid var(--line);outline-offset:12px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:14px}
+.hub b{font:600 22px var(--sans);color:var(--ink);letter-spacing:.02em}
+.hub span{font:12px var(--mono);color:var(--soft);margin-top:4px;text-transform:uppercase;letter-spacing:.08em}
+.nd{padding:10px 0}
+.nd b{display:block;font:12px var(--mono);color:var(--cyan);letter-spacing:.14em}
+.nd span{display:block;color:var(--ink);font-size:15px}
+.nd small{display:block;font:12px var(--mono);color:var(--soft);margin-top:2px}
+.L .nd{text-align:right;border-right:1px solid var(--line);padding-right:16px}
+.R .nd{border-left:1px solid var(--line);padding-left:16px}
+/* kernel */
+.kern{display:flex;gap:36px;align-items:center}
+.donut{position:relative;width:200px;height:200px;flex:0 0 200px}
+.donut svg{width:200px;height:200px;display:block}
+.donut div{position:absolute;inset:0;display:grid;place-items:center;font:600 34px var(--sans);color:var(--cyan-hi);font-variant-numeric:tabular-nums}
+.kl{list-style:none;margin:0;padding:0;display:grid;gap:10px;font:13px var(--mono);color:var(--soft)}
+.kl li{display:grid;grid-template-columns:14px 1fr auto;gap:10px;align-items:center;min-width:220px}
+.kl i{width:14px;height:14px;border-radius:2px;display:block}
+.kl b{color:var(--ink);font-weight:600}
+/* timeline */
+.tl{position:relative;height:150px;margin:8px 0 0}
+.tl .axis{position:absolute;left:0;right:0;top:92px;height:1px;background:rgba(0,200,240,.35)}
+.stem{position:absolute;width:1px;background:rgba(232,242,252,.28)}
+.dot{position:absolute;width:10px;height:10px;margin-left:-5px;border-radius:50%;display:inline-block}
+.dot.mist{background:var(--mist)} .dot.verm{background:var(--verm)} .dot.cyan{background:var(--cyan)} .dot.jade{background:var(--jade)}
+.tag{position:absolute;font:12px/18px var(--mono);color:var(--soft);white-space:nowrap}
+.ticks{position:relative;height:18px;margin:0}
+.ticks span{position:absolute;transform:translateX(-50%);font:12px var(--mono);color:var(--soft)}
+.ticks span:first-child{transform:none}
+.lg{list-style:none;margin:14px 0 0;padding:14px 0 0;border-top:1px solid var(--hair);display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 18px;font:13px var(--mono);color:var(--soft)}
+.lg li{display:flex;align-items:center;gap:8px}
+.lg .dot{position:static;margin:0;flex:0 0 10px}
+.lg b{color:var(--ink);font-weight:600}
+/* running now: 2-column strip with status pills */
+.run-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 30px}
+.lane{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--hair)}
+.run-grid .lane:nth-child(-n+2){border-top:0}
+.lane .nm{display:block;font:12px var(--mono);color:var(--ink);text-transform:uppercase;letter-spacing:.06em}
+.lane .tx{display:block;font:14px/1.45 var(--sans);color:var(--soft);margin-top:3px}
+.lane .tx em{font:12px var(--mono);font-style:normal;color:var(--soft)}
+.pill{flex:0 0 auto;font:12px var(--mono);text-transform:uppercase;letter-spacing:.08em;padding:3px 9px;border-radius:3px;border:1px solid var(--hair);color:var(--soft)}
+.pill.run{color:var(--cyan);border-color:var(--line);background:rgba(0,200,240,.08)}
+.pill.done{color:var(--jade);border-color:rgba(70,227,194,.4)}
+.pill.wait{color:var(--soft);border-color:var(--hair)}
+.pill.fail{color:var(--verm);border-color:rgba(232,69,58,.55)}
+/* waiting chips */
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:18px}
+.chip{border-left:2px solid var(--cyan);padding:12px 14px;background:rgba(232,242,252,.025);border-radius:0 6px 6px 0}
+.chip i{font:600 26px var(--sans);color:var(--cyan-hi);font-style:normal;font-variant-numeric:tabular-nums;display:block;line-height:1}
+.chip b{display:block;color:var(--ink);font-weight:600;margin-top:8px;font-size:15px;line-height:1.3}
+.chip span{display:block;font:13px/1.4 var(--mono);color:var(--soft);margin-top:4px}
+/* before / now strip */
+.ba-head{display:grid;grid-template-columns:1fr 170px 1fr;gap:12px;font:12px var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--soft);margin:0 0 8px}
+.ba-head span:nth-child(3){color:var(--cyan)}
+.ba-row{display:grid;grid-template-columns:1fr 170px 1fr;gap:12px;align-items:stretch;margin-bottom:8px}
+.ba-card{padding:9px 12px;border:1px solid var(--hair);border-radius:6px;background:rgba(232,242,252,.025)}
+.ba-card.now{border-left:2px solid var(--cyan)}
+.ba-card b{display:block;font:12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--soft)}
+.ba-card span{display:block;font:14px/1.4 var(--sans);color:var(--ink);margin-top:2px}
+.lever{align-self:center;text-align:center;font:12px/1.35 var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--cyan);border:1px solid var(--line);border-radius:3px;padding:6px 8px}
+/* recipes */
+.tw{overflow-x:auto}
+.rt{width:100%;border-collapse:collapse;font:13px/1.45 var(--mono);color:var(--soft)}
+.rt th{text-align:left;font:12px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--soft);padding:0 10px 8px 0;border-bottom:1px solid var(--line)}
+.rt td{padding:7px 10px 7px 0;border-top:1px solid var(--hair);vertical-align:top}
+.rt td.r{color:var(--ink)}
+.rt td:nth-child(3){white-space:nowrap}
+.vd{font:12px var(--mono);text-transform:uppercase;letter-spacing:.06em;padding:2px 7px;border-radius:3px;border:1px solid var(--hair);white-space:nowrap}
+.vd.kept{color:var(--jade);border-color:rgba(70,227,194,.4)}
+.vd.drop{color:var(--soft)}
+.vd.crash{color:var(--verm);border-color:rgba(232,69,58,.55)}
+.vd.pend{color:var(--cyan);border-color:var(--line)}
+.foot{font:12px/1.7 var(--mono);color:var(--soft);margin:18px 0 0;padding-bottom:24px}
+@media (max-width:760px){
+  .bar{grid-template-columns:1fr auto}
+  .bar .tr{grid-column:1/3;grid-row:2}
+  .bar .n,.stopl{grid-column:1/3}
+  .two{grid-template-columns:1fr}
+  .map{grid-template-columns:1fr}
+  .hub{order:-1;width:170px;height:170px}
+  .L .nd{text-align:left;border-right:0;border-left:1px solid var(--line);padding-left:16px}
+  .R .nd{border-left:1px solid var(--line);padding-left:16px}
+  .chips{grid-template-columns:1fr 1fr}
+  .run-grid{grid-template-columns:1fr}
+  .run-grid .lane:nth-child(2){border-top:1px solid var(--hair)}
+  .kern{flex-direction:column;align-items:flex-start;gap:20px}
+  .tag{display:none}
+  .ba-head{display:none}
+  .ba-row{grid-template-columns:1fr}
+  .lever{justify-self:start}
+  .s{padding:20px 16px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="mark"><span class="mono">N</span>Nexus</div>
+  <div class="doc">Local AI status</div>
+</header>
+<main>
+  <h1>Local AI status</h1>
+  <p class="meta">Tuesday 13 Oct 2026 · CEST</p>
+
+  <section class="s" id="then-now">
+    <div class="eb">00 / Then and now</div>
+    <h2>Research-only Qwen on Vulkan, then a Gemma assistant.</h2>
+    <p class="cap">Before: 10-12 evening. Now: 10-13. Centre tag = lever.</p>
+    <div class="ba-head"><span>Before, 10-12</span><span></span><span>Now, 10-13</span></div>
+    <div class="ba-row"><div class="ba-card"><b>Engine</b><span>Vulkan, llama.cpp tip</span></div><span class="lever">SYCL build</span><div class="ba-card now"><b>Engine</b><span>SYCL, oneAPI</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Prompt, 4K</b><span>100-184 t/s, 55 s to first token</span></div><span class="lever">dense Gemma 12B QAT</span><div class="ba-card now"><b>Prompt, 4K</b><span>791 t/s, 7.3 s, thinking off</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Writing</b><span>34 t/s</span></div><span class="lever">MTP draft, n_max 3</span><div class="ba-card now"><b>Writing</b><span>77 t/s</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Context</b><span>32K prompt ~7.5 min (Marcel)</span></div><span class="lever">64K cap, compaction at 32K</span><div class="ba-card now"><b>Context</b><span>64K stable, 0 resets</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Desktop</b><span>freezes on model loads</span></div><span class="lever">IO scheduler bfq, load watchdog</span><div class="ba-card now"><b>Desktop</b><span>watchdog aborts stalled loads</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Assistant</b><span>none, research only</span></div><span class="lever">platform_toolsets, 22 to 5 tools</span><div class="ba-card now"><b>Assistant</b><span>Chief in Hermes, web, memory</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Eyes</b><span>none</span></div><span class="lever">2-stage crop and zoom</span><div class="ba-card now"><b>Eyes</b><span>screen_locate 16/16 synthetic, 4/6 live</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Hands</b><span>none</span></div><span class="lever">Hyprland IPC, cursor restored</span><div class="ba-card now"><b>Hands</b><span>computer act 10/10 verified</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>GPU</b><span>game holds the B580, bench blocked</span></div><span class="lever">reset gate, game refusal</span><div class="ba-card now"><b>GPU</b><span>xe reset blocks GPU jobs until ack</span></div></div>
+    <div class="ba-row"><div class="ba-card"><b>Voice</b><span>none</span></div><span class="lever">CPU Kokoro, British shortlist</span><div class="ba-card now"><b>Voice</b><span>Kokoro first audio 0.64 s</span></div></div>
+  </section>
+
+  <section class="s" id="chief">
+    <div class="eb">01 / Chief</div>
+    <h2>One brain on the B580, senses and hands around it.</h2>
+    <p class="cap">Thinking off for speed, on per request for maths. Compaction at 32K.</p>
+    <div class="map">
+      <div class="L">
+        <div class="nd"><b>EARS</b><span>Parakeet STT</span><small>Whisper on GT 1030, CUDA build OK</small></div>
+        <div class="nd"><b>EYES</b><span>screen_locate</span><small>crop zoom 16/16 synthetic, 4/6 live</small></div>
+        <div class="nd"><b>HANDS</b><span>computer act</span><small>10/10 verified</small><small>cursor restored after each act</small></div>
+      </div>
+      <div class="hub"><b>Chief</b><span>Gemma 4 12B QAT<br>B580 · 64K</span></div>
+      <div class="R">
+        <div class="nd"><b>VOICE</b><span>British shortlist, pick open</span><small>Kokoro fastest, 0.64 s</small></div>
+        <div class="nd"><b>WEB</b><span>Web access on</span></div>
+        <div class="nd"><b>CLOUD</b><span>Hand-off</span><small>to Hermes escalation brain</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="s" id="hardware">
+    <div class="eb">02 / Hardware</div>
+    <h2>Bandwidth sets the ceiling, and the B580 does the work.</h2>
+    <p class="cap">Memory bandwidth, GB/s. Left monitor runs on the AMD iGPU.</p>
+    <div class="bars">
+<div class="bar"><span class="k">B580 Arc 12 GB</span><div class="tr"><i class="fi cyan" style="width:100.0%"></i></div><span class="v">456 GB/s</span><span class="n">spec</span></div>
+<div class="bar"><span class="k">RAM DDR5-6000</span><div class="tr"><i class="fi mist" style="width:13.86%"></i></div><span class="v">63.2 GB/s</span><span class="n">measured, research/14</span></div>
+<div class="bar"><span class="k">GT 1030 2 GB</span><div class="tr"><i class="fi mist" style="width:10.53%"></i></div><span class="v">~48 GB/s</span><span class="n">spec, compute only</span></div>
+    </div>
+  </section>
+
+  <section class="s" id="context">
+    <div class="eb">03 / Context</div>
+    <h2>128K q4 KV holds 5 of 5 needles to 64K; 256K has not run clean past 32K.</h2>
+    <p class="cap">VRAM left (MiB), lowest per run, of 12288 total. Scale 0 to 2048.</p>
+    <div class="bars">
+<div class="bar"><span class="k">64K shipped</span><div class="tr"><i class="fi cyan" style="width:63.13%"></i><i class="stop" style="left:50.0%"></i></div><span class="v">1293 MiB</span><span class="n">min over 3K to 32K prefills</span></div>
+<div class="bar"><span class="k">128K, crashed</span><div class="tr"><i class="fi verm" style="width:79.1%"></i><i class="stop" style="left:50.0%"></i></div><span class="v">1620 MiB</span><span class="n">at load; DEVICE_LOST in 32K prefill, 10:48</span></div>
+<div class="bar"><span class="k">128K q4 KV</span><div class="tr"><i class="fi cyan" style="width:91.21%"></i><i class="stop" style="left:50.0%"></i></div><span class="v">1868 MiB</span><span class="n">min, 5 of 5 needles to 64.6K prompt</span></div>
+<div class="bar"><span class="k">256K q4 KV</span><div class="tr"><i class="fi cyan" style="width:55.76%"></i><i class="stop" style="left:50.0%"></i></div><span class="v">1142 MiB</span><span class="n">min, passes to 31.7K; 64K step died</span></div>
+<div class="bar"><span class="k">limit</span><div class="stopl" style="position:relative;height:20px"><span style="position:absolute;left:50.0%;transform:translateX(-50%);white-space:nowrap">stop below 1 GiB free (1024 MiB)</span></div><span></span></div>
+    </div>
+  </section>
+
+  <section class="s" id="speed">
+    <div class="eb">04 / Speed</div>
+    <h2>MTP draft gives 2.25x decode, and it stays off until you say so.</h2>
+    <p class="cap">Greedy output matches the base on 5 of 6 test prompts.</p>
+    <div class="two">
+      <div><div class="sub">Decode, Gemma 12B, t/s</div><div class="bars">
+<div class="bar"><span class="k">base decode</span><div class="tr"><i class="fi mist" style="width:34.1%"></i></div><span class="v">34.1 t/s</span></div>
+<div class="bar"><span class="k">MTP n2 decode</span><div class="tr"><i class="fi mist" style="width:70.8%"></i></div><span class="v">70.8 t/s</span><span class="n">pooled, 6 prompts</span></div>
+<div class="bar"><span class="k">MTP n3 decode</span><div class="tr"><i class="fi cyan" style="width:76.8%"></i></div><span class="v">76.8 t/s</span><span class="n">chosen draft length</span></div>
+      </div></div>
+      <div><div class="sub">Prefill 4K, t/s by ubatch</div><div class="bars">
+<div class="bar"><span class="k">ub 512</span><div class="tr"><i class="fi mist" style="width:62.83%"></i></div><span class="v">1131 t/s</span></div>
+<div class="bar"><span class="k">ub 1024</span><div class="tr"><i class="fi mist" style="width:87.17%"></i></div><span class="v">1569 t/s</span></div>
+<div class="bar"><span class="k">ub 2048</span><div class="tr"><i class="fi cyan" style="width:94.89%"></i></div><span class="v">1708 t/s</span><span class="n">+9% vs ub 1024, VRAM not measured</span></div>
+      </div></div>
+    </div>
+  </section>
+
+  <section class="s" id="kernel">
+    <div class="eb">05 / Kernel</div>
+    <h2>70% of decode time is one kernel, and it runs near peak.</h2>
+    <p class="cap">In-kernel 78% of 456 GB/s. Realistic kernel gain is about 10%.</p>
+    <div class="kern">
+      <div class="donut">
+        <svg viewBox="0 0 200 200" aria-hidden="true">
+<circle cx="100" cy="100" r="70" fill="none" stroke="#00c8f0" stroke-width="22" stroke-dasharray="307.00 439.82" stroke-dashoffset="-0.00" transform="rotate(-90 100 100)"/>
+<circle cx="100" cy="100" r="70" fill="none" stroke="#9df2ff" stroke-width="22" stroke-dasharray="36.07 439.82" stroke-dashoffset="-307.00" transform="rotate(-90 100 100)"/>
+<circle cx="100" cy="100" r="70" fill="none" stroke="rgba(0,200,240,.45)" stroke-width="22" stroke-dasharray="26.39 439.82" stroke-dashoffset="-343.06" transform="rotate(-90 100 100)"/>
+<circle cx="100" cy="100" r="70" fill="none" stroke="rgba(232,242,252,.16)" stroke-width="22" stroke-dasharray="70.37 439.82" stroke-dashoffset="-369.45" transform="rotate(-90 100 100)"/>
+        </svg>
+        <div>70%</div>
+      </div>
+      <ul class="kl"><li><i style="background:#00c8f0"></i><span>Q4_0 matvec</span><b>70%</b></li><li><i style="background:#9df2ff"></i><span>lm_head</span><b>8%</b></li><li><i style="background:rgba(0,200,240,.45)"></i><span>attention</span><b>6%</b></li><li><i style="background:rgba(232,242,252,.16)"></i><span>other</span><b>16%</b></li></ul>
+    </div>
+  </section>
+
+  <section class="s" id="prompt">
+    <div class="eb">06 / Prompt</div>
+    <h2>Tool schemas were 86% of Chief's first request; the fix cuts 22 tools to 5.</h2>
+    <p class="cap">Tokens in the first request, Gemma tokenizer. Fix applied; token count pending.</p>
+    <div class="bars">
+<div class="bar"><span class="k">Hermes default</span><div class="tr"><i class="fi mist" style="width:100.0%"></i></div><span class="v">33,207</span></div>
+<div class="bar"><span class="k">Chief, 22 tools</span><div class="tr"><i class="fi mist" style="width:44.84%"></i></div><span class="v">14,891</span><span class="n">measured before the fix; 12,872 are tool schemas</span></div>
+<div class="bar"><span class="k">Chief, 8 tools</span><div class="tr"><i class="fi cyan" style="width:15.33%"></i></div><span class="v">5,090</span><span class="n">test config, measured; not the fixed set</span></div>
+<div class="bar"><span class="k">pi</span><div class="tr"><i class="fi mist" style="width:6.52%"></i></div><span class="v">2,166</span></div>
+<div class="bar"><span class="k">dsh (DeepSeek harness)</span><div class="tr"><i class="fi mist" style="width:6.1%"></i></div><span class="v">2,025</span></div>
+<div class="bar"><span class="k">Chief, fixed</span><div class="tr dash"></div><span class="v pend">pending</span><span class="n">tool filter fixed: 22 -&gt; 5 tools (research/30). Token count after live measurement.</span></div>
+    </div>
+  </section>
+
+  <section class="s" id="day">
+    <div class="eb">07 / Day</div>
+    <h2>Three reboots and three GPU faults so far today.</h2>
+    <p class="cap">Each dot is a logged event, 00:00 to 13:00 CEST. Red: fault or crash.</p>
+    <div class="tl"><div class="axis"></div><i class="stem" style="left:1.79%;top:70px;height:22px"></i><i class="dot mist" style="left:1.79%;top:65px" title="00:14 overnight bench runs"></i><span class="tag" style="left:calc(1.79% + 8px);top:61px">bench runs</span><i class="stem" style="left:33.46%;top:70px;height:22px"></i><i class="dot verm" style="left:33.46%;top:65px" title="04:21 GPU reset"></i><span class="tag" style="left:calc(33.46% + 8px);top:61px">GPU reset</span><i class="stem" style="left:67.56%;top:70px;height:22px"></i><i class="dot cyan" style="left:67.56%;top:65px" title="08:47 IO scheduler fix"></i><span class="tag" style="left:calc(67.56% + 8px);top:61px">IO fix</span><i class="stem" style="left:75.0%;top:70px;height:22px"></i><i class="dot mist" style="left:75.0%;top:65px" title="09:45 reboot 1"></i><span class="tag" style="left:calc(75.0% + 8px);top:61px">reboot</span><i class="stem" style="left:82.44%;top:14px;height:78px"></i><i class="dot verm" style="left:82.44%;top:9px" title="10:43 GPU reset"></i><span class="tag" style="left:calc(82.44% + 8px);top:5px">GPU reset</span><i class="stem" style="left:83.08%;top:92px;height:46px"></i><i class="dot verm" style="left:83.08%;top:133px" title="10:48 device lost"></i><span class="tag" style="left:calc(83.08% + 8px);top:129px">device lost</span><i class="stem" style="left:83.97%;top:70px;height:22px"></i><i class="dot mist" style="left:83.97%;top:65px" title="~10:55 reboot 2"></i><span class="tag" style="left:calc(83.97% + 8px);top:61px">reboot</span><i class="stem" style="left:89.87%;top:92px;height:22px"></i><i class="dot verm" style="left:89.87%;top:109px" title="11:41 GT 1030 display failed"></i><span class="tag" style="left:calc(89.87% + 8px);top:105px">GT1030 fail</span><i class="stem" style="left:90.9%;top:42px;height:50px"></i><i class="dot mist" style="left:90.9%;top:37px" title="11:49 reboot 3"></i><span class="tag" style="left:calc(90.9% + 8px);top:33px">reboot</span><i class="stem" style="left:92.31%;top:70px;height:22px"></i><i class="dot jade" style="left:92.31%;top:65px" title="12:00 256K program starts"></i><span class="tag" style="left:calc(92.31% + 8px);top:61px">256K start</span></div>
+    <div class="ticks"><span style="left:0.0%">00:00</span><span style="left:30.77%">04:00</span><span style="left:61.54%">08:00</span><span style="left:92.31%">12:00</span></div>
+    <ul class="lg"><li><i class="dot mist"></i><b>00:14</b> overnight bench runs</li><li><i class="dot verm"></i><b>04:21</b> GPU reset</li><li><i class="dot cyan"></i><b>08:47</b> IO scheduler fix</li><li><i class="dot mist"></i><b>09:45</b> reboot 1</li><li><i class="dot verm"></i><b>10:43</b> GPU reset</li><li><i class="dot verm"></i><b>10:48</b> device lost</li><li><i class="dot mist"></i><b>~10:55</b> reboot 2</li><li><i class="dot verm"></i><b>11:41</b> GT 1030 display failed</li><li><i class="dot mist"></i><b>11:49</b> reboot 3</li><li><i class="dot jade"></i><b>12:00</b> 256K program starts</li></ul>
+  </section>
+
+  <section class="s" id="running">
+    <div class="eb">08 / Running now</div>
+    <h2>Two lanes are live; the 256K ladder is stopped.</h2>
+    <div class="run-grid">
+      <div class="lane"><div><span class="nm">Chief eval suite</span><span class="tx">BRIEF-37, gates the Gemma variants</span></div><span class="pill run">building</span></div>
+      <div class="lane"><div><span class="nm">YURI phase 1</span><span class="tx">Find, map, design; no code (BRIEF-38)</span></div><span class="pill run">running</span></div>
+      <div class="lane"><div><span class="nm">256K ladder</span><span class="tx">No run clean past 32K; 64K step died</span></div><span class="pill fail">stopped</span></div>
+      <div class="lane"><div><span class="nm">Chief ICM instructions</span><span class="tx">Instructions in place (research/36)</span></div><span class="pill done">done</span></div>
+      <div class="lane"><div><span class="nm">Chief</span><span class="tx">Loads on request, unloads after 600 s idle</span></div><span class="pill done">ready</span></div>
+      <div class="lane"><div><span class="nm">Computer act</span><span class="tx">10/10 verified <em>not model-driven</em></span></div><span class="pill done">done</span></div>
+      <div class="lane"><div><span class="nm">Whisper, GT 1030</span><span class="tx">CUDA 12.9 build OK</span></div><span class="pill done">done</span></div>
+      <div class="lane"><div><span class="nm">British voice</span><span class="tx">Shortlist rendered, pick open</span></div><span class="pill wait">waiting</span></div>
+    </div>
+  </section>
+
+  <section class="s" id="waiting">
+    <div class="eb">09 / Waiting on Marcel</div>
+    <h2>Five decisions are waiting on you.</h2>
+    <div class="chips">
+      <div class="chip"><i>1</i><b>British voice pick</b><span>British shortlist, pick open</span></div>
+      <div class="chip"><i>2</i><b>Invoice test</b><span>services on the VPS, not this PC</span></div>
+      <div class="chip"><i>3</i><b>YURI design approval</b><span>when phase 1 is ready</span></div>
+      <div class="chip"><i>4</i><b>256K job timeout</b><span>sudo, you run it</span></div>
+      <div class="chip"><i>5</i><b>MTP draft on</b><span>OK for the headroom cost</span></div>
+    </div>
+  </section>
+
+  <section class="s" id="voice">
+    <div class="eb">10 / Voice</div>
+    <h2>Two Kokoro voices start in under 0.7 s; the rest do not.</h2>
+    <span class="path">voice/bakeoff/british/british-shortlist.wav</span>
+    <p class="cap">Seconds to first audio, log scale. Cyan is under 1 s.</p>
+    <div class="bars">
+<div class="bar"><span class="k">Kokoro bm_fable</span><div class="tr"><i class="fi cyan" style="width:5.63%"></i></div><span class="v">0.64 s</span></div>
+<div class="bar"><span class="k">Kokoro bm_lewis</span><div class="tr"><i class="fi cyan" style="width:6.68%"></i></div><span class="v">0.67 s</span></div>
+<div class="bar"><span class="k">Chatterbox p274</span><div class="tr"><i class="fi mist" style="width:56.74%"></i></div><span class="v">6.01 s</span></div>
+<div class="bar"><span class="k">Chatterbox p256</span><div class="tr"><i class="fi mist" style="width:57.20%"></i></div><span class="v">6.13 s</span></div>
+<div class="bar"><span class="k">Kyutai p232</span><div class="tr"><i class="fi mist" style="width:93.37%"></i></div><span class="v">29.92 s</span></div>
+<div class="bar"><span class="k">Kyutai p226</span><div class="tr"><i class="fi mist" style="width:98.42%"></i></div><span class="v">37.33 s</span></div>
+<div class="bar"><span class="k">log scale</span><div class="tr ax"><span style="left:15.82%">1 s</span><span style="left:52.55%">5 s</span><span style="left:68.36%">10 s</span><span style="left:93.43%">30 s</span></div><span></span></div>
+    </div>
+  </section>
+
+  <section class="s" id="recipes">
+    <div class="eb">11 / Recipes</div>
+    <h2>Configs tried today, and what was kept.</h2>
+    <div class="tw"><table class="rt">
+      <tr><th>Engine</th><th>Flags as run</th><th>Model</th><th>Result</th><th>Verdict</th></tr>
+      <tr><td>Vulkan</td><td>-ngl 99 --n-cpu-moe 24 -ub 512</td><td>Qwen3.6-35B-A3B</td><td class="r">pp4096 184, tg 34.1</td><td><span class="vd drop">baseline</span></td></tr>
+      <tr><td>Vulkan</td><td>same, -ub 1024</td><td>Qwen3.6-35B-A3B</td><td class="r">pp 278 (+52%), tg 35.2</td><td><span class="vd kept">kept</span></td></tr>
+      <tr><td>Vulkan</td><td>same, -lm none</td><td>Qwen3.6-35B-A3B</td><td class="r">pp 316, tg 33.8</td><td><span class="vd pend">under test</span></td></tr>
+      <tr><td>Vulkan</td><td>--n-cpu-moe 26, -ub 2048</td><td>Qwen3.6-35B-A3B</td><td class="r">pp 107 (-42%), tg 21.0</td><td><span class="vd drop">dropped</span></td></tr>
+      <tr><td>SYCL</td><td>--n-cpu-moe 26</td><td>Qwen3.6-35B-A3B</td><td class="r">pp 495, tg 40.8, 394 MiB headroom</td><td><span class="vd drop">fails fit rule</span></td></tr>
+      <tr><td>SYCL</td><td>--n-cpu-moe 30</td><td>Qwen3.6-35B-A3B</td><td class="r">pp 481, tg 40.0, 1890 MiB free</td><td><span class="vd kept">kept, text-only</span></td></tr>
+      <tr><td>SYCL</td><td>-c 65536, thinking off</td><td>Gemma 4 12B QAT</td><td class="r">pp 791, tg 26.8</td><td><span class="vd kept">kept, Chief base</span></td></tr>
+      <tr><td>SYCL</td><td>-c 65536, MTP n_max 2</td><td>Gemma 4 12B QAT</td><td class="r">tg 70.8 pooled, accept 0.71</td><td><span class="vd drop">superseded</span></td></tr>
+      <tr><td>SYCL</td><td>-c 65536, MTP n_max 3</td><td>Gemma 4 12B QAT</td><td class="r">tg 76.8, accept 0.63, greedy 5/6</td><td><span class="vd pend">off until Marcel OKs</span></td></tr>
+      <tr><td>SYCL</td><td>MTP n_max 4 / 6</td><td>Gemma 4 12B QAT</td><td class="r">tg 76.3 / 57.9</td><td><span class="vd drop">dropped</span></td></tr>
+      <tr><td>SYCL</td><td>-ub 2048</td><td>Gemma 4 12B QAT</td><td class="r">pp 1708 (+9%), VRAM not measured</td><td><span class="vd pend">candidate</span></td></tr>
+      <tr><td>SYCL</td><td>-c 131072, q4_0 KV, -ub 512</td><td>Gemma 4 12B QAT</td><td class="r">5 of 5 needles to 64.6K, min free 1868</td><td><span class="vd drop">passed, not shipped</span></td></tr>
+      <tr><td>SYCL</td><td>-c 131072, 32K prefill</td><td>Gemma 4 12B QAT</td><td class="r">DEVICE_LOST, 10:48</td><td><span class="vd crash">crash</span></td></tr>
+      <tr><td>SYCL</td><td>-c 262144, q4_0 KV, -ub 256 or 512</td><td>Gemma 4 12B QAT</td><td class="r">no run clean past 32K</td><td><span class="vd drop">dropped</span></td></tr>
+      <tr><td>SYCL</td><td>enable_thinking=false per request</td><td>Gemma 4 12B QAT</td><td class="r">first sentence 2.2 s vs 20.9 s on</td><td><span class="vd kept">kept, default off</span></td></tr>
+    </table></div>
+  </section>
+
+  <p class="foot">research/00-plan.md · 26 · 27 · 30 · 31 · 33 · 34 · 35 · 36 · RESUME-after-reboot-2.md · voice/bakeoff/INDEX.md · bench/logs/chief256k · bench/results-matrix.tsv</p>
+</main>
+</body>
+</html>

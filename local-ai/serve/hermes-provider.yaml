@@ -1,0 +1,24 @@
+# Hermes provider proposal — local on-demand model shelf (llama-swap v264).
+# PROPOSAL ONLY. This file is NOT read by Hermes; do NOT edit ~/.hermes/config.yaml
+# until Marcel approves. To adopt: merge the `providers.local-ai` block below into
+# the `providers:` map of ~/.hermes/config.yaml (it already has that shape).
+#
+# Model IDs match serve/config.yaml exactly — Hermes sends `model` in the request
+# body and llama-swap routes by it (loads on first use, unloads after ttl: 600 s).
+providers:
+  local-ai:
+    name: local-ai
+    api_mode: openai
+    base_url: http://127.0.0.1:18080/v1
+    api_key: dummy                 # llama-swap has no apiKeys set -> auth is not checked
+    discover_models: false
+    model: qwen3.6-35b-a3b-mtp     # default pick; switch per session via the model id
+    models:
+      qwen3.6-35b-a3b-mtp: {}
+      minicpm-v-4.7-35b-a3b: {}
+      ui-venus-1.5-30b-a3b: {}
+      qwen3.8-flash-next-iq3_xxs: {}
+    # Generous: a cold start loads 22-37 GB off disk (healthCheckTimeout is 900 s
+    # in serve/config.yaml), and the first request of a session waits for it.
+    request_timeout_seconds: 1800
+    stale_timeout_seconds: 1800

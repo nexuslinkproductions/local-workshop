@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local AI status, 13 Oct 2026</title>
+<style>
+:root{
+  --void:#0a1120; --panel:#0e1628; --ink:#eef6fd; --soft:#b8cce3; --mist:#8299b5; --faint:#536680;
+  --cyan:#00c8f0; --cyan-hi:#9df2ff; --jade:#46e3c2; --verm:#e8453a;
+  --line:rgba(0,200,240,.14); --hair:rgba(232,242,252,.08);
+  --sans:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --s2:#00c8f0; --s3:#4c8dff; --s4:#2f64c8; --s5:#8299b5;
+  --amber:#f2b33d; --r1:#2a6aa3; --r2:#2f89bf; --r3:#38aad8; --r4:#5fd0f0; --r5:#9df2ff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--void);color:var(--soft);font:15px/1.55 var(--sans)}
+a{color:var(--cyan)}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 24px;background:rgba(10,17,32,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top i{display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--cyan);border-radius:4px;font:700 12px var(--mono);font-style:normal;color:var(--cyan)}
+.top b{font:600 13px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink)}
+.top span{margin-left:auto;font:13px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--mist)}
+.wrap{max-width:880px;margin:0 auto;padding:0 24px}
+header.wrap{padding-top:44px;padding-bottom:36px}
+h1{margin:0;font:600 34px/1.15 var(--sans);letter-spacing:-.02em;color:var(--ink)}
+h1 small{display:inline-block;margin-left:12px;font:500 14px var(--mono);letter-spacing:.08em;color:var(--mist)}
+
+/* bands: alternating tones + hard divider, so sections never run together */
+.band{padding:56px 0;border-top:1px solid var(--line)}
+.band:nth-of-type(odd){background:var(--panel)}
+.viz{position:relative;border:1px solid var(--line);border-left:4px solid var(--cyan);border-radius:8px;padding:26px 28px 24px;background:var(--panel)}
+.band:nth-of-type(odd) .viz{background:var(--void)}
+.sh{display:flex;align-items:center;gap:12px;margin:0 0 14px}
+.no{font:700 15px var(--mono);letter-spacing:.06em;color:var(--cyan-hi);border:1px solid var(--cyan);border-radius:4px;padding:4px 9px}
+.chip{display:inline-block;background:var(--cyan);color:var(--void);font:800 14px var(--mono);letter-spacing:.14em;text-transform:uppercase;padding:6px 14px;border-radius:4px}
+.viz h3{margin:0 0 6px;font:650 24px/1.25 var(--sans);letter-spacing:-.015em;color:var(--ink)}
+.viz .cap{margin:0;font:14px/1.4 var(--sans);color:var(--mist)}
+.fig{margin:22px 0 0}
+.viz svg{display:block;width:100%;height:auto;margin:0 auto;overflow:visible}
+.viz svg text{font:14px var(--sans);fill:var(--soft)}
+.viz .k{font-weight:600;fill:var(--ink)}
+.viz .m{font:13px var(--mono);fill:var(--mist)}
+.viz .v{font:600 15px var(--mono);fill:var(--cyan-hi);font-variant-numeric:tabular-nums}
+.viz .big{font:650 34px var(--sans);letter-spacing:-.02em;fill:var(--cyan-hi);font-variant-numeric:tabular-nums}
+.viz .mid{font:600 24px var(--sans);fill:var(--soft);font-variant-numeric:tabular-nums}
+.viz .e{font:600 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;fill:var(--cyan)}
+.viz .j{fill:var(--jade)} .viz .warn{fill:var(--verm)} .viz .sf{fill:var(--soft)}
+.viz svg.n,.n text{display:none}
+/* hidden twin: drop strokes too, so the layout probe does not read geometry from an undisplayed SVG */
+@media(min-width:861px){.viz svg.n *{stroke:none}}
+
+/* decisions: one row each, state chip on the right */
+.rows{margin:22px 0 0;border-top:1px solid var(--hair)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto 112px;align-items:center;gap:8px 16px;padding:14px 4px;border-bottom:1px solid var(--hair)}
+.row b{font:600 18px/1.3 var(--sans);color:var(--ink)}
+.row .val{font:600 15px var(--sans);color:var(--ink)}
+.seg{display:inline-flex;border:1px solid var(--mist);border-radius:6px;overflow:hidden}
+.seg span{padding:5px 12px;font:600 14px var(--mono);color:var(--soft)}
+.seg span+span{border-left:1px solid var(--mist)}
+.st{justify-self:end;width:112px;text-align:center;padding:5px 0;border-radius:4px;font:700 13px var(--mono);letter-spacing:.12em;text-transform:uppercase}
+.st.wait{border:2px solid var(--amber);color:var(--amber)}
+.st.done{border:2px solid var(--jade);background:var(--jade);color:var(--void)}
+.next{margin:22px 0 0;padding-top:16px;border-top:1px solid var(--hair);font:15px var(--sans);color:var(--soft)}
+.next em{font:600 13px var(--mono);font-style:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--cyan);margin-right:10px}
+footer{padding:28px 0 44px;border-top:1px solid var(--line);font:13px/1.6 var(--mono);color:var(--mist)}
+
+@media(max-width:860px){
+  .viz svg.w,.w text{display:none} .viz svg.n{display:block;max-width:480px} .n text{display:inline}
+  .viz svg.w *{stroke:none}
+  .wrap{padding:0 16px} .top{padding:10px 16px}
+  .band{padding:40px 0} .viz{padding:20px 14px 18px}
+  h1{font-size:28px} .viz h3{font-size:21px}
+  .row{grid-template-columns:minmax(0,1fr) 112px} .row .mid{grid-column:1;grid-row:2;justify-self:start} .row .st{grid-column:2;grid-row:1}
+}
+</style></head>
+<body>
+<div class="top"><i>N</i><b>Nexus</b><span>Status</span></div>
+<header class="wrap"><h1>Local AI status <small>13 Oct 2026</small></h1></header>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">01</span><span class="chip">Now</span></div>
+  <h3>Chief on Ornith 9B: 30 of 42 tasks, 4x context, 54.9 t/s</h3>
+  <p class="cap">Before: Gemma 4 12B this morning.</p>
+  <div class="fig"><svg class="w" viewBox="0 0 760 220" role="img" aria-label="Gemma 4 12B this morning to Ornith 9B now: tasks passed 25 to 30 of 42, context 64K to 256K, decode 27 to 38 t/s before, 54.9 now">
+<g transform="translate(0,0)">
+<text x="0" y="16" class="e">Tasks passed, of 42</text>
+<polygon points="26.0,186 26.0,126.5 202.0,114.6 202.0,186" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="20" y="126.5" width="6" height="59.5" fill="var(--s5)"/>
+<rect x="202" y="114.6" width="8" height="71.4" fill="var(--cyan)"/>
+<rect x="0" y="186" width="230" height="2" fill="var(--faint)"/>
+<text x="20" y="114.8" class="v sf">25</text>
+<text x="210" y="102.6" class="big" text-anchor="end">30</text>
+<text x="20" y="210" class="m">Gemma 4 12B</text>
+<text x="210" y="210" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+<g transform="translate(0,0)">
+<text x="265" y="16" class="e">Context window</text>
+<polygon points="291.0,186 291.0,161.0 467.0,86.0 467.0,186" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="285" y="161.0" width="6" height="25.0" fill="var(--s5)"/>
+<rect x="467" y="86.0" width="8" height="100.0" fill="var(--cyan)"/>
+<rect x="265" y="186" width="230" height="2" fill="var(--faint)"/>
+<text x="285" y="136.9" class="v sf">64K</text>
+<text x="475" y="74.0" class="big" text-anchor="end">256K</text>
+<text x="285" y="210" class="m">Gemma 4 12B</text>
+<text x="475" y="210" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+<g transform="translate(0,0)">
+<text x="530" y="16" class="e">Decode, t/s</text>
+<polygon points="556.0,186 556.0,122.7 732.0,94.5 732.0,186" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="550" y="122.7" width="6" height="63.3" fill="var(--s5)"/>
+<rect x="732" y="94.5" width="8" height="91.5" fill="var(--cyan)"/>
+<rect x="530" y="186" width="230" height="2" fill="var(--faint)"/>
+<text x="550" y="100.6" class="v sf">27 to 38</text>
+<text x="740" y="82.5" class="big" text-anchor="end">54.9</text>
+<text x="550" y="210" class="m">Gemma 4 12B</text>
+<text x="740" y="210" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+</svg>
+<svg class="n" viewBox="0 0 320 580" role="img" aria-label="Gemma 4 12B this morning to Ornith 9B now: tasks passed 25 to 30 of 42, context 64K to 256K, decode 27 to 38 t/s before, 54.9 now">
+<g transform="translate(0,0)">
+<text x="0" y="16" class="e">Tasks passed, of 42</text>
+<polygon points="26.0,158 26.0,108.0 292.0,98.0 292.0,158" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="20" y="108.0" width="6" height="50.0" fill="var(--s5)"/>
+<rect x="292" y="98.0" width="8" height="60.0" fill="var(--cyan)"/>
+<rect x="0" y="158" width="320" height="2" fill="var(--faint)"/>
+<text x="20" y="97.1" class="v sf">25</text>
+<text x="300" y="86.0" class="big" text-anchor="end">30</text>
+<text x="20" y="182" class="m">Gemma 4 12B</text>
+<text x="300" y="182" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+<g transform="translate(0,196)">
+<text x="0" y="16" class="e">Context window</text>
+<polygon points="26.0,158 26.0,137.0 292.0,74.0 292.0,158" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="20" y="137.0" width="6" height="21.0" fill="var(--s5)"/>
+<rect x="292" y="74.0" width="8" height="84.0" fill="var(--cyan)"/>
+<rect x="0" y="158" width="320" height="2" fill="var(--faint)"/>
+<text x="20" y="119.0" class="v sf">64K</text>
+<text x="300" y="62.0" class="big" text-anchor="end">256K</text>
+<text x="20" y="182" class="m">Gemma 4 12B</text>
+<text x="300" y="182" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+<g transform="translate(0,392)">
+<text x="0" y="16" class="e">Decode, t/s</text>
+<polygon points="26.0,158 26.0,104.8 292.0,81.1 292.0,158" fill="var(--cyan)" fill-opacity=".16"/>
+<rect x="20" y="104.8" width="6" height="53.2" fill="var(--s5)"/>
+<rect x="292" y="81.1" width="8" height="76.9" fill="var(--cyan)"/>
+<rect x="0" y="158" width="320" height="2" fill="var(--faint)"/>
+<text x="20" y="87.9" class="v sf">27 to 38</text>
+<text x="300" y="69.1" class="big" text-anchor="end">54.9</text>
+<text x="20" y="182" class="m">Gemma 4 12B</text>
+<text x="300" y="182" class="k" text-anchor="end">Ornith 9B</text>
+</g>
+</svg></div>
+</div></div></section>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">02</span><span class="chip">Speed</span></div>
+  <h3>54.9 t/s on short prompts, Gemma managed 27 to 38</h3>
+  <p class="cap">Mean of 3 runs.</p>
+  <div class="fig"><svg class="w" viewBox="0 0 520 300" style="max-width:520px" role="img" aria-label="Gauge from 0 to 60 t/s: Ornith 9B decodes 54.9 t/s on a short prompt, Gemma 4 12B did 27 to 38">
+<path d="M110.0 200.0 A150 150 0 0 1 410.0 200.0" fill="none" stroke="var(--faint)" stroke-width="14"/>
+<path d="M110.0 200.0 A150 150 0 0 1 404.7 160.4" fill="none" stroke="var(--cyan)" stroke-width="14"/>
+<path d="M241.5 83.5 A118 118 0 0 1 308.0 92.2" fill="none" stroke="var(--s5)" stroke-width="12"/>
+<line x1="98.0" y1="200.0" x2="90.0" y2="200.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="119.7" y1="119.0" x2="112.8" y2="115.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="179.0" y1="59.7" x2="175.0" y2="52.8" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="260.0" y1="38.0" x2="260.0" y2="30.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="341.0" y1="59.7" x2="345.0" y2="52.8" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="400.3" y1="119.0" x2="407.2" y2="115.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="422.0" y1="200.0" x2="430.0" y2="200.0" stroke="var(--mist)" stroke-width="1.5"/>
+<text x="84.0" y="205" class="m" text-anchor="end">0</text>
+<text x="260" y="20.0" class="m" text-anchor="middle">30</text>
+<text x="436.0" y="205" class="m">60 t/s</text>
+<line x1="260" y1="200" x2="383.5" y2="166.2" stroke="var(--cyan-hi)" stroke-width="3" stroke-linecap="round"/>
+<circle cx="260" cy="200" r="8" fill="var(--cyan-hi)"/>
+<text x="260" y="126" class="sf" text-anchor="middle">Gemma 4 12B</text>
+<text x="260" y="146" class="v sf" text-anchor="middle">27 to 38</text>
+<text x="260" y="254" class="big" text-anchor="middle">54.9</text>
+<text x="260" y="278" class="k" text-anchor="middle">Ornith 9B, t/s</text>
+</svg>
+<svg class="n" viewBox="0 0 320 252" role="img" aria-label="Gauge from 0 to 60 t/s: Ornith 9B decodes 54.9 t/s on a short prompt, Gemma 4 12B did 27 to 38">
+<path d="M52.0 160.0 A108 108 0 0 1 268.0 160.0" fill="none" stroke="var(--faint)" stroke-width="14"/>
+<path d="M52.0 160.0 A108 108 0 0 1 264.2 131.5" fill="none" stroke="var(--cyan)" stroke-width="14"/>
+<path d="M146.9 77.0 A84 84 0 0 1 194.2 83.3" fill="none" stroke="var(--s5)" stroke-width="12"/>
+<line x1="40.0" y1="160.0" x2="32.0" y2="160.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="56.1" y1="100.0" x2="49.1" y2="96.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="100.0" y1="56.1" x2="96.0" y2="49.1" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="160.0" y1="40.0" x2="160.0" y2="32.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="220.0" y1="56.1" x2="224.0" y2="49.1" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="263.9" y1="100.0" x2="270.9" y2="96.0" stroke="var(--mist)" stroke-width="1.5"/>
+<line x1="280.0" y1="160.0" x2="288.0" y2="160.0" stroke="var(--mist)" stroke-width="1.5"/>
+<text x="26.0" y="165" class="m" text-anchor="end">0</text>
+<text x="160" y="22.0" class="m" text-anchor="middle">30</text>
+<text x="294.0" y="165" class="m">60</text>
+<line x1="160" y1="160" x2="243.0" y2="137.3" stroke="var(--cyan-hi)" stroke-width="3" stroke-linecap="round"/>
+<circle cx="160" cy="160" r="8" fill="var(--cyan-hi)"/>
+<text x="160" y="114" class="sf" text-anchor="middle">Gemma 4 12B</text>
+<text x="160" y="134" class="v sf" text-anchor="middle">27 to 38</text>
+<text x="160" y="214" class="big" text-anchor="middle">54.9</text>
+<text x="160" y="238" class="k" text-anchor="middle">Ornith 9B, t/s</text>
+</svg></div>
+</div></div></section>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">03</span><span class="chip">Long context</span></div>
+  <h3>Slows to 10.3 t/s at 200K, still finds the hidden fact</h3>
+  <div class="fig"><svg class="w" viewBox="0 0 760 226" role="img" aria-label="Decode speed by context length: 54.9 t/s on a short prompt, 46.3 at 8K, 32.1 at 32K, 23.6 at 64K, 14.4 at 128K, 10.3 at 200K; the hidden fact was found at 128K and 200K">
+<text x="0" y="16" class="e">Decode t/s at each context stop, stops not to scale</text>
+<polygon points="50,77.2 160,82.7 160,141.3 50,146.8" fill="var(--r5)"/>
+<polygon points="160,82.7 270,91.7 270,132.3 160,141.3" fill="var(--r4)"/>
+<polygon points="270,91.7 380,97.1 380,126.9 270,132.3" fill="var(--r3)"/>
+<polygon points="380,97.1 490,102.9 490,121.1 380,126.9" fill="var(--r2)"/>
+<polygon points="490,102.9 600,105.5 600,118.5 490,121.1" fill="var(--r1)"/>
+<line x1="608" y1="112" x2="702" y2="112" stroke="var(--faint)" stroke-width="2" stroke-dasharray="6 4"/>
+<circle cx="50" cy="112" r="5" fill="var(--ink)"/>
+<text x="50" y="67.2" class="v" text-anchor="middle">54.9</text>
+<text x="50" y="168" class="m" text-anchor="middle">short</text>
+<circle cx="160" cy="112" r="5" fill="var(--ink)"/>
+<text x="160" y="72.7" class="v" text-anchor="middle">46.3</text>
+<text x="160" y="168" class="m" text-anchor="middle">8K</text>
+<circle cx="270" cy="112" r="5" fill="var(--ink)"/>
+<text x="270" y="81.7" class="v" text-anchor="middle">32.1</text>
+<text x="270" y="168" class="m" text-anchor="middle">32K</text>
+<circle cx="380" cy="112" r="5" fill="var(--ink)"/>
+<text x="380" y="87.1" class="v" text-anchor="middle">23.6</text>
+<text x="380" y="168" class="m" text-anchor="middle">64K</text>
+<circle cx="490" cy="112" r="5" fill="var(--ink)"/>
+<text x="490" y="92.9" class="v" text-anchor="middle">14.4</text>
+<text x="490" y="168" class="m" text-anchor="middle">128K</text>
+<polygon points="512.0,190 475.0,185.5 468.0,190 475.0,194.5" fill="var(--jade)"/><ellipse cx="477.0" cy="190" rx="4.5" ry="1.8" fill="var(--void)"/>
+<circle cx="600" cy="112" r="5" fill="var(--ink)"/>
+<text x="600" y="95.5" class="v" text-anchor="middle">10.3</text>
+<text x="600" y="168" class="m" text-anchor="middle">200K</text>
+<polygon points="622.0,190 585.0,185.5 578.0,190 585.0,194.5" fill="var(--jade)"/><ellipse cx="587.0" cy="190" rx="4.5" ry="1.8" fill="var(--void)"/>
+<text x="545" y="218" class="m j" text-anchor="middle">hidden fact found</text>
+<circle cx="710" cy="112" r="5" fill="var(--faint)"/>
+<text x="710" y="168" class="m" text-anchor="middle">256K</text>
+<text x="710" y="188" class="m" text-anchor="middle">limit</text>
+</svg>
+<svg class="n" viewBox="0 0 320 440" role="img" aria-label="Decode speed by context length: 54.9 t/s on a short prompt, 46.3 at 8K, 32.1 at 32K, 23.6 at 64K, 14.4 at 128K, 10.3 at 200K; the hidden fact was found at 128K and 200K">
+<text x="0" y="16" class="e">Decode t/s, stops not to scale</text>
+<polygon points="64.0,48 128.0,48 123.0,110 69.0,110" fill="var(--r5)"/>
+<polygon points="69.0,110 123.0,110 114.7,172 77.3,172" fill="var(--r4)"/>
+<polygon points="77.3,172 114.7,172 109.8,234 82.2,234" fill="var(--r3)"/>
+<polygon points="82.2,234 109.8,234 104.4,296 87.6,296" fill="var(--r2)"/>
+<polygon points="87.6,296 104.4,296 102.0,358 90.0,358" fill="var(--r1)"/>
+<line x1="96" y1="366" x2="96" y2="412" stroke="var(--faint)" stroke-width="2" stroke-dasharray="6 4"/>
+<circle cx="96" cy="48" r="5" fill="var(--ink)"/>
+<text x="50" y="53" class="m" text-anchor="end">short</text>
+<text x="138.0" y="53" class="v">54.9</text>
+<circle cx="96" cy="110" r="5" fill="var(--ink)"/>
+<text x="50" y="115" class="m" text-anchor="end">8K</text>
+<text x="133.0" y="115" class="v">46.3</text>
+<circle cx="96" cy="172" r="5" fill="var(--ink)"/>
+<text x="50" y="177" class="m" text-anchor="end">32K</text>
+<text x="124.7" y="177" class="v">32.1</text>
+<circle cx="96" cy="234" r="5" fill="var(--ink)"/>
+<text x="50" y="239" class="m" text-anchor="end">64K</text>
+<text x="119.8" y="239" class="v">23.6</text>
+<circle cx="96" cy="296" r="5" fill="var(--ink)"/>
+<text x="50" y="301" class="m" text-anchor="end">128K</text>
+<text x="114.4" y="301" class="v">14.4</text>
+<polygon points="204.0,296 167.0,291.5 160.0,296 167.0,300.5" fill="var(--jade)"/><ellipse cx="169.0" cy="296" rx="4.5" ry="1.8" fill="var(--void)"/>
+<circle cx="96" cy="358" r="5" fill="var(--ink)"/>
+<text x="50" y="363" class="m" text-anchor="end">200K</text>
+<text x="112.0" y="363" class="v">10.3</text>
+<polygon points="204.0,358 167.0,353.5 160.0,358 167.0,362.5" fill="var(--jade)"/><ellipse cx="169.0" cy="358" rx="4.5" ry="1.8" fill="var(--void)"/>
+<polyline points="208,296 214,296 214,358 208,358" fill="none" stroke="var(--jade)" stroke-width="1.5"/>
+<text x="222" y="323.0" class="m j">hidden fact</text>
+<text x="222" y="341.0" class="m j">found</text>
+<circle cx="96" cy="420" r="5" fill="var(--faint)"/>
+<text x="50" y="425" class="m" text-anchor="end">256K</text>
+<text x="110" y="425" class="m">limit</text>
+</svg></div>
+</div></div></section>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">04</span><span class="chip">Models</span></div>
+  <h3>Ornith 30 of 42, Gemma 25: the gap is not proven</h3>
+  <p class="cap">Chief tasks passed, one run each.</p>
+  <div class="fig"><svg class="w" viewBox="0 0 600 316" style="max-width:600px" role="img" aria-label="Podium of Chief tasks passed out of 42: Ornith 30, Gemma 25, MiniCPM 24; the 5-task lead over Gemma is not proven">
+<line x1="54.0" y1="72" x2="546.0" y2="72" stroke="var(--faint)" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="546.0" y="62" class="m" text-anchor="end">all 42</text>
+<rect x="54.0" y="256" width="492.0" height="2" fill="var(--faint)"/>
+<rect class="bar" data-v="25" x="66.0" y="146.5" width="140" height="109.5" rx="3" fill="var(--s5)"/>
+<text x="136.0" y="134.5" class="mid" text-anchor="middle" style=font-size:26px>25</text>
+<text x="136.0" y="280" class="sf" text-anchor="middle">Gemma 4 12B</text>
+<rect class="bar" data-v="30" x="230.0" y="124.6" width="140" height="131.4" rx="3" fill="var(--cyan)"/>
+<line x1="208.0" y1="146.5" x2="230.0" y2="146.5" stroke="var(--mist)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<line x1="230.0" y1="146.5" x2="370.0" y2="146.5" stroke="var(--void)" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="300.0" y="112.6" class="big" text-anchor="middle">30</text>
+<text x="300.0" y="280" class="k" text-anchor="middle">Ornith 9B</text>
+<rect class="bar" data-v="24" x="394.0" y="150.9" width="140" height="105.1" rx="3" fill="var(--s4)"/>
+<text x="464.0" y="138.9" class="mid" text-anchor="middle" style=font-size:26px>24</text>
+<text x="464.0" y="280" class="sf" text-anchor="middle">MiniCPM-V 4.7</text>
+<text x="300.0" y="302" class="m" text-anchor="middle">+5, unproven</text>
+</svg>
+<svg class="n" viewBox="0 0 320 316" role="img" aria-label="Podium of Chief tasks passed out of 42: Ornith 30, Gemma 25, MiniCPM 24; the 5-task lead over Gemma is not proven">
+<line x1="4.0" y1="72" x2="316.0" y2="72" stroke="var(--faint)" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="316.0" y="62" class="m" text-anchor="end">all 42</text>
+<rect x="4.0" y="256" width="312.0" height="2" fill="var(--faint)"/>
+<rect class="bar" data-v="25" x="16.0" y="146.5" width="88" height="109.5" rx="3" fill="var(--s5)"/>
+<text x="60.0" y="134.5" class="mid" text-anchor="middle" style=font-size:22px>25</text>
+<text x="60.0" y="280" class="sf" text-anchor="middle">Gemma</text>
+<rect class="bar" data-v="30" x="116.0" y="124.6" width="88" height="131.4" rx="3" fill="var(--cyan)"/>
+<line x1="106.0" y1="146.5" x2="116.0" y2="146.5" stroke="var(--mist)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<line x1="116.0" y1="146.5" x2="204.0" y2="146.5" stroke="var(--void)" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="160.0" y="112.6" class="big" text-anchor="middle">30</text>
+<text x="160.0" y="280" class="k" text-anchor="middle">Ornith</text>
+<rect class="bar" data-v="24" x="216.0" y="150.9" width="88" height="105.1" rx="3" fill="var(--s4)"/>
+<text x="260.0" y="138.9" class="mid" text-anchor="middle" style=font-size:22px>24</text>
+<text x="260.0" y="280" class="sf" text-anchor="middle">MiniCPM</text>
+<text x="160.0" y="302" class="m" text-anchor="middle">+5, unproven</text>
+</svg></div>
+</div></div></section>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">05</span><span class="chip">Card memory</span></div>
+  <h3>MTP not usable: loading it left -522 MiB free (measured)</h3>
+  <p class="cap">Drawn to scale.</p>
+  <div class="fig"><svg class="w" viewBox="0 0 600 600" style="max-width:600px" role="img" aria-label="Card memory in MiB, to scale: desktop 1,792, Ornith and cache 9,348, free 1,148, which is 398 above the 750 floor; MTP needs about 1,670 and measured -522 free when loaded">
+<rect x="150" y="492.3" width="180" height="67.7" fill="var(--s4)"/>
+<rect x="150" y="139.3" width="180" height="353.0" fill="var(--cyan)"/>
+<rect x="150" y="96" width="180" height="464.0" rx="6" fill="none" stroke="var(--mist)" stroke-width="2"/>
+<rect x="160" y="76.3" width="160" height="63.1" fill="var(--cyan-hi)" fill-opacity=".10" stroke="var(--cyan-hi)" stroke-width="2" stroke-dasharray="5 4"/>
+<line x1="142" y1="124.3" x2="352" y2="124.3" stroke="var(--verm)" stroke-width="2.5"/>
+<text x="364" y="129.3" class="m warn">floor 750 MiB</text>
+<polyline points="332,124.3 336,124.3 336,139.3 332,139.3" fill="none" stroke="var(--jade)" stroke-width="2"/>
+<polyline points="336,131.8 346,131.8 346,148.3 354,148.3" fill="none" stroke="var(--jade)" stroke-width="1"/>
+<text x="364" y="153.3" class="k">Headroom <tspan class="v j">398 MiB</tspan></text>
+<polyline points="320,76.3 348,76.3 348,19 354,19" fill="none" stroke="var(--mist)" stroke-width="1"/>
+<text x="364" y="24" class="k">MTP needs about</text>
+<text x="364" y="45" class="v">1,670 MiB</text>
+<text x="364" y="66" class="v warn">-522 MiB with MTP</text>
+<line x1="334" y1="103.0" x2="354" y2="103.0" stroke="var(--mist)" stroke-width="1"/>
+<text x="364" y="108" class="k">Free now <tspan class="v">1,148 MiB</tspan></text>
+<line x1="334" y1="310.8" x2="354" y2="310.8" stroke="var(--mist)" stroke-width="1"/>
+<text x="364" y="315.8" class="k">Ornith + cache</text>
+<text x="364" y="337.8" class="v">9,348 MiB</text>
+<line x1="334" y1="521.2" x2="354" y2="521.2" stroke="var(--mist)" stroke-width="1"/>
+<text x="364" y="526.2" class="k">Desktop <tspan class="v">1,792 MiB</tspan></text>
+<text x="240.0" y="588" class="m" text-anchor="middle">card 12,288 MiB</text>
+</svg>
+<svg class="n" viewBox="0 0 320 600" role="img" aria-label="Card memory in MiB, to scale: desktop 1,792, Ornith and cache 9,348, free 1,148, which is 398 above the 750 floor; MTP needs about 1,670 and measured -522 free when loaded">
+<rect x="20" y="492.3" width="100" height="67.7" fill="var(--s4)"/>
+<rect x="20" y="139.3" width="100" height="353.0" fill="var(--cyan)"/>
+<rect x="20" y="96" width="100" height="464.0" rx="6" fill="none" stroke="var(--mist)" stroke-width="2"/>
+<rect x="30" y="76.3" width="80" height="63.1" fill="var(--cyan-hi)" fill-opacity=".10" stroke="var(--cyan-hi)" stroke-width="2" stroke-dasharray="5 4"/>
+<line x1="12" y1="124.3" x2="138" y2="124.3" stroke="var(--verm)" stroke-width="2.5"/>
+<text x="150" y="129.3" class="m warn">floor 750 MiB</text>
+<polyline points="122,124.3 126,124.3 126,139.3 122,139.3" fill="none" stroke="var(--jade)" stroke-width="2"/>
+<polyline points="126,131.8 136,131.8 136,148.3 140,148.3" fill="none" stroke="var(--jade)" stroke-width="1"/>
+<text x="150" y="153.3" class="k">Headroom <tspan class="v j">398 MiB</tspan></text>
+<polyline points="110,76.3 138,76.3 138,19 140,19" fill="none" stroke="var(--mist)" stroke-width="1"/>
+<text x="150" y="24" class="k">MTP needs about</text>
+<text x="150" y="45" class="v">1,670 MiB</text>
+<text x="150" y="66" class="v warn">-522 MiB with MTP</text>
+<line x1="124" y1="103.0" x2="140" y2="103.0" stroke="var(--mist)" stroke-width="1"/>
+<text x="150" y="108" class="k">Free now <tspan class="v">1,148 MiB</tspan></text>
+<line x1="124" y1="310.8" x2="140" y2="310.8" stroke="var(--mist)" stroke-width="1"/>
+<text x="150" y="315.8" class="k">Ornith + cache</text>
+<text x="150" y="337.8" class="v">9,348 MiB</text>
+<line x1="124" y1="521.2" x2="140" y2="521.2" stroke="var(--mist)" stroke-width="1"/>
+<text x="150" y="526.2" class="k">Desktop <tspan class="v">1,792 MiB</tspan></text>
+<text x="70.0" y="588" class="m" text-anchor="middle">card 12,288 MiB</text>
+</svg></div>
+</div></div></section>
+<section class="band"><div class="wrap"><div class="viz">
+  <div class="sh"><span class="no">06</span><span class="chip">Your call</span></div>
+  <h3>Three decisions open, one settled</h3>
+  <div class="rows">
+    <div class="row"><b>British voice</b><span class="mid"></span><span class="st wait">Waiting</span></div>
+    <div class="row"><b>Computer actions</b><span class="mid seg"><span>confirm</span><span>--yes</span></span><span class="st wait">Waiting</span></div>
+    <div class="row"><b>Repo name</b><span class="mid"></span><span class="st wait">Waiting</span></div>
+    <div class="row"><b>Preload at boot</b><span class="mid val">No preload</span><span class="st done">Decided</span></div>
+  </div>
+  <p class="next"><em>Under test</em>Chief v3 cuts the first request from 8,035 to 3,519 tokens.</p>
+</div></div></section>
+<footer class="wrap">Measurements: bakeoff42 runs, depth test, lab log. <a href="local-ai-status-2026-10-13.before-v3.html">Previous full report</a></footer>
+</body></html>
