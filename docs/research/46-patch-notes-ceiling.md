@@ -1,0 +1,8 @@
+# 46 - LC46_GLOBAL_KEEP decode ceiling for Gemma 4 global layers (BRIEF-46 R0.3)
+
+Files: src/llama-kv-cache.h (+3), src/llama-kv-cache.cpp (+23), src/llama-graph.cpp (+20); 46 LOC total, branch lc46/ceiling-and-draft-ctx.
+Inert when env unset: member defaults 0 (llama-kv-cache.h:296); ctor gate needs env+GEMMA4+iswa-base (llama-kv-cache.cpp:388-396); mask drop skipped when lc46_keep==0 (:1599, :1723-1726) and only ever set when ubatch n_tokens==1 (:1812); n_kv_max stays 0 (llama-graph.cpp:3447-3456). LLAMA_LOG_WARN fires once from the base-cache ctor.
+sparse_fa_applicable verdict (fattn-sparse.cpp:117-172), Gemma 4 global layers (D=512, 1 KV head, GQA 16): all pass - srcs ok; n_kv_max>0 ok (our hint); max_bias==0 ok (no alibi); logit_softcap==0 ok (gemma4 sets no attn_soft_cap); Q->ne[1]==1 ok (decode); K/V->ne[3]==1 && mask ne[2,3]==1 ok for single-seq single-stream (multi-seq non-unified decode fails -> dense fallback); mask F16 ok with -fa; mask->ne[0]>=K->ne[1] ok (== n_kv); K->ne[2]==V->ne[2] ok; nb[0] contiguous ok; row%4 ok (f16 1024B, q8_0 544B, q4_0 288B at D=512); n_kv_g*2<=K->ne[1] is runtime-only: sparse engages once n_kv >= 2*PAD(N+536,256) (N=2048 -> ~5.6K tokens).
+Downstream dispatch ok: D=512 in the supported set (fattn.cpp:193-217) and FATTN_VEC_CASE(512)/dkq512 tile instance exist; f16 -> VEC, q4_0/q8_0 -> TILE on BMG; gathered n_kv_g is a multiple of FATTN_KQ_STRIDE=256.
+Run: LC46_GLOBAL_KEEP=2048 GGML_SYCL_SPARSE_FA=1 build/bin/llama-bench -m <gemma4.gguf> -fa 1 -d 65536
+No code change needed in ggml-sycl; sparse path already gated on GGML_SYCL_SPARSE_FA=1 at runtime.

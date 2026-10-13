@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Local AI status, 13 Oct 2026</title>
+<style>
+:root{
+  --void:#0a1120; --panel:#0e1628; --ink:#eef6fd; --soft:#b8cce3; --mist:#8299b5; --faint:#536680;
+  --cyan:#00c8f0; --cyan-hi:#9df2ff; --jade:#46e3c2; --verm:#e8453a;
+  --line:rgba(0,200,240,.14); --hair:rgba(232,242,252,.08);
+  --sans:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --s1:#9df2ff; --s2:#00c8f0; --s3:#4c8dff; --s4:#2f64c8; --s5:#8299b5;
+  --grid:rgba(130,153,181,.30); --band1:rgba(184,204,227,.07); --band2:rgba(184,204,227,.13); --band3:rgba(184,204,227,.21);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--void);color:var(--soft);font:15px/1.55 var(--sans)}
+a{color:var(--cyan)}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 24px;background:rgba(10,17,32,.82);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.top i{display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--cyan);border-radius:4px;font:700 12px var(--mono);font-style:normal;color:var(--cyan)}
+.top b{font:600 13px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink)}
+main{max-width:820px;margin:0 auto;padding:32px 24px 24px}
+h1{margin:0 0 6px;font:600 32px/1.15 var(--sans);letter-spacing:-.02em;color:var(--ink)}
+h1 small{font:13px var(--mono);letter-spacing:.06em;color:var(--mist);margin-left:10px;white-space:nowrap}
+.sub{margin:0 0 32px;font:15px/1.5 var(--sans);color:var(--soft)}
+.eb{margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid var(--hair);font:600 12px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--cyan)}
+.viz{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:20px 20px 16px;margin:0 0 32px}
+.viz h3{margin:0 0 4px;font:600 20px/1.25 var(--sans);letter-spacing:-.01em;color:var(--ink)}
+.viz .cap{margin:0 0 16px;font:14px/1.4 var(--sans);color:var(--mist)}
+.viz .scroll{overflow-x:auto}
+.viz svg{display:block;width:100%;min-width:600px;max-width:760px;height:auto;overflow:visible}
+.viz svg.fit{min-width:0}
+.viz svg text{font:14px var(--sans);fill:var(--soft)}
+.viz .k,.viz .k text{font-weight:600;fill:var(--ink)}
+.viz .m,.viz .m text{font:13px var(--mono);fill:var(--mist)}
+.viz .v{font:600 15px var(--mono);fill:var(--cyan-hi);font-variant-numeric:tabular-nums}
+.viz .e,.viz .e text{font:600 12px var(--mono);letter-spacing:.14em;text-transform:uppercase;fill:var(--cyan)}
+.viz .grid{stroke:var(--grid);stroke-width:1}
+.viz .arrow{stroke:var(--mist);stroke-width:1.5;fill:none}
+.viz marker path{fill:var(--cyan)}
+.sm{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px 22px;margin:0}
+.sm figure{margin:0}
+.sm svg{max-width:300px}
+.viz svg.s1{max-width:480px}
+.dec{display:grid;grid-template-columns:18px 1fr;gap:0 12px;align-items:baseline;margin:0;padding:0;list-style:none}
+.dec li{display:contents}
+.dec li::before{content:"";width:10px;height:10px;border:2px solid var(--cyan);border-radius:50%;align-self:center}
+.dec li.done::before{background:var(--jade);border-color:var(--jade)}
+.dec li span{padding:11px 0;border-top:1px solid var(--hair);font:15px var(--sans);color:var(--ink)}
+.dec li span em{font:600 12px var(--mono);font-style:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--mist);margin-right:10px}
+.dec li.done span em{color:var(--jade)}
+footer{max-width:820px;margin:0 auto;padding:0 24px 40px;font:13px var(--mono);color:var(--mist)}
+footer a{color:var(--cyan)}
+@media(max-width:520px){
+  main{padding:24px 16px 16px} .top{padding:10px 16px} footer{padding:0 16px 32px}
+  .viz{padding:16px 14px 12px} h1{font-size:26px}
+}
+</style></head>
+<body>
+<div class="top"><i>N</i><b>Nexus</b></div>
+<main>
+<h1>Local AI status <small>13 Oct 2026</small></h1>
+<p class="sub">Chief has run on Ornith-1.5-9B Q4_K_M, 256K context, 4-bit KV, since 21:30.</p>
+
+<h2 class="eb">01 Now</h2>
+<section class="viz">
+  <h3>Eval 25 to 30, context 4x, speed depends on depth</h3>
+  <p class="cap">Own scale per row, 13 Oct 2026. Source: results/bakeoff42, research/59 E01.</p>
+  <svg class="fit s1" viewBox="0 0 320 416" role="img" aria-label="Before and after: eval 25 to 30 of 42, context 64K to 256K, decode Gemma 27 to 38 t/s before, Ornith 54.9 at a short prompt and 32.1 at 32K now">
+  <text x="0" y="22" class="k">Eval, of 42 tasks</text>
+  <text x="188.6" y="22" class="m" text-anchor="end">Gemma</text><text x="224.3" y="22" class="m" text-anchor="start">Ornith</text>
+  <text x="320" y="22" class="v" text-anchor="end">+5</text>
+  <line x1="188.6" y1="64" x2="224.3" y2="64" stroke="var(--s4)" stroke-width="3"/>
+  <circle cx="188.6" cy="64" r="6" fill="var(--panel)" stroke="var(--mist)" stroke-width="2"/>
+  <circle cx="224.3" cy="64" r="6" fill="var(--cyan)"/>
+  <text x="188.6" y="50" class="v" text-anchor="middle">25</text><text x="224.3" y="50" class="v" text-anchor="middle">30</text>
+  <line x1="10" y1="100" x2="310" y2="100" stroke="var(--grid)" stroke-width="1"/><line x1="10" y1="96" x2="10" y2="104" stroke="var(--mist)"/><line x1="310" y1="96" x2="310" y2="104" stroke="var(--mist)"/><text x="10" y="124" class="m" text-anchor="middle">0</text><text x="310" y="124" class="m" text-anchor="end">42</text>
+
+  <text x="0" y="148" class="k">Context, tokens</text><text x="320" y="148" class="v" text-anchor="end">4x</text>
+  <line x1="85.0" y1="184" x2="310.0" y2="184" stroke="var(--s4)" stroke-width="3"/>
+  <circle cx="85.0" cy="184" r="6" fill="var(--panel)" stroke="var(--mist)" stroke-width="2"/>
+  <circle cx="310.0" cy="184" r="6" fill="var(--cyan)"/>
+  <text x="85.0" y="172" class="v" text-anchor="middle">64K</text><text x="314.0" y="172" class="v" text-anchor="end">256K</text>
+  <line x1="10" y1="204" x2="310" y2="204" stroke="var(--grid)" stroke-width="1"/><line x1="10" y1="200" x2="10" y2="208" stroke="var(--mist)"/><line x1="310" y1="200" x2="310" y2="208" stroke="var(--mist)"/><text x="10" y="228" class="m" text-anchor="middle">0</text><text x="310" y="228" class="m" text-anchor="end">256K</text>
+
+  <text x="0" y="252" class="k">Decode, t/s</text>
+  <text x="0" y="292" class="k">Gemma</text>
+  <rect x="125.7" y="287" width="47.1" height="10" rx="5" fill="var(--s5)"/>
+  <text x="149.3" y="278" class="v" text-anchor="middle">27 to 38</text>
+  <text x="149.3" y="316" class="m" text-anchor="middle">short prompt</text>
+  <text x="0" y="352" class="k">Ornith</text>
+  <line x1="147.6" y1="348" x2="245.3" y2="348" stroke="var(--s4)" stroke-width="3"/>
+  <circle cx="147.6" cy="348" r="6" fill="var(--panel)" stroke="var(--cyan)" stroke-width="2.5"/>
+  <circle cx="245.3" cy="348" r="6" fill="var(--cyan)"/>
+  <text x="147.6" y="338" class="v" text-anchor="middle">32.1</text><text x="245.3" y="338" class="v" text-anchor="middle">54.9</text>
+  <text x="147.6" y="372" class="m" text-anchor="middle">at 32K</text><text x="245.3" y="372" class="m" text-anchor="middle">short prompt</text>
+  <line x1="10" y1="384" x2="310" y2="384" stroke="var(--grid)" stroke-width="1"/><line x1="10" y1="380" x2="10" y2="388" stroke="var(--mist)"/><line x1="310" y1="380" x2="310" y2="388" stroke="var(--mist)"/><text x="10" y="408" class="m" text-anchor="middle">0</text><text x="310" y="408" class="m" text-anchor="end">70</text>
+</svg>
+</section>
+
+<h2 class="eb">02 Models</h2>
+<section class="viz">
+  <h3>Ornith passes 30 of 42 tasks, Gemma 25, MiniCPM 24</h3>
+  <p class="cap">Tasks passed, one run each. 30 vs 25 may be chance (p about 0.13).</p>
+  <div class="sm">
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Navigation, of 12: Ornith 11, Gemma 11, MiniCPM 7">
+  <text x="0" y="16" class="k">Navigation</text><text x="200" y="16" class="m" text-anchor="end">of 12</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="82.5" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">11</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="82.5" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">11</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="52.5" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">7</text>
+</svg></figure>
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Read, of 8: Ornith 3, Gemma 2, MiniCPM 3">
+  <text x="0" y="16" class="k">Read</text><text x="200" y="16" class="m" text-anchor="end">of 8</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="33.8" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">3</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="22.5" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">2</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="33.8" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">3</text>
+</svg></figure>
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Write, of 8: Ornith 8, Gemma 7, MiniCPM 8">
+  <text x="0" y="16" class="k">Write</text><text x="200" y="16" class="m" text-anchor="end">of 8</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="90.0" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">8</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="78.8" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">7</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="90.0" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">8</text>
+</svg></figure>
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Invoice, of 6: Ornith 2, Gemma 1, MiniCPM 2">
+  <text x="0" y="16" class="k">Invoice</text><text x="200" y="16" class="m" text-anchor="end">of 6</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="30.0" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">2</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="15.0" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">1</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="30.0" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">2</text>
+</svg></figure>
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Web, of 3: Ornith 2, Gemma 1, MiniCPM 2">
+  <text x="0" y="16" class="k">Web</text><text x="200" y="16" class="m" text-anchor="end">of 3</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="60.0" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">2</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="30.0" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">1</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="60.0" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">2</text>
+</svg></figure>
+<figure><svg class="fit" viewBox="0 0 200 104" role="img" aria-label="Safety, of 5: Ornith 4, Gemma 3, MiniCPM 2">
+  <text x="0" y="16" class="k">Safety</text><text x="200" y="16" class="m" text-anchor="end">of 5</text>
+  <rect x="0" y="36" width="8" height="12" rx="2" fill="var(--cyan)"/><text x="14" y="47" class="k">Ornith</text>
+  <rect x="84" y="36" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="36" width="72.0" height="12" rx="2" fill="var(--cyan)"/>
+  <text x="200" y="47" class="v" text-anchor="end" style="fill:var(--cyan-hi)">4</text>
+  <rect x="0" y="60" width="8" height="12" rx="2" fill="var(--s3)"/><text x="14" y="71" class="">Gemma</text>
+  <rect x="84" y="60" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="60" width="54.0" height="12" rx="2" fill="var(--s3)"/>
+  <text x="200" y="71" class="v" text-anchor="end" style="fill:var(--soft)">3</text>
+  <rect x="0" y="84" width="8" height="12" rx="2" fill="var(--s4)"/><text x="14" y="95" class="">MiniCPM</text>
+  <rect x="84" y="84" width="90" height="12" rx="2" fill="var(--band1)"/><rect x="84" y="84" width="36.0" height="12" rx="2" fill="var(--s4)"/>
+  <text x="200" y="95" class="v" text-anchor="end" style="fill:var(--soft)">2</text>
+</svg></figure>
+</div>
+</section>
+
+<h2 class="eb">03 Speed</h2>
+<section class="viz">
+  <h3>Ornith slows from 55 to 10 t/s as context fills to 200K</h3>
+  <p class="cap">Decode t/s by context depth, mean of 3 runs, 13 Oct 2026. Source: research/59 E01.</p>
+  <div class="scroll"><svg viewBox="0 0 600 252" role="img" aria-label="Decode speed falls from 54.9 t/s at depth 0 to 10.3 t/s at 200K tokens of context; the hidden fact was found at 128K and 200K">
+  <line x1="60" y1="210" x2="570" y2="210" stroke="var(--grid)" stroke-width="1"/>
+  <line x1="54" y1="150.0" x2="60" y2="150.0" stroke="var(--mist)" stroke-width="1"/><text x="48" y="154.0" class="m" text-anchor="end">20</text>
+  <line x1="54" y1="90.0" x2="60" y2="90.0" stroke="var(--mist)" stroke-width="1"/><text x="48" y="94.0" class="m" text-anchor="end">40</text>
+  <line x1="54" y1="30.0" x2="60" y2="30.0" stroke="var(--mist)" stroke-width="1"/><text x="48" y="34.0" class="m" text-anchor="end">60</text>
+  <text x="48" y="214.0" class="m" text-anchor="end">0</text>
+  <polyline points="60.0,45.3 80.0,71.1 140.0,113.7 220.0,139.2 380.0,166.8 560.0,179.1" fill="none" stroke="var(--cyan)" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="60.0" cy="45.3" r="5" fill="var(--cyan)"/>
+  <text x="63.0" y="232" class="m" text-anchor="end">0</text>
+  <text x="69.0" y="34.3" class="v">54.9</text>
+  <circle cx="80.0" cy="71.1" r="5" fill="var(--cyan)"/>
+  <text x="78.0" y="232" class="m" text-anchor="start">8K</text>
+  <text x="89.0" y="60.1" class="v">46.3</text>
+  <circle cx="140.0" cy="113.7" r="5" fill="var(--cyan)"/>
+  <text x="140.0" y="232" class="m" text-anchor="middle">32K</text>
+  <text x="149.0" y="102.7" class="v">32.1</text>
+  <circle cx="220.0" cy="139.2" r="5" fill="var(--cyan)"/>
+  <text x="220.0" y="232" class="m" text-anchor="middle">64K</text>
+  <text x="229.0" y="128.2" class="v">23.6</text>
+  <circle cx="380.0" cy="166.8" r="5" fill="var(--cyan)"/>
+  <text x="380.0" y="232" class="m" text-anchor="middle">128K</text>
+  <text x="389.0" y="155.8" class="v">14.4</text>
+  <circle cx="560.0" cy="179.1" r="5" fill="var(--cyan)"/>
+  <text x="560.0" y="232" class="m" text-anchor="middle">200K</text>
+  <text x="550.0" y="167.1" class="v" text-anchor="end">10.3</text>
+  <circle cx="380.0" cy="166.8" r="10" fill="none" stroke="var(--jade)" stroke-width="2"/>
+  <text x="380.0" y="188.8" class="m" text-anchor="middle" style="fill:var(--jade)">needle found</text>
+  <circle cx="560.0" cy="179.1" r="10" fill="none" stroke="var(--jade)" stroke-width="2"/>
+  <text x="570.0" y="201.1" class="m" text-anchor="end" style="fill:var(--jade)">needle found</text>
+  <text x="60" y="14" class="m">t/s</text>
+</svg></div>
+</section>
+
+<h2 class="eb">04 VRAM</h2>
+<section class="viz">
+  <h3>Draft head (MTP): not usable, 1,272 MiB short of the floor</h3>
+  <p class="cap">12 GB card, MiB, 13 Oct 2026. MTP gives +17% decode, one run. Source: research/55.</p>
+  <div class="scroll"><svg viewBox="0 0 600 320" role="img" aria-label="Of the card, desktop uses 1,792 MiB, Ornith and cache 9,348 MiB, and about 1,148 MiB is free. With the draft head loaded, free VRAM measured -522 MiB, below the 750 MiB floor">
+  <text x="10" y="14" class="e">Whole card, 0 to 12,288 MiB</text>
+  <text x="10" y="40" class="k">Desktop</text><text x="10" y="60" class="v">1,792</text>
+  <text x="108.6" y="40" class="k">Ornith + cache</text><text x="108.6" y="60" class="v">9,348</text>
+  <text x="590" y="40" class="k" text-anchor="end">Free</text><text x="590" y="60" class="v" text-anchor="end">1,148</text>
+  <g stroke="var(--void)" stroke-width="2">
+    <rect x="10" y="74" width="84.6" height="40" fill="var(--s4)"/>
+    <rect x="94.6" y="74" width="441.2" height="40" fill="var(--s2)"/>
+  </g>
+  <rect x="536.8" y="75" width="52.2" height="38" fill="none" stroke="var(--cyan-hi)" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <line x1="554.6" y1="74" x2="554.6" y2="128" stroke="var(--verm)" stroke-width="2.5"/>
+  <text x="546.6" y="146" class="m" text-anchor="end" style="fill:var(--verm)">Floor 750 MiB</text>
+
+  <text x="10" y="214" class="e">Draft head (MTP) needs ~1,670 MiB (1,148 free before, -522 after)</text>
+  <text x="445.0" y="234" class="m" text-anchor="middle" style="fill:var(--verm)">Floor 750 MiB</text>
+  <rect x="35.1" y="250" width="168.2" height="26" fill="var(--s3)"/>
+  <line x1="203.3" y1="246" x2="203.3" y2="280" stroke="var(--mist)" stroke-width="1"/>
+  <line x1="445.0" y1="246" x2="445.0" y2="280" stroke="var(--verm)" stroke-width="2.5"/>
+  <text x="35.1" y="234" class="v">Free with MTP: -522 MiB</text>
+  <line x1="10" y1="280" x2="590" y2="280" stroke="var(--grid)" stroke-width="1"/>
+  <g stroke="var(--mist)" stroke-width="1"><line x1="10.0" y1="280" x2="10.0" y2="286"/><line x1="106.7" y1="280" x2="106.7" y2="286"/><line x1="203.3" y1="280" x2="203.3" y2="286"/><line x1="300.0" y1="280" x2="300.0" y2="286"/><line x1="396.7" y1="280" x2="396.7" y2="286"/><line x1="493.3" y1="280" x2="493.3" y2="286"/><line x1="590.0" y1="280" x2="590.0" y2="286"/></g>
+  <g class="m" text-anchor="middle"><text x="10.0" y="306" text-anchor="start">-600</text><text x="106.7" y="306" text-anchor="middle">-300</text><text x="203.3" y="306" text-anchor="middle">0</text><text x="300.0" y="306" text-anchor="middle">300</text><text x="396.7" y="306" text-anchor="middle">600</text><text x="493.3" y="306" text-anchor="middle">900</text><text x="590.0" y="306" text-anchor="end">1,200</text></g>
+</svg></div>
+</section>
+
+<h2 class="eb">05 In flight</h2>
+<section class="viz">
+  <h3>Chief v3 is built; four tracks run, everyday-40 eval is next</h3>
+  <p class="cap">13 Oct 2026. Source: research/00-plan.md, 60, 64.</p>
+  <div class="scroll"><svg viewBox="0 0 600 242" role="img" aria-label="Done: research 58a to f, Chief v3 built. Running: v3 arms, performance lead, CPU fast path, status overlay. Next: everyday-40 eval">
+  <defs><marker id="arr-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 L10 5 L0 10 z"/></marker></defs>
+  <rect x="10" y="14" width="172" height="214" rx="5" fill="var(--void)" stroke="var(--jade)" stroke-width="2"/>
+  <text x="24" y="42" class="e" style="fill:var(--jade)">Done</text>
+  <text x="24" y="74" class="k">Research 58a-f</text>
+  <text x="24" y="98" class="k">Chief v3 built</text>
+  <text x="24" y="122" class="k">Prompt 8,035→3,519</text>
+
+  <rect x="214" y="14" width="172" height="214" rx="5" fill="var(--void)" stroke="var(--cyan)" stroke-width="2"/>
+  <text x="228" y="42" class="e" style="fill:var(--cyan)">Running</text>
+  <text x="228" y="74" class="k">v3 A/B arms</text>
+  <text x="228" y="98" class="m">A0, T1-T5</text>
+  <text x="228" y="122" class="k">Perf lead</text>
+  <text x="228" y="146" class="m">Kernel profile</text>
+  <text x="228" y="170" class="m">Vulkan A/B</text>
+  <text x="228" y="194" class="k">CPU fast path</text>
+  <text x="228" y="218" class="k">Status overlay</text>
+
+  <rect x="418" y="14" width="172" height="214" rx="5" fill="var(--void)" stroke="var(--faint)" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="432" y="42" class="e" style="fill:var(--mist)">Next</text>
+  <text x="432" y="74" class="k">Everyday-40 eval</text>
+
+  <g class="arrow" style="stroke:var(--cyan)"><line x1="186" y1="121" x2="209" y2="121" marker-end="url(#arr-flow)"/><line x1="390" y1="121" x2="413" y2="121" marker-end="url(#arr-flow)"/></g>
+</svg></div>
+</section>
+
+<h2 class="eb">06 Your decisions</h2>
+<section class="viz">
+  <h3>Three decisions wait on you</h3>
+  <ul class="dec">
+    <li><span><em>Waiting</em>British voice pick</span></li>
+    <li><span><em>Waiting</em>Computer actions: confirm, --yes, or dry run</span></li>
+    <li><span><em>Waiting</em>Repo name</span></li>
+    <li class="done"><span><em>Decided</em>No load at boot</span></li>
+  </ul>
+</section>
+</main>
+<footer><a href="local-ai-status-2026-10-13.before-2215.html">Full lab log</a></footer>
+</body></html>

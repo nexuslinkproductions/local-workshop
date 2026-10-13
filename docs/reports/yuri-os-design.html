@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YURI OS design - phase 1</title>
+<style>
+:root{
+  --void:#0a1120;--panel:#0e1628;--ink:#eef6fd;--soft:#b8cce3;--mist:#8299b5;--faint:#536680;
+  --cyan:#00c8f0;--cyan-hi:#9df2ff;--line:rgba(0,200,240,.14);--hair:rgba(232,242,252,.08);
+  --jade:#46e3c2;--verm:#e8453a;
+  --sans:-apple-system,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--void);color:var(--soft);font:15px/1.55 var(--sans)}
+.top{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;
+  padding:10px 20px;background:rgba(10,17,32,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:10px;align-items:center;color:var(--ink);font-weight:600;letter-spacing:-.01em}
+.mono{font-family:var(--mono)}
+.mark{width:22px;height:22px;border:1px solid var(--cyan);border-radius:4px;display:grid;place-items:center;
+  color:var(--cyan);font:600 11px var(--mono)}
+.doctype{font:11px var(--mono);color:var(--mist);text-transform:uppercase;letter-spacing:.16em}
+main{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
+header.hero h1{color:var(--ink);font-size:clamp(26px,4vw,40px);letter-spacing:-.02em;line-height:1.15;font-weight:600}
+header.hero p{margin-top:8px;color:var(--mist);max-width:760px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:22px 0 8px}
+.kpi{border:1px solid var(--line);background:rgba(7,11,22,.65);border-radius:6px;padding:12px 14px}
+.kpi b{display:block;color:var(--cyan-hi);font:600 26px var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi b.ok{color:var(--jade)} .kpi b.bad{color:var(--verm)}
+.kpi span{font:10.5px var(--mono);color:var(--mist);text-transform:uppercase;letter-spacing:.12em}
+section{margin-top:52px}
+.eyebrow{font:11px var(--mono);color:var(--cyan);text-transform:uppercase;letter-spacing:.16em}
+section h2{color:var(--ink);font-size:22px;font-weight:600;letter-spacing:-.015em;margin:6px 0 4px;
+  padding-bottom:10px;border-bottom:1px solid var(--hair)}
+.cap{color:var(--mist);font-size:13.5px;margin:10px 0 16px}
+.card{border:1px solid var(--line);background:rgba(7,11,22,.65);border-radius:6px;padding:16px;overflow-x:auto}
+svg text{font-family:var(--mono)}
+/* heatmap */
+.heat{display:grid;grid-template-columns:minmax(170px,1.3fr) repeat(4,minmax(78px,1fr));gap:4px;min-width:640px}
+.heat .h{font:10.5px var(--mono);color:var(--mist);text-transform:uppercase;letter-spacing:.1em;padding:6px 4px}
+.heat .o{font:12.5px var(--mono);color:var(--ink);padding:8px 6px;border-bottom:1px solid var(--hair)}
+.c{font:10.5px var(--mono);text-transform:uppercase;letter-spacing:.08em;border-radius:4px;padding:8px 4px;text-align:center}
+.w{background:rgba(70,227,194,.16);color:var(--jade);border:1px solid rgba(70,227,194,.35)}
+.p{background:rgba(0,200,240,.10);color:var(--cyan);border:1px solid rgba(0,200,240,.28)}
+.d{background:rgba(83,102,128,.12);color:var(--mist);border:1px solid rgba(83,102,128,.3)}
+.b{background:rgba(232,69,58,.10);color:var(--verm);border:1px solid rgba(232,69,58,.4)}
+.n{color:var(--mist);border:1px dashed rgba(83,102,128,.25)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.legend .c{padding:4px 8px}
+/* timeline */
+.tl{display:grid;grid-template-columns:repeat(9,minmax(112px,1fr));gap:8px;min-width:1040px}
+.st{border:1px solid var(--line);border-radius:6px;padding:12px 10px;background:rgba(14,22,40,.65);position:relative}
+.st .num{font:600 22px var(--mono);color:var(--cyan-hi);font-variant-numeric:tabular-nums}
+.st .nm{color:var(--ink);font-weight:600;font-size:13.5px;margin:2px 0 6px}
+.st .src{font:10.5px var(--mono);color:var(--mist);line-height:1.45;overflow-wrap:anywhere}
+.st .acc{overflow-wrap:anywhere;font:10.5px var(--mono);color:var(--soft);margin-top:8px;padding-top:8px;border-top:1px solid var(--hair);line-height:1.45}
+.st .chief{font:10.5px var(--mono);color:var(--jade);margin-top:6px}
+.st.gov{border-color:rgba(0,200,240,.5)}
+.bar{height:3px;background:linear-gradient(90deg,var(--cyan),rgba(0,200,240,.15));border-radius:2px;margin:0 0 10px}
+.chip{display:inline-block;font:12px var(--mono);color:var(--cyan);background:#070b16;border:1px solid var(--line);
+  border-radius:4px;padding:3px 8px;user-select:all;word-break:break-all}
+.callout{border:1px solid var(--line);border-left:2px solid var(--verm);border-radius:6px;padding:12px 14px;
+  background:rgba(14,22,40,.65);font-size:13.5px;color:var(--soft);margin-top:14px}
+footer{margin-top:60px;padding-top:14px;border-top:1px solid var(--hair);font:11px var(--mono);color:var(--faint)}
+.card svg{min-width:760px}
+@media (max-width:600px){main{padding:20px 14px 60px}.kpi b{font-size:22px}.doctype{display:none}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><div class="mark">N</div><span>Nexus Link</span></div>
+  <div class="doctype">YURI OS / phase 1 design</div>
+</div>
+<main>
+<header class="hero">
+  <div class="eyebrow">Brief 38 / 2026-10-13</div>
+  <h1>YURI leaves Haze and becomes a layer of the OS</h1>
+  <p>Cognitive governance architecture. One binary, one local store, any harness on top.</p>
+  <div class="kpis">
+    <div class="kpi"><b>074768b5</b><span>latest YURI commit</span></div>
+    <div class="kpi"><b class="ok">451/451</b><span>TS tests pass</span></div>
+    <div class="kpi"><b>65/75</b><span>Rust lib tests</span></div>
+    <div class="kpi"><b class="ok">5/5</b><span>envelope contract</span></div>
+    <div class="kpi"><b class="bad">0/1</b><span>e2e proof headless</span></div>
+    <div class="kpi"><b>0 B</b><span>new Chief schema</span></div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">01 / Organs and layers</div>
+  <h2>Six organs carry the job, the rest wait</h2>
+  <p class="cap">Solid boxes ship in the OS build. Dashed boxes stay as references until a need shows up.</p>
+  <div class="card">
+  <svg viewBox="0 0 1100 430" width="100%" role="img" aria-label="YURI organ schematic">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#00c8f0"/></marker></defs>
+    <text x="20" y="28" fill="#8299b5" font-size="11" letter-spacing="2">GOVERNANCE (every tool call)</text>
+    <rect x="20" y="40" width="1060" height="54" rx="6" fill="rgba(0,200,240,.07)" stroke="#00c8f0"/>
+    <text x="40" y="64" fill="#eef6fd" font-size="15" font-weight="600">govern</text>
+    <text x="40" y="83" fill="#b8cce3" font-size="11.5">protected surfaces, write rules, evidence grammar  /  source: MUSUBI _SYSTEM/yuri-origin.md</text>
+    <text x="20" y="128" fill="#8299b5" font-size="11" letter-spacing="2">PIPELINE (one-way, gated)</text>
+    <g font-size="11.5">
+      <rect x="20" y="140" width="190" height="78" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.5)"/>
+      <text x="36" y="166" fill="#eef6fd" font-size="15" font-weight="600">capture</text>
+      <text x="36" y="186" fill="#b8cce3">RAW, append-only</text><text x="36" y="203" fill="#8299b5">captures</text>
+      <rect x="250" y="140" width="190" height="78" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.5)"/>
+      <text x="266" y="166" fill="#eef6fd" font-size="15" font-weight="600">extract</text>
+      <text x="266" y="186" fill="#b8cce3">local model drafts</text><text x="266" y="203" fill="#8299b5">envelopes</text>
+      <rect x="480" y="140" width="190" height="78" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.5)"/>
+      <text x="496" y="166" fill="#eef6fd" font-size="15" font-weight="600">admit</text>
+      <text x="496" y="186" fill="#b8cce3">evidence-gated</text><text x="496" y="203" fill="#8299b5">entities + quotes</text>
+      <rect x="710" y="140" width="170" height="78" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.5)"/>
+      <text x="726" y="166" fill="#eef6fd" font-size="15" font-weight="600">recall</text>
+      <text x="726" y="186" fill="#b8cce3">bounded pack</text><text x="726" y="203" fill="#8299b5">rails + pointers</text>
+      <rect x="910" y="140" width="170" height="78" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.5)"/>
+      <text x="926" y="166" fill="#eef6fd" font-size="15" font-weight="600">distill</text>
+      <text x="926" y="186" fill="#b8cce3">drain, synthesis</text><text x="926" y="203" fill="#8299b5">decisions, lessons</text>
+    </g>
+    <g stroke="#00c8f0" stroke-width="1.3" marker-end="url(#a)">
+      <line x1="210" y1="179" x2="248" y2="179"/><line x1="440" y1="179" x2="478" y2="179"/>
+      <line x1="670" y1="179" x2="708" y2="179"/><line x1="880" y1="179" x2="908" y2="179"/>
+    </g>
+    <text x="20" y="252" fill="#8299b5" font-size="11" letter-spacing="2">STORES (two files, no joined query)</text>
+    <rect x="20" y="264" width="520" height="56" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.3)"/>
+    <text x="36" y="288" fill="#eef6fd" font-size="14" font-weight="600">SEARCH  search.db</text>
+    <text x="36" y="306" fill="#8299b5" font-size="11.5">FTS5 / BM25 corpus of configured roots, watcher-fed, rebuildable</text>
+    <rect x="560" y="264" width="520" height="56" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.3)"/>
+    <text x="576" y="288" fill="#eef6fd" font-size="14" font-weight="600">KNOWLEDGE  graph.db</text>
+    <text x="576" y="306" fill="#8299b5" font-size="11.5">sessions, captures, envelopes, graph, graph_fts, schema v4</text>
+    <text x="20" y="352" fill="#8299b5" font-size="11" letter-spacing="2">DEFERRED (reference only)</text>
+    <g font-size="11.5" fill="#536680">
+      <rect x="20" y="364" width="128" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="34" y="389">energy kernel</text>
+      <rect x="158" y="364" width="118" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="172" y="389">cost ledger</text>
+      <rect x="286" y="364" width="118" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="300" y="389">5 dead organs</text>
+      <rect x="414" y="364" width="118" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="428" y="389">ICM templates</text>
+      <rect x="542" y="364" width="118" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="556" y="389">skills recall</text>
+      <rect x="670" y="364" width="118" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="684" y="389">design frames</text>
+      <rect x="798" y="364" width="128" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="812" y="389">OMP fleet, MURE</text>
+      <rect x="936" y="364" width="144" height="40" rx="5" fill="none" stroke="#536680" stroke-dasharray="4 3"/><text x="950" y="389">sessions mirror</text>
+    </g>
+  </svg>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">02 / Status heatmap</div>
+  <h2>The data core works, the wiring around it does not</h2>
+  <p class="cap">Every cell comes from a test run or a probe in a scratch copy. Section 2 of the research file has the evidence lines.</p>
+  <div class="card">
+    <div class="heat">
+      <div class="h">organ</div><div class="h">Haze TS</div><div class="h">Haze Rust</div><div class="h">MUSUBI</div><div class="h">OS target</div>
+      <div class="o">store + schema</div><div class="c n">none</div><div class="c w">works</div><div class="c n">none</div><div class="c p">stage 1</div>
+      <div class="o">SEARCH index</div><div class="c n">none</div><div class="c w">works</div><div class="c b">broken</div><div class="c p">stage 1</div>
+      <div class="o">watcher</div><div class="c n">none</div><div class="c p">tauri-bound</div><div class="c n">none</div><div class="c p">stage 2</div>
+      <div class="o">govern</div><div class="c n">none</div><div class="c d">consent only</div><div class="c d">doc + scripts</div><div class="c p">stage 3</div>
+      <div class="o">capture</div><div class="c w">works</div><div class="c p">4 fail headless</div><div class="c p">claude hooks</div><div class="c p">stage 4</div>
+      <div class="o">recall pack</div><div class="c w">works</div><div class="c p">duplicate</div><div class="c w">memory kernel</div><div class="c p">stage 5</div>
+      <div class="o">extract</div><div class="c p">needs model</div><div class="c w">ontology 5/5</div><div class="c n">none</div><div class="c p">stage 6</div>
+      <div class="o">admit</div><div class="c n">none</div><div class="c w">13 unit pass</div><div class="c n">none</div><div class="c p">stage 6</div>
+      <div class="o">distill</div><div class="c p">unwired lib</div><div class="c d">0 tests</div><div class="c n">none</div><div class="c p">stage 7</div>
+      <div class="o">agent tools / MCP</div><div class="c w">works in-app</div><div class="c w">7 unit pass</div><div class="c n">none</div><div class="c p">stage 8</div>
+      <div class="o">graph + xref</div><div class="c n">none</div><div class="c p">headless fail</div><div class="c p">graph ok, xref broken</div><div class="c p">stage 9</div>
+      <div class="o">energy kernel</div><div class="c p">1 consumer</div><div class="c d">0 tests</div><div class="c p">partial</div><div class="c d">deferred</div>
+      <div class="o">cost ledger</div><div class="c p">unwired</div><div class="c p">4 fail headless</div><div class="c n">none</div><div class="c d">deferred</div>
+      <div class="o">claimgate, filing, openprocess, workledger, paths</div><div class="c d">dead</div><div class="c n">none</div><div class="c d">origin</div><div class="c d">deferred</div>
+      <div class="o">e2e proof</div><div class="c n">none</div><div class="c b">broken</div><div class="c n">none</div><div class="c p">per stage</div>
+    </div>
+    <div class="legend"><span class="c w">works</span><span class="c p">partial / planned</span><span class="c d">dead / doc / deferred</span><span class="c b">broken</span><span class="c n">absent</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">03 / Target architecture</div>
+  <h2>Harness, then YURI, then the OS</h2>
+  <p class="cap">Every client reaches the same store. Chief uses terminal and hooks, so its tool schema stays at 15,931 bytes.</p>
+  <div class="card">
+  <svg viewBox="0 0 1100 470" width="100%" role="img" aria-label="Target architecture">
+    <defs><marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#00c8f0"/></marker></defs>
+    <text x="20" y="26" fill="#8299b5" font-size="11" letter-spacing="2">HARNESS</text>
+    <g font-size="12">
+      <rect x="20" y="38" width="250" height="70" rx="6" fill="#0e1628" stroke="#46e3c2"/>
+      <text x="36" y="64" fill="#eef6fd" font-size="15" font-weight="600">Chief</text>
+      <text x="36" y="84" fill="#b8cce3">Gemma 4 12B, 64K context</text><text x="36" y="99" fill="#8299b5">terminal + hooks, 0 new tools</text>
+      <rect x="290" y="38" width="250" height="70" rx="6" fill="#0e1628" stroke="#46e3c2"/>
+      <text x="306" y="64" fill="#eef6fd" font-size="15" font-weight="600">Hermes sessions</text>
+      <text x="306" y="84" fill="#b8cce3">hooks + MCP (deferred)</text><text x="306" y="99" fill="#8299b5">any profile, local work</text>
+      <rect x="560" y="38" width="250" height="70" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.4)"/>
+      <text x="576" y="64" fill="#eef6fd" font-size="15" font-weight="600">Claude Code, Codex</text>
+      <text x="576" y="84" fill="#b8cce3">same hook dialect</text><text x="576" y="99" fill="#8299b5">exit 2 blocks, stdin JSON</text>
+      <rect x="830" y="38" width="250" height="70" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.25)"/>
+      <text x="846" y="64" fill="#eef6fd" font-size="15" font-weight="600">Hermes memory</text>
+      <text x="846" y="84" fill="#b8cce3">MEMORY.md, hindsight</text><text x="846" y="99" fill="#8299b5">session_search, unchanged</text>
+    </g>
+    <g stroke="#00c8f0" stroke-width="1.3" marker-end="url(#b)">
+      <line x1="145" y1="108" x2="145" y2="160"/><line x1="415" y1="108" x2="415" y2="160"/><line x1="685" y1="108" x2="685" y2="160"/>
+    </g>
+    <line x1="955" y1="108" x2="955" y2="160" stroke="#536680" stroke-dasharray="4 3"/>
+    <text x="965" y="128" fill="#8299b5" font-size="11">state.db read-only</text>
+    <text x="20" y="152" fill="#8299b5" font-size="11" letter-spacing="2">YURI</text>
+    <rect x="20" y="164" width="1060" height="150" rx="8" fill="rgba(0,200,240,.06)" stroke="#00c8f0"/>
+    <text x="40" y="192" fill="#eef6fd" font-size="16" font-weight="600">yuri  (one Rust binary)</text>
+    <g font-size="12">
+      <rect x="40" y="208" width="232" height="38" rx="5" fill="#0e1628" stroke="rgba(0,200,240,.14)"/>
+      <text x="54" y="232" fill="#9df2ff">yuri hook pre_tool_call</text>
+      <rect x="286" y="208" width="232" height="38" rx="5" fill="#0e1628" stroke="rgba(0,200,240,.14)"/>
+      <text x="300" y="232" fill="#9df2ff">yuri hook pre_llm_call</text>
+      <rect x="532" y="208" width="232" height="38" rx="5" fill="#0e1628" stroke="rgba(0,200,240,.14)"/>
+      <text x="546" y="232" fill="#9df2ff">yuri search | read | recall</text>
+      <rect x="778" y="208" width="282" height="38" rx="5" fill="#0e1628" stroke="rgba(0,200,240,.14)"/>
+      <text x="792" y="232" fill="#9df2ff">yuri mcp   yuri ingest hermes</text>
+      <text x="40" y="276" fill="#b8cce3">govern  /  capture  /  search  /  extract  /  admit  /  recall  /  distill</text>
+      <text x="40" y="298" fill="#8299b5">local model only for extract and drain, behind the GPU lock</text>
+    </g>
+    <g stroke="#00c8f0" stroke-width="1.3" marker-end="url(#b)">
+      <line x1="300" y1="314" x2="300" y2="366"/><line x1="800" y1="314" x2="800" y2="366"/>
+    </g>
+    <text x="20" y="358" fill="#8299b5" font-size="11" letter-spacing="2">OS (Arch / Omarchy / Hyprland)</text>
+    <g font-size="12">
+      <rect x="20" y="370" width="520" height="80" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.3)"/>
+      <text x="36" y="396" fill="#eef6fd" font-size="14" font-weight="600">~/.local/share/yuri/</text>
+      <text x="36" y="416" fill="#b8cce3">search.db  graph.db  (WAL, mode 0600)</text>
+      <text x="36" y="434" fill="#8299b5">~/.config/yuri/roots.toml  policy.toml</text>
+      <rect x="560" y="370" width="520" height="80" rx="6" fill="#0e1628" stroke="rgba(0,200,240,.3)"/>
+      <text x="576" y="396" fill="#eef6fd" font-size="14" font-weight="600">systemd --user</text>
+      <text x="576" y="416" fill="#b8cce3">yuri-watch.service  (Nice 19, IO idle, CPUQuota 20%)</text>
+      <text x="576" y="434" fill="#8299b5">yuri-distill.timer  (hourly, flock on .gpu.lock)</text>
+    </g>
+  </svg>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">04 / Build order</div>
+  <h2>Nine stages, each one tested live before the next</h2>
+  <p class="cap">Phase 2 starts only after Marcel approves. Builds run capped with -j 6 under the GPU lock.</p>
+  <div class="card">
+    <div class="bar"></div>
+    <div class="tl">
+      <div class="st"><div class="num">01</div><div class="nm">Store + SEARCH</div><div class="src">yuri/{mod,db,schema}.rs, yuri_index.rs, graph_fts, ontology</div><div class="acc">errors 0 over NEXUS_AI_CENTER; p95 &lt; 50 ms; .env never indexed</div><div class="chief">Chief: yuri search</div></div>
+      <div class="st"><div class="num">02</div><div class="nm">Watcher</div><div class="src">yuri_watch.rs core, no tauri</div><div class="acc">fresh in 2 s; idle CPU &lt; 1%; RSS &lt; 100 MB</div><div class="chief">Chief: index stays fresh</div></div>
+      <div class="st gov"><div class="num">03</div><div class="nm">Govern</div><div class="src">yuri-origin.md protected surfaces, artifact-registry prefixes</div><div class="acc">.env write blocked live; hook p95 &lt; 10 ms; 0 false blocks / day</div><div class="chief">Chief: hard rails</div></div>
+      <div class="st"><div class="num">04</div><div class="nm">Capture</div><div class="src">hook.ts rules; state.db read-only</div><div class="acc">N msgs give N captures; rerun adds 0; survives prune</div><div class="chief">Chief: one RAW record</div></div>
+      <div class="st"><div class="num">05</div><div class="nm">Recall</div><div class="src">Rust yuri_context_pack; TS twin deleted</div><div class="acc">pack &le; budget; cold store gives rails; A/B on 10 tasks</div><div class="chief">Chief: 600-token first-turn pack</div></div>
+      <div class="st"><div class="num">06</div><div class="nm">Know</div><div class="src">yuri_admit.rs; extract prompt; envelope.contract.json</div><div class="acc">fake quote rejected; re-admit changes 0 rows; 18/20 precision</div><div class="chief">Chief: quoted decisions</div></div>
+      <div class="st"><div class="num">07</div><div class="nm">Distill</div><div class="src">yuri-distill/*.ts, yuri_distill_cmds.rs</div><div class="acc">signal 0 files nothing; projections byte-identical on rerun</div><div class="chief">Chief: decisions.md, map.md</div></div>
+      <div class="st"><div class="num">08</div><div class="nm">MCP</div><div class="src">yuri_tools.rs schemas</div><div class="acc">4 mcp__yuri__ tools listed; schema bytes recorded</div><div class="chief">Hermes: mid-turn tools</div></div>
+      <div class="st"><div class="num">09</div><div class="nm">Graph + xref</div><div class="src">MUSUBI yuri-graph.json, navigate</div><div class="acc">yuri walk matches yuri-navigate on 10 nodes</div><div class="chief">Chief: what does X touch</div></div>
+    </div>
+  </div>
+  <div class="callout">Kingston C: (dirty NTFS) did not mount. Uncommitted v1.5.0 work after 2026-09-27 is unread.</div>
+</section>
+
+<section>
+  <div class="eyebrow">05 / Home</div>
+  <h2>A new ICM project, MUSUBI stays reference</h2>
+  <p class="cap">Proposed, not created.</p>
+  <div class="card"><span class="chip">/home/nexuslink/NEXUS_AI_CENTER/PROJECTS/YURI-OS/</span>
+  <span class="chip">/home/nexuslink/NEXUS_AI_CENTER/LOCAL-AI-LAB/research/38-yuri-extraction.md</span></div>
+</section>
+
+<footer>Nexus Link / YURI OS phase 1 / sources: Haze 074768b5, YURI-OS-MUSUBI e2f81876, Hermes local install</footer>
+</main>
+</body>
+</html>

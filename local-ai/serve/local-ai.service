@@ -1,0 +1,23 @@
+# systemd --user unit for the LOCAL-AI-LAB on-demand model shelf (llama-swap).
+# WRITTEN, NOT ENABLED/STARTED. Activation steps are in research/20-serving-layer.md.
+#
+# Install (once, when you actually want it to run):
+#   mkdir -p ~/.config/systemd/user
+#   cp /home/nexuslink/NEXUS_AI_CENTER/LOCAL-AI-LAB/serve/local-ai.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now local-ai.service
+#   journalctl --user -u local-ai.service -f
+[Unit]
+Description=llama-swap on-demand local model shelf (LOCAL-AI-LAB)
+Documentation=file:/home/nexuslink/NEXUS_AI_CENTER/LOCAL-AI-LAB/research/20-serving-layer.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/llama-swap --config %h/NEXUS_AI_CENTER/LOCAL-AI-LAB/serve/config.yaml --listen 127.0.0.1:18080
+Restart=on-failure
+RestartSec=5
+# Models load/unload on their own; this unit itself holds no VRAM until a request.
+
+[Install]
+WantedBy=default.target

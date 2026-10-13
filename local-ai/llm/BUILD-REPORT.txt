@@ -1,0 +1,143 @@
+[20:00:18] 
+[20:00:18] === 0. Dependencies ===
+[20:00:18]   ok      git (/usr/bin/git)
+[20:00:18]   ok      cmake (/usr/bin/cmake)
+[20:00:18]   ok      ninja (/usr/bin/ninja)
+[20:00:18]   ok      gcc (/usr/bin/gcc)
+[20:00:18]   ok      g++ (/usr/bin/g++)
+[20:00:18]   ok      vulkaninfo (/usr/bin/vulkaninfo)
+[20:00:18]   ok      curl (/usr/bin/curl)
+[20:00:18]   ok      python3
+[20:00:18]   ok      glslc (/usr/bin/glslc)
+[20:00:18] 
+[20:00:18] === 0b. vulkaninfo --summary ===
+VK_LUNARG_direct_driver_loading        : extension revision 1
+	apiVersion         = 1.4.354
+	driverVersion      = 26.2.2
+	deviceName         = Intel(R) Arc(tm) B580 Graphics (BMG G21)
+	driverID           = DRIVER_ID_INTEL_OPEN_SOURCE_MESA
+	driverName         = Intel open-source Mesa driver
+	driverInfo         = Mesa 26.2.2-arch1.1
+	driverUUID         = af44288b-59dd-a79f-c93d-b6e4e1ea7f6f
+	apiVersion         = 1.4.354
+	driverVersion      = 26.2.2
+	deviceName         = AMD Ryzen 9 7900X 12-Core Processor (RADV RAPHAEL_MENDOCINO)
+	driverID           = DRIVER_ID_MESA_RADV
+	driverName         = radv
+	driverInfo         = Mesa 26.2.2-arch1.1
+	driverUUID         = 414d442d-4d45-5341-2d44-525600000000
+[20:00:18]   -> Arc B580 visible to Vulkan
+[20:00:18] 
+[20:00:18] === 1. Clone sources ===
+[20:00:18]   exists: /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp (leaving as-is; run 'git -C "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp" pull' to update)
+  HEAD: a97cce86a 2026-09-27 common : avoid side effects around params parsing (#29537)
+[20:00:18]   exists: /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp-prism (leaving as-is; run 'git -C "/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp-prism" pull' to update)
+  HEAD: adfffbe41 2026-09-25 x86: SSE2/SSSE3 vec_dot for PTQ1_0 and PQ2_0 (#248)
+[20:00:18] 
+[20:00:18] === Build: stock ===
+[20:01:50]   binaries: libggml-base.so libggml-base.so.0 libggml-base.so.0.25.3 libggml-cpu.so libggml-cpu.so.0 libggml-cpu.so.0.25.3 libggml.so libggml.so.0 libggml.so.0.25.3 libggml-vulkan.so libggml-vulkan.so.0 libggml-vulkan.so.0.25.3 libllama-batched-bench-impl.so libllama-bench-impl.so libllama-cli-impl.so libllama-common.so libllama-common.so.0 libllama-common.so.0.5.0 libllama-completion-impl.so libllama-fit-params-impl.so libllama-perplexity-impl.so libllama-quantize-impl.so libllama-server-impl.so libllama.so libllama.so.0 libllama.so.0.5.0 libmtmd.so libmtmd.so.0 libmtmd.so.0.5.0 llama llama-batched llama-batched-bench llama-bench llama-cli llama-completion llama-convert-llama2c-to-ggml llama-cvector-generator llama-debug llama-diffusion-cli llama-embedding llama-eval-callback llama-export-lora llama-finetune llama-fit-params llama-gemma3-cli llama-gen-docs llama-gguf llama-gguf-hash llama-gguf-split llama-idle llama-imatrix llama-llava-cli llama-lookahead llama-lookup llama-lookup-create llama-lookup-merge llama-lookup-stats llama-minicpmv-cli llama-mtmd-cli llama-mtmd-debug llama-parallel llama-passkey llama-perplexity llama-q8dot llama-quantize llama-qwen2vl-cli llama-results llama-retrieval llama-server llama-simple llama-simple-chat llama-speculative llama-speculative-simple llama-tokenize llama-tts llama-vdot test-alloc test-arg-parser test-autorelease test-backend-ops test-backend-sampler test-barrier test-batch-alloc test-c test-chat test-chat-analysis test-chat-auto-parser test-chat-peg-parser test-chat-template test-col2im-1d test-export-graph-ops test-fusion test-gbnf-validator test-gguf test-gguf-model-data test-grammar-integration test-grammar-parser test-jinja test-json-schema test-json-schema-to-grammar test-llama-archs test-llama-grammar test-log test-model-load-cancel test-model-resolution test-mtmd-c-api test-mtmd-impl test-opt test-peg-parser test-quantize-fns test-quantize-perf test-quantize-stats test-quant-type-selection test-reasoning-budget test-recurrent-state-rollback test-rope test-sampling test-save-load-state test-state-restore-fragmented test-thread-safety test-tiled-mulmat test-tokenizer-0 test-tokenizer-1-bpe test-tokenizer-1-spm test-unicode 
+[20:01:50] 
+[20:01:50] === Build: prism ===
+[20:04:44]   binaries: libggml-base.so libggml-base.so.0 libggml-base.so.0.21.0 libggml-cpu.so libggml-cpu.so.0 libggml-cpu.so.0.21.0 libggml.so libggml.so.0 libggml.so.0.21.0 libggml-vulkan.so libggml-vulkan.so.0 libggml-vulkan.so.0.21.0 libllama-batched-bench-impl.so libllama-bench-impl.so libllama-cli-impl.so libllama-common.so libllama-common.so.0 libllama-common.so.0.2.0 libllama-completion-impl.so libllama-fit-params-impl.so libllama-perplexity-impl.so libllama-quantize-impl.so libllama-server-impl.so libllama.so libllama.so.0 libllama.so.0.2.0 libmtmd.so libmtmd.so.0 libmtmd.so.0.2.0 llama llama-batched llama-batched-bench llama-bench llama-cli llama-completion llama-convert-llama2c-to-ggml llama-cvector-generator llama-debug llama-diffusion-cli llama-embedding llama-eval-callback llama-export-lora llama-finetune llama-fit-params llama-gemma3-cli llama-gen-docs llama-gguf llama-gguf-hash llama-gguf-split llama-idle llama-imatrix llama-kv-mean-center llama-llava-cli llama-lookahead llama-lookup llama-lookup-create llama-lookup-merge llama-lookup-stats llama-minicpmv-cli llama-mtmd-cli llama-mtmd-debug llama-parallel llama-passkey llama-perplexity llama-q8dot llama-quantize llama-qwen2vl-cli llama-results llama-retrieval llama-rs-rollback llama-rs-rollback-multi llama-server llama-simple llama-simple-chat llama-speculative llama-speculative-simple llama-tokenize llama-tts llama-vdot test-alloc test-arg-parser test-autorelease test-backend-ops test-backend-sampler test-barrier test-batch-alloc test-c test-chat test-chat-analysis test-chat-auto-parser test-chat-peg-parser test-chat-template test-col2im-1d test-dfly-fusion test-dspark-forward test-dspark-logsnr-meta test-dspark-loop test-dspark-real-eval test-export-graph-ops test-gbnf-validator test-gguf test-gguf-model-data test-grammar-integration test-grammar-parser test-jinja test-json-schema-to-grammar test-kv-mean-center test-llama-archs test-llama-grammar test-log test-model-load-cancel test-model-resolution test-mtmd-c-api test-mtmd-impl test-opt test-peg-parser test-pq2-row-shapes test-ptq1_0-cuda-dot test-ptq1_0-element-map test-quantize-fns test-quantize-perf test-quantize-stats test-quant-type-selection test-reasoning-budget test-recurrent-state-rollback test-rope test-sampling test-save-load-state test-state-restore-fragmented test-thread-safety test-tokenizer-0 test-tokenizer-1-bpe test-tokenizer-1-spm test-unicode 
+[20:04:44] 
+[20:04:44] === 2. Vulkan device discovery ===
+Available devices:
+  Vulkan0: Intel(R) Arc(tm) B580 Graphics (BMG G21) (12216 MiB, 9732 MiB free)
+  Vulkan1: AMD Ryzen 9 7900X 12-Core Processor (RADV RAPHAEL_MENDOCINO) (32179 MiB, 32149 MiB free)
+[20:04:44]   -> stock build sees the B580
+[20:04:44] 
+[20:04:44] === 3. Flag support check (llama-server --help) ===
+[20:04:44]   stock  ABSENT  --flash-attention
+[20:04:44]   stock  ok      -fa
+[20:04:44]   stock  ok      --cache-type-k
+[20:04:44]   stock  ok      --cache-type-v
+[20:04:44]   stock  ok      --jinja
+[20:04:44]   stock  ok      --chat-template-file
+[20:04:44]   stock  ok      --chat-template-kwargs
+[20:04:44]   stock  ok      --repeat-penalty
+[20:04:44]   stock  ok      --reasoning-format
+[20:04:44]   stock  ok      --override-tensor
+[20:04:44]   stock  ok      --min-p
+[20:04:44]   stock  ok      --temp
+[20:04:44]   stock  ok      --device
+[20:04:44]   stock  ok      --list-devices
+[20:04:44]   stock  ok      -ngl
+[20:04:44]   stock  ABSENT  --no-mmap
+[20:04:44] 
+[20:04:44] === 4. Test-load: obliterated (port 8081) ===
+[20:04:44]   cmd: /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp/build/bin/llama-server -m <gguf> -ngl 99 -fa on -c 32768   --host 127.0.0.1 --port 8081
+[20:04:52]   FAILED to reach /health — tail of log:
+0.00.018.545 I srv  llama_server: initializing ...
+0.00.018.554 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.018.800 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.020.537 I srv    load_model: loading model '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+0.00.332.163 W common_fit_params: failed to fit params to free device memory: n_gpu_layers already set by user to 99, abort
+0.00.562.435 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
+0.00.562.439 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
+0.00.562.443 W model has unused tensor blk.64.attn_q.weight (size = 33423360 bytes) -- ignoring
+0.00.562.445 W model has unused tensor blk.64.attn_k.weight (size = 2785280 bytes) -- ignoring
+0.00.562.447 W model has unused tensor blk.64.attn_v.weight (size = 3604480 bytes) -- ignoring
+0.00.562.452 W model has unused tensor blk.64.attn_output.weight (size = 16711680 bytes) -- ignoring
+0.00.562.454 W model has unused tensor blk.64.attn_q_norm.weight (size = 1024 bytes) -- ignoring
+0.00.562.456 W model has unused tensor blk.64.attn_k_norm.weight (size = 1024 bytes) -- ignoring
+0.00.562.457 W model has unused tensor blk.64.ffn_gate.weight (size = 47349760 bytes) -- ignoring
+0.00.562.459 W model has unused tensor blk.64.ffn_down.weight (size = 47349760 bytes) -- ignoring
+0.00.562.460 W model has unused tensor blk.64.ffn_up.weight (size = 47349760 bytes) -- ignoring
+0.00.562.463 W model has unused tensor blk.64.nextn.eh_proj.weight (size = 27852800 bytes) -- ignoring
+0.00.562.464 W model has unused tensor blk.64.nextn.enorm.weight (size = 20480 bytes) -- ignoring
+0.00.562.466 W model has unused tensor blk.64.nextn.hnorm.weight (size = 20480 bytes) -- ignoring
+0.00.562.471 W model has unused tensor blk.64.nextn.shared_head_norm.weight (size = 20480 bytes) -- ignoring
+ggml_vulkan: Device memory allocation of size 1033186944 failed.
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+0.07.397.457 E alloc_tensor_range: failed to allocate Vulkan0 buffer of size 1033186944
+0.07.797.063 E llama_model_load: error loading model: unable to allocate Vulkan0 buffer
+0.07.797.067 E llama_model_load_from_file_impl: failed to load model
+0.07.797.072 E cmn  common_init_: failed to load model '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+0.07.797.075 E srv    load_model: failed to load model, '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+0.07.797.077 I srv    operator(): operator(): cleaning up before exit...
+0.07.797.457 E srv  llama_server: exiting due to model loading error
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+0.07.797.063 E llama_model_load: error loading model: unable to allocate Vulkan0 buffer
+0.07.797.067 E llama_model_load_from_file_impl: failed to load model
+0.07.797.072 E cmn  common_init_: failed to load model '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+0.07.797.075 E srv    load_model: failed to load model, '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+0.07.797.457 E srv  llama_server: exiting due to model loading error
+[20:04:52]   retry with -ngl 48 (partial offload)
+[20:05:08]   -ngl 48 works (partial offload)
+[20:05:08] 
+[20:05:08] === 4. Test-load: bonsai (port 8082) ===
+[20:05:08]   cmd: /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/llama.cpp-prism/build/bin/llama-server -m <gguf> -ngl 99 -fa on -c 32768   --host 127.0.0.1 --port 8082
+[20:05:16]   server UP — key lines:
+0.07.126.613 I srv    load_model: initializing, n_slots = 4, n_ctx_slot = 32768, kv_unified = 'true'
+0.07.129.821 I srv          init: chat template supports preserving reasoning, consider enabling it via --reasoning-preserve
+[20:05:16]   web UI: no HTML on / (older build?)
+[20:05:20]   raw response:
+{"choices":[{"finish_reason":"length","index":0,"message":{"role":"assistant","content":"","reasoning_content":"We need to respond to user: \"Say hello in one sentence.\" Simple. Need final one sentence. Ensure one sentence. Could be \"Hello!\" That's one sentence? Exclamation mark counts. Maybe \"Hello, how are you?\""}}],"created":1790532320,"model":"/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/bonsai/Ternary-Bonsai-2-27B-PQ2_0.gguf","system_fingerp0.11.740.269 I slot print_timing: id  3 | task 0 | prompt eval time =    1763.49 ms /    58 tokens (   30.41 ms per token,    32.89 tokens per second)
+0.11.740.272 I slot print_timing: id  3 | task 0 |        eval time =    1921.66 ms /    48 tokens (   40.89 ms per token,    24.46 tokens per second)
+[20:05:20] 
+[20:05:20] === 5. llama-bench: obliterated (-p 128 -n 32) ===
+ggml_vulkan: Found 2 Vulkan devices:
+ggml_vulkan: 0 = Intel(R) Arc(tm) B580 Graphics (BMG G21) (Intel open-source Mesa driver) | uma: 0 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 1 | matrix cores: KHR_coopmat
+ggml_vulkan: 1 = AMD Ryzen 9 7900X 12-Core Processor (RADV RAPHAEL_MENDOCINO) (radv) | uma: 1 | fp16: dot2 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+| model                          |       size |     params | backend    | ngl |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | --------------: | -------------------: |
+ggml_vulkan: Device memory allocation of size 1033186944 failed.
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+llama_bench: error: failed to load model '/run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/models/llm/Qwen3.8-27B-OBLITERATED/Qwen3.8-27B-OBLITERATED-IQ4_XS.gguf'
+[20:05:22] 
+[20:05:22] === 5. llama-bench: bonsai (-p 128 -n 32) ===
+ggml_vulkan: Found 2 Vulkan devices:
+ggml_vulkan: 0 = Intel(R) Arc(tm) B580 Graphics (BMG G21) (Intel open-source Mesa driver) | uma: 0 | fp16: 1 | bf16: 1 | fp4: 0 | warp size: 32 | shared memory: 49152 | int dot: 1 | matrix cores: KHR_coopmat
+ggml_vulkan: 1 = AMD Ryzen 9 7900X 12-Core Processor (RADV RAPHAEL_MENDOCINO) (radv) | uma: 1 | fp16: dot2 | bf16: 0 | fp4: 0 | warp size: 32 | shared memory: 65536 | int dot: 1 | matrix cores: none
+| model                          |       size |     params | backend    | ngl |  fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --: | --------------: | -------------------: |
+| qwen35 27B PQ2_0 - 2.13 bpw (group 128) |   6.70 GiB |    26.90 B | Vulkan     |  -1 |   1 |           pp128 |        278.48 ± 6.36 |
+| qwen35 27B PQ2_0 - 2.13 bpw (group 128) |   6.70 GiB |    26.90 B | Vulkan     |  -1 |   1 |            tg32 |         26.03 ± 0.02 |
+
+build: adfffbe41 (10743)
+[20:05:29] 
+[20:05:29] === DONE ===
+[20:05:29] Report: /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/BUILD-REPORT.txt
+[20:05:29] Logs:   /run/media/nexuslink/82CC5F65CC5F5311/Users/mikek/NEXUS_AI_CENTER/LOCAL AI LAB/llm/logs
+[20:05:29] 
+[20:05:29] Launchers: ../chat-obliterated.sh (port 8081)  ../chat-bonsai.sh (port 8082)

@@ -1,0 +1,36 @@
+#!/home/nexuslink/NEXUS_AI_CENTER/LOCAL-AI-LAB/voice/.venv-stt/bin/python
+"""Hermes STT command provider (stt.providers.parakeet): parakeet-tdt-0.6b-v3 int8, CPU, via onnx-asr.
+
+Model dir is the one Voxtype already downloaded (voxtype transcribe ignores --model for the
+parakeet engine and always loads parakeet-unified-en, so it cannot reach v3).
+usage: stt-parakeet <audio file, any container>  -> transcript on stdout
+"""
+import os
+import subprocess
+import sys
+import tempfile
+
+import onnx_asr
+import onnxruntime
+
+MODEL_DIR = "/home/nexuslink/.local/share/voxtype/models/parakeet-tdt-0.6b-v3-int8"
+THREADS = int(os.environ.get("STT_THREADS", "4"))  # same cap as piper-tts: keep the LLM's cores free
+# ponytail: model reloaded per call (Hermes command provider spawns a process per utterance);
+# keep-warm needs Hermes' built-in provider or a daemon, add when per-call load (~2 s) hurts.
+
+
+def main():
+    src = sys.argv[1]
+    with tempfile.TemporaryDirectory(prefix="stt-parakeet-") as tmp:
+        wav = os.path.join(tmp, "in16k.wav")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-ar", "16000", "-ac", "1",
+                        "-c:a", "pcm_s16le", wav], check=True)
+        so = onnxruntime.SessionOptions()
+        so.intra_op_num_threads = THREADS
+        model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", path=MODEL_DIR, quantization="int8",
+                                    sess_options=so)
+        print(model.recognize(wav).strip())
+
+
+if __name__ == "__main__":
+    main()
