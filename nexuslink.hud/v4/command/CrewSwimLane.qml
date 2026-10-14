@@ -1,0 +1,564 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import ".."
+
+// CrewSwimLane.qml — M1 CRW-TL crew activity table: LED + handle cells,
+// 6h event track with two-row packing and in-lane titles, +15min hatched
+// future zone, S/24H odometer, LANE (model tag), LAST, STATE chips, NOW
+// cursor and footer legend. Rows come straight from crew.json — the shared
+// "default" store gets a lane too, displayed as HERMES (source name stays
+// "default" for identity). The now tick runs at 60 s and only while shown.
+Item {
+    id: root
+
+    property var crew: ({})
+    property bool shown: true
+
+    property double now: Date.now() / 1000
+    // auto-fit the axis to the earliest event in the last 24h (min 2h) —
+    // a fixed 6h window reads as empty bars when the crew went quiet early.
+    readonly property double windowStart: {
+        var t0 = now - 2 * 3600;
+        var cutoff = now - 24 * 3600;
+        for (var i = 0; i < bots.length; i++) {
+            var ev = bots[i].events;
+            if (!ev || ev.length === undefined)
+                continue;
+            for (var j = 0; j < ev.length; j++) {
+                var s0 = Number(ev[j][0]);
+                if (isFinite(s0) && s0 > cutoff && s0 < t0)
+                    t0 = s0;
+            }
+        }
+        return t0;
+    }
+    readonly property double windowEnd: now + 15 * 60   // NOW sits at -15min zone edge
+    readonly property double spanMin: (tNow - windowStart) / 60
+
+    Timer {
+        interval: 60000
+        repeat: true
+        running: root.shown && root.visible
+        triggeredOnStart: true
+        onTriggered: root.now = Date.now() / 1000
+    }
+
+    readonly property var bots: {
+        // state-ranked: active first, warm/idle next, dormant last (stable
+        // within a tier). _ord keeps the crew.json serial order so a state
+        // flip never renumbers a lane.
+        var src = (crew && crew.bots) ? crew.bots : [];
+        var out = [];
+        function rank(s) { return s === "active" ? 0 : (s === "dormant" ? 2 : 1); }
+        for (var i = 0; i < src.length; i++) {
+            var b = src[i];
+            var rb = {};
+            for (var k in b)
+                rb[k] = b[k];
+            rb._ord = i;
+            rb._rank = rank(String(b.state || "dormant"));
+            out.push(rb);
+        }
+        out.sort(function (a, b) {
+            return a._rank - b._rank
+                   || (Number(b.last_active) || 0) - (Number(a.last_active) || 0)
+                   || a._ord - b._ord;
+        });
+        return out;
+    }
+
+    // ---- geometry (fractions of the 1420px design panel) -------------------
+    readonly property real headH: 66                    // ruler/header zone
+    readonly property real footH: 30
+    readonly property real trackX0: width * (196 / 1420)
+    readonly property real trackW: width * (864 / 1420)
+    readonly property real futW: width * (36 / 1420)
+    readonly property real rxX: width * (1104 / 1420)
+    readonly property real rowsY: headH + 18
+    readonly property real rowsH: Math.max(20, height - rowsY - footH)
+    // rows never exceed rowsH: if the roster can't fit at min row height the
+    // tail collapses into a "+N dormant" summary row.
+    readonly property int minRowH: 17
+    readonly property int maxFit: Math.max(1, Math.floor(rowsH / minRowH))
+    readonly property bool overflowed: bots.length > maxFit
+    readonly property var shownBots: overflowed ? bots.slice(0, maxFit - 1) : bots
+    readonly property int hiddenCount: bots.length - shownBots.length
+    readonly property int nRows: shownBots.length + (overflowed ? 1 : 0)
+    readonly property real rowH: nRows > 0 ? Math.min(22, rowsH / nRows) : 22
+    readonly property double tNow: windowEnd - 15 * 60
+    // ruler labels: px per hour from view geometry — label only major ticks
+    // with >=60px of room so dense windows don't avalanche into each other
+    readonly property real hourPx: trackW / Math.max(1, spanMin) * 60
+    readonly property int labelStepH: Math.max(1, Math.ceil(60 / Math.max(1, hourPx)))
+    // scale for the S/24H micro bar: busiest lane fills the column
+    readonly property int maxSes: {
+        var m = 0;
+        for (var i = 0; i < bots.length; i++)
+            m = Math.max(m, Number(bots[i].sessions_24h) || 0);
+        return m;
+    }
+
+    function tx(ts) {
+        // spans the fitted track AND the +15m future zone so an event may
+        // bleed into it; the NOW line sits at trackX0+trackW.
+        return trackX0 + (ts - windowStart) / 60 * (trackW / Math.max(1, spanMin));
+    }
+
+    function modelTag(m) {
+        var s = String(m || "");
+        if (s === "") return FuiTokens.unknownGlyph;
+        s = s.replace("claude-", "").replace("deepseek-", "ds-")
+             .replace("cursor/", "").replace("-flash", "f");
+        return s.length > 14 ? s.slice(0, 13) + "~" : s;
+    }
+    function laneTag(p) {
+        var s = String(p || "");
+        return s === "" ? FuiTokens.unknownGlyph : s.replace("-", " ").toUpperCase();
+    }
+    // display name only — the shared store keeps name==="default" for identity
+    function displayName(n) {
+        var s = String(n || "");
+        return s === "default" ? "Hermes" : s;
+    }
+
+    // greedy two-row packing of a bot's window events; returns
+    // [{x0,x1,row,live,idle,ping,title,room}]
+    function packEvents(events) {
+        var out = [];
+        if (!events || events.length === undefined)
+            return out;
+        var sess = [];
+        for (var i = 0; i < events.length; i++) {
+            var e = events[i];
+            var s0 = Number(e[0]), s1 = (e[1] === null || e[1] === undefined) ? root.tNow : Number(e[1]);
+            if (s1 < root.windowStart || s0 > root.windowEnd)
+                continue;
+            sess.push({ "s0": Math.max(s0, root.windowStart), "s1": Math.min(s1, root.tNow),
+                        "open": e[1] === null || e[1] === undefined, "title": String(e[2] || "") });
+        }
+        sess.sort(function (a, b) { return a.s0 - b.s0; });
+        var end = [-1e18, -1e18];
+        for (i = 0; i < sess.length; i++) {
+            var r = sess[i];
+            var x0 = tx(r.s0);
+            var x1 = Math.max(tx(r.s1), x0 + 3);
+            var row = x0 >= end[0] + 1 ? 0 : (x0 >= end[1] + 1 ? 1 : 0);
+            if (x0 < end[row] + 1 && row === 0 && x0 < end[1] + 1)
+                continue;                        // both rows busy — clip
+            end[row] = Math.max(end[row], x1);
+            out.push({ "x0": x0, "x1": x1, "row": row, "live": r.open,
+                       "ping": !r.open && (r.s1 - r.s0) < 90, "title": r.title });
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------ header
+    // ruler baseline + 10min/hour ticks + full-height hour gridlines
+    Canvas {
+        id: grid
+        anchors.fill: parent
+        onPaint: {
+            var ctx = getContext("2d");
+            ctx.clearRect(0, 0, width, height);
+            var base = root.headH;
+            ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.45));
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(root.trackX0, base + 0.5);
+            ctx.lineTo(root.trackX0 + root.trackW + root.futW, base + 0.5);
+            ctx.stroke();
+            // tick step follows the fitted span: 10min under 4h, 30min
+            // under 12h, hourly beyond (a 24h window would bury 10min ticks)
+            var step = root.spanMin <= 240 ? 600 : (root.spanMin <= 720 ? 1800 : 3600);
+            var first = Math.ceil(root.windowStart / step) * step;
+            var rowsBottom = root.rowsY + root.nRows * root.rowH;
+            for (var t = first; t <= root.windowEnd; t += step) {
+                var x = root.tx(t);
+                var hour = t % 3600 === 0;
+                ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, hour ? 0.75 : 0.4));
+                ctx.beginPath();
+                ctx.moveTo(x + 0.5, base);
+                ctx.lineTo(x + 0.5, base + (hour ? 9 : 4));
+                ctx.stroke();
+                if (hour) {
+                    ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.09));
+                    ctx.beginPath();
+                    ctx.moveTo(x + 0.5, base + 12);
+                    ctx.lineTo(x + 0.5, rowsBottom);
+                    ctx.stroke();
+                }
+            }
+            // hatched +15m future zone
+            var fx = root.trackX0 + root.trackW;
+            ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.12));
+            ctx.beginPath();
+            for (var hx = -rowsBottom; hx < root.futW + rowsBottom; hx += 6) {
+                ctx.moveTo(fx + hx, rowsBottom);
+                ctx.lineTo(fx + hx + rowsBottom, root.rowsY - 4);
+            }
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(fx, root.rowsY - 4, root.futW, rowsBottom - root.rowsY + 4);
+            ctx.clip();
+            ctx.stroke();
+            ctx.restore();
+        }
+        Connections {
+            target: root
+            function onWindowStartChanged() { grid.requestPaint(); }
+            function onTrackX0Changed() { grid.requestPaint(); }
+            function onRowHChanged() { grid.requestPaint(); }
+        }
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+    }
+
+    // hour labels (only ticks with >=60px spacing) + window start + +15M tag
+    Repeater {
+        model: {
+            var out = [];
+            var step = root.labelStepH * 3600;
+            var first = Math.ceil(root.windowStart / 3600) * 3600;
+            for (var t = first; t <= root.windowEnd; t += step)
+                out.push(t);
+            return out;
+        }
+        delegate: Text {
+            required property var modelData
+            x: root.tx(modelData) - implicitWidth / 2
+            y: root.headH - 10
+            text: FuiTokens.fmtHm(modelData)
+            color: FuiTokens.dim
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+        }
+    }
+    Text {
+        x: root.trackX0; y: root.headH - 10
+        // hide when the first labelled tick would sit within 60px of it
+        visible: root.tx(Math.ceil(root.windowStart / 3600) * 3600) - root.trackX0 >= 60
+        text: FuiTokens.fmtHm(root.windowStart)
+        color: FuiTokens.mute
+        font.family: FuiTokens.mono
+        font.pixelSize: FuiTokens.px.micro
+    }
+    Text {
+        x: root.trackX0 + root.trackW + root.futW / 2 - implicitWidth / 2
+        y: root.headH - 24
+        text: "+15M"
+        color: FuiTokens.mute
+        font.family: FuiTokens.mono
+        font.pixelSize: FuiTokens.px.micro
+    }
+
+    // column heads
+    Text {
+        x: 12; y: root.headH - 10
+        text: "CRW / HANDLE"
+        color: FuiTokens.dim
+        font.family: FuiTokens.mono
+        font.pixelSize: FuiTokens.px.micro
+        font.letterSpacing: FuiTokens.ls.cap
+    }
+    Row {
+        x: root.rxX; y: root.headH - 10
+        spacing: 0
+        Repeater {
+            model: [["S/24H", 92], ["LANE", 108], ["LAST", 46], ["STATE", 60]]
+            delegate: Text {
+                required property var modelData
+                width: modelData[1]
+                text: modelData[0]
+                color: FuiTokens.dim
+                font.family: FuiTokens.mono
+                font.pixelSize: FuiTokens.px.micro
+                font.letterSpacing: FuiTokens.ls.cap
+            }
+        }
+    }
+    Rectangle {
+        x: root.rxX; y: root.headH - 1
+        width: 306; height: 1
+        color: FuiTokens.tone(FuiTokens.ice, 0.3)
+    }
+
+    // -------------------------------------------------------------- rows
+    Column {
+        y: root.rowsY
+        Repeater {
+            model: root.shownBots
+            delegate: Item {
+                id: lane
+                required property int index
+                required property var modelData
+                readonly property var bot: modelData
+                readonly property string st: String(bot.state || "dormant")
+                readonly property color stc: FuiTokens.stateColor(st)
+                readonly property var blocks: root.packEvents(bot.events)
+                width: root.width
+                height: root.rowH
+
+                Rectangle {                        // zebra (root.rowH — parent
+                    visible: lane.index % 2 === 0  // may be null mid-reload)
+                    x: 8; width: root.width - 16
+                    height: root.rowH
+                    color: FuiTokens.tone(FuiTokens.ice, 0.022)
+                }
+                Rectangle {                        // LED
+                    x: 14; width: 6; height: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: lane.st === "active" ? FuiTokens.acid
+                         : lane.st === "warm" ? FuiTokens.warn
+                         : FuiTokens.faint
+                }
+                Text {                             // handle
+                    x: 28; anchors.verticalCenter: parent.verticalCenter
+                    width: root.trackX0 - 34
+                    elide: Text.ElideRight
+                    text: root.displayName(lane.bot.name).toUpperCase()
+                    color: lane.st === "dormant" ? FuiTokens.dim : FuiTokens.white
+                    font.family: FuiTokens.display
+                    font.pixelSize: FuiTokens.px.micro
+                    font.letterSpacing: FuiTokens.ls.cap
+                }
+                Rectangle {                        // lane separator
+                    x: root.trackX0; width: root.trackW
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: FuiTokens.tone(FuiTokens.ice, 0.06)
+                }
+
+                Repeater {
+                    model: lane.blocks
+                    delegate: Item {
+                        id: blk
+                        required property var modelData
+                        readonly property var e: modelData
+                        x: e.x0
+                        width: e.ping ? 10 : Math.max(3, e.x1 - e.x0)
+                        // root.rowH == lane.height, but stable when the
+                        // delegate's parent is null during model reload
+                        y: e.row === 0 ? 3 : root.rowH / 2 + 1
+                        height: e.row === 0 ? root.rowH / 2 - 3 : root.rowH / 2 - 4
+
+                        Rectangle {
+                            visible: !blk.e.ping
+                            anchors.fill: parent
+                            color: blk.e.live ? FuiTokens.tone(FuiTokens.acid, 0.14)
+                                              : FuiTokens.tone(FuiTokens.ice, 0.05)
+                            border.width: 1
+                            border.color: blk.e.live ? FuiTokens.tone(FuiTokens.acid, 0.95)
+                                                     : FuiTokens.tone(FuiTokens.ice, 0.55)
+                        }
+                        Rectangle {                // roll-call ping diamond
+                            visible: blk.e.ping
+                            anchors.centerIn: parent
+                            width: 5; height: 5
+                            rotation: 45
+                            color: "transparent"
+                            border.width: 1
+                            border.color: FuiTokens.tone(FuiTokens.ice, 0.7)
+                        }
+                        Text {                     // in-lane title when roomy
+                            visible: !blk.e.ping && blk.width > 44
+                            anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
+                            width: parent.width - 8
+                            elide: Text.ElideRight
+                            text: blk.e.title
+                            color: blk.e.live ? FuiTokens.dim : FuiTokens.mute
+                            font.family: FuiTokens.mono
+                            font.pixelSize: FuiTokens.px.micro
+                        }
+                    }
+                }
+
+                // ---- readout columns ------------------------------------
+                Text {                             // S/24H count
+                    x: root.rxX + 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    horizontalAlignment: Text.AlignRight
+                    width: 26
+                    text: lane.bot.sessions_24h !== undefined
+                          ? root.p2(Number(lane.bot.sessions_24h)) : FuiTokens.unknownGlyph
+                    color: FuiTokens.white
+                    font.family: FuiTokens.mono
+                    font.pixelSize: FuiTokens.px.cap
+                }
+                Item {                             // S/24H micro bar (scaled to busiest lane)
+                    x: root.rxX + 34
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 52; height: 9
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "transparent"
+                        border.width: 1
+                        border.color: FuiTokens.tone(FuiTokens.ice, 0.3)
+                    }
+                    Rectangle {
+                        visible: lane.bot.sessions_24h !== undefined
+                        x: 1; y: 1
+                        width: root.maxSes > 0
+                               ? Math.max(1, (parent.width - 2) * Math.min(1, (Number(lane.bot.sessions_24h) || 0) / root.maxSes))
+                               : 0
+                        height: parent.height - 2
+                        color: FuiTokens.tone(lane.st === "dormant" ? FuiTokens.dim : FuiTokens.ice, 0.8)
+                    }
+                }
+                Rectangle {                        // LANE chip (model tag)
+                    x: root.rxX + 92
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 15
+                    width: laneText.implicitWidth + 8
+                    color: "transparent"
+                    border.width: 1
+                    border.color: FuiTokens.tone(FuiTokens.ice, 0.3)
+                    Text {
+                        id: laneText
+                        anchors.centerIn: parent
+                        text: root.modelTag(lane.bot.model)
+                        color: FuiTokens.dim
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+                }
+                Text {                             // LAST
+                    x: root.rxX + 200
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: FuiTokens.fmtHm(lane.bot.last_active)
+                    color: FuiTokens.dim
+                    font.family: FuiTokens.mono
+                    font.pixelSize: FuiTokens.px.cap
+                }
+                Rectangle {                        // STATE chip
+                    x: root.rxX + 246
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 56; height: 15
+                    color: "transparent"
+                    border.width: 1
+                    border.color: FuiTokens.tone(lane.stc, 0.6)
+                    Text {
+                        anchors.centerIn: parent
+                        text: lane.st.toUpperCase()
+                        color: lane.stc
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+                }
+            }
+        }
+    }
+
+    // "+N dormant" summary row — only when the roster overflows rowsH
+    Item {
+        visible: root.overflowed
+        y: root.rowsY + root.shownBots.length * root.rowH
+        width: root.width
+        height: root.rowH
+        Rectangle {
+            x: 14; width: 6; height: 6
+            anchors.verticalCenter: parent.verticalCenter
+            color: FuiTokens.faint
+        }
+        Text {
+            x: 28; anchors.verticalCenter: parent.verticalCenter
+            text: "+ " + root.hiddenCount + " dormant"
+            color: FuiTokens.mute
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
+        Rectangle {                        // continuation ticks on the track
+            x: root.trackX0; width: root.trackW
+            anchors.bottom: parent.bottom
+            height: 1
+            color: FuiTokens.tone(FuiTokens.ice, 0.06)
+        }
+    }
+
+    // NOW cursor + tag (sits at end of the 6h track, before the +15m zone)
+    Rectangle {
+        visible: root.bots.length > 0
+        x: Math.round(root.trackX0 + root.trackW)
+        y: root.headH - 26
+        width: 1
+        height: root.rowsY + root.nRows * root.rowH - (root.headH - 26)
+        color: FuiTokens.tone(FuiTokens.acid, 0.9)
+    }
+    Rectangle {
+        visible: root.bots.length > 0
+        x: Math.round(root.trackX0 + root.trackW) - 40
+        y: root.headH - 38
+        width: 80; height: 16
+        color: FuiTokens.bg
+        border.width: 1
+        border.color: FuiTokens.tone(FuiTokens.acid, 0.8)
+        Text {
+            anchors.centerIn: parent
+            text: "NOW " + FuiTokens.fmtHm(root.tNow)
+            color: FuiTokens.acid
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+        }
+    }
+
+    // ------------------------------------------------------------ footer
+    Item {
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: root.footH
+        Rectangle {
+            anchors { left: parent.left; right: parent.right; top: parent.top; leftMargin: 12; rightMargin: 12 }
+            height: 1
+            color: FuiTokens.tone(FuiTokens.ice, 0.12)
+        }
+        Row {
+            x: 14; y: 9
+            spacing: 24
+            Repeater {
+                model: ["session (closed)", "open, live", "roll-call ping"]
+                delegate: Row {
+                    id: leg
+                    required property int index
+                    required property string modelData
+                    spacing: 6
+                    Rectangle {
+                        visible: leg.index < 2
+                        y: 4; width: 22; height: 9
+                        color: leg.index === 1 ? FuiTokens.tone(FuiTokens.acid, 0.14)
+                                           : FuiTokens.tone(FuiTokens.ice, 0.05)
+                        border.width: 1
+                        border.color: leg.index === 1 ? FuiTokens.tone(FuiTokens.acid, 0.95)
+                                                  : FuiTokens.tone(FuiTokens.ice, 0.55)
+                    }
+                    Rectangle {
+                        visible: leg.index === 2
+                        y: 6; width: 5; height: 5
+                        rotation: 45
+                        color: "transparent"
+                        border.width: 1
+                        border.color: FuiTokens.tone(FuiTokens.ice, 0.7)
+                    }
+                    Text {
+                        text: leg.modelData
+                        color: FuiTokens.mute
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+                }
+            }
+        }
+    }
+
+    // empty state
+    Text {
+        visible: root.bots.length === 0
+        anchors.centerIn: parent
+        text: "awaiting crew feed"
+        color: FuiTokens.mute
+        font.family: FuiTokens.mono
+        font.pixelSize: FuiTokens.px.cap
+        font.letterSpacing: FuiTokens.ls.cap
+    }
+
+    function p2(x) { return (x < 10 ? "0" : "") + x; }
+}

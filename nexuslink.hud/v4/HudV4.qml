@@ -5,17 +5,25 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
+import "ScreenRoles.js" as ScreenRoles
+import "GpuCards.js" as GpuCards
+
 // HudV4.qml — lane H integration root for the NexusHud.V4 module.
 //
 // One PanelWindow per Hyprland output on the wlr BACKGROUND layer with
 // ExclusionMode.Auto and no keyboard focus (the chrome-cybercore HUD is a
 // read-only desktop surface; the Navigator overlay owns focus when open).
 //
-// Role map (BRIEF-V4-BUILD §2):
-//   DP-1      command  -> CommandHub  (reactor + knot dead-centre)
-//   DP-2      hardware -> BoardView   (live topology schematic)
-//   HDMI-A-3  ops      -> Workbench   (ledger / patch bay)
-//   unknown   -> command fallback so no output ever renders empty
+// Role map (M1 kit — docs/m1): roles follow display identity (EDID model /
+// serial via ScreenRoles.js), never the connector name — connector names can
+// renumber after GPU/topology changes and must not move a role.
+//   Samsung LC27G7xT  command  -> DeckCommand (crew + launch, SwimLane hero)
+//   HP E24i G4        hardware -> DeckTokens  (token flux, concentric limit rings)
+//   HP Z24n G3        ops      -> DeckSystem  (device topology + system ledger)
+//   Nreal/XREAL       excluded -> glasses get no HUD window (see hudScreens)
+//   unknown           -> command fallback so no output ever renders empty
+// (the v4 screens CommandHub/BoardView/Workbench stay in the tree and in
+// qmldir for reference; they are no longer instantiated)
 //
 // MOVABLE DECKS: the v4 screens are monolithic surfaces, so the movable unit
 // is the screen deck itself — a floating slab on a free canvas per monitor.
@@ -35,7 +43,7 @@ import Quickshell.Wayland
 // absent so the screens can render Style.unknownGlyph.
 //
 // IPC (`omarchy-shell nexuslink.hud <m>`): status panels say focus move
-// resize show hide layout version selftest framesAlive reload.
+// resize show hide layout version selftest roleprobe framesAlive gpus reload.
 // `nexuslink.nav` belongs to Navigator.qml — do not re-declare it.
 
 Item {
@@ -50,8 +58,12 @@ Item {
         decodeURIComponent(String(Qt.resolvedUrl("../collect.sh")).replace(/^file:\/\//, ""))
     readonly property string ledgerScript:
         decodeURIComponent(String(Qt.resolvedUrl("../tokens/ledger.py")).replace(/^file:\/\//, ""))
+    readonly property string crewScript:
+        decodeURIComponent(String(Qt.resolvedUrl("../tokens/crew.py")).replace(/^file:\/\//, ""))
     readonly property string tokStatePath:
         Quickshell.env("HOME") + "/.local/state/nexuslink/tokens.json"
+    readonly property string crewStatePath:
+        Quickshell.env("HOME") + "/.local/state/nexuslink/crew.json"
     // v4 state is deliberately a different file — no v3 layout migrates.
     readonly property string stateDir:
         Quickshell.env("HOME") + "/.config/omarchy/nexuslink/"
@@ -65,7 +77,6 @@ Item {
     property int procCount: 0
     property int batchSeq: 0
     property double lastBatchMs: 0
-    property string pendingFrame: ""
     property string lastFrameRaw: ""
 
     property real cpuPct: -1
@@ -76,6 +87,8 @@ Item {
     property real prevRx: -1
     property real prevTx: -1
     property double lastPollMs: 0
+    property double topoMs: 0
+    readonly property double lastFrameMs: lastPollMs
 
     property string hostName: ""
     property string kernelName: ""
@@ -84,6 +97,7 @@ Item {
 
     property var tokData: ({})
     property bool tokLoaded: false
+    property var crew: ({})
 
     property var persistScreens: ({})
     property bool persistLoaded: false
@@ -92,6 +106,16 @@ Item {
     property bool sayFlash: false
 
     property var navScreenObj: null
+
+    // Outputs that get a HUD window: every connected screen minus glasses
+    // (XREAL/Nreal). Re-evaluates on Quickshell.screensChanged.
+    readonly property var hudScreens: {
+        var all = Quickshell.screens
+        var list = []
+        for (var i = 0; i < all.length; i++)
+            if (ScreenRoles.hasHudWindow(all[i])) list.push(all[i])
+        return list
+    }
 
     // ------------------------------------------------------------- helpers
     function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)) }
@@ -246,7 +270,13 @@ Item {
 
         stats = m
         lastFrameRaw = String(text || "")
-        try { Topology.refresh(stats) } catch (e) {}
+        // The board only needs a fresh topology every ~2 s; refresh costs far
+        // more than every other frame consumer together and its rates are
+        // dt-based, so a skipped frame just widens dt.
+        if (!Topology.ready || lastFrameMs - topoMs >= 1900) {
+            topoMs = lastFrameMs
+            try { Topology.refresh(stats) } catch (e) {}
+        }
     }
 
     function applyProbe(text) {
@@ -288,19 +318,22 @@ Item {
         id: streamProc
         running: true
         command: ["bash", hud.collectScript, "stream", "auto"]
+        // One read per frame instead of one per line (~440 JS callbacks/s):
+        // the frame is cut on the "batch\t" sentinel, so read k carries
+        // "<seq of frame k-1>\n" followed by the lines of frame k.
         stdout: SplitParser {
+            splitMarker: "batch\t"
             onRead: data => {
-                var line = String(data)
-                if (line.indexOf("batch\t") === 0) {
-                    var n = parseInt(line.substring(6))
-                    if (isFinite(n))
-                        hud.batchSeq = n
-                    hud.applyFrame(hud.pendingFrame)
-                    hud.pendingFrame = ""
-                    hud.lastBatchMs = Date.now()
-                } else {
-                    hud.pendingFrame += line + "\n"
+                var body = String(data)
+                var hm = /^(\d+)\n/.exec(body)
+                if (hm !== null) {
+                    hud.batchSeq = parseInt(hm[1]) + 1
+                    body = body.substring(hm[0].length)
                 }
+                if (body.length === 0)
+                    return
+                hud.applyFrame(body)
+                hud.lastBatchMs = Date.now()
             }
         }
     }
@@ -321,13 +354,41 @@ Item {
         running: false
         onExited: tokFile.reload()
     }
+    // crew feed — same 60 s ledger cadence; crew.py writes crew.json
+    FileView {
+        id: crewFile
+        path: hud.crewStatePath
+        watchChanges: false
+        atomicWrites: true
+        printErrors: false
+        onLoaded: hud.loadCrew(text())
+        onLoadFailed: hud.loadCrew("")
+    }
+    Process {
+        id: crewProc
+        command: ["python3", hud.crewScript]
+        running: false
+        onRunningChanged: if (!running) crewFile.reload()
+    }
     Timer {
         id: ledgerTimer
         interval: 60000
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!ledgerProc.running) ledgerProc.running = true
+        onTriggered: {
+            if (!ledgerProc.running) ledgerProc.running = true
+        }
+    }
+    Timer {
+        id: crewTimer
+        interval: 10000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            if (!crewProc.running) crewProc.running = true
+        }
     }
     function loadTokens(raw) {
         var data = null
@@ -335,6 +396,12 @@ Item {
         if (data === null || typeof data !== "object") data = ({})
         tokData = data
         tokLoaded = true
+    }
+    function loadCrew(raw) {
+        var data = null
+        try { data = JSON.parse(String(raw || "")) } catch (e) { data = null }
+        if (data === null || typeof data !== "object") data = ({})
+        crew = data
     }
 
     // say() TTL — the reactor face draws the payload while sayFlash is hot
@@ -382,6 +449,7 @@ Item {
         add("devin",        s.devsess_count !== undefined)
         add("media-mounts", s.media_count !== undefined)
         add("tokens",       tokProviderCount > 0)
+        add("crew",         crew.bots !== undefined && crew.bots.length > 0)
         add("topology",     Topology.ready === true)
         return list
     }
@@ -389,15 +457,15 @@ Item {
     // --------------------------------------------------------- IPC routing
     function winForPanel(pid) {
         var ins = winVariants.instances
-        var aliases = { "command": "hub", "hardware": "board", "ops": "bench",
-                        "dp-1": "hub", "dp-2": "board", "hdmi-a-3": "bench" }
+        var aliases = { "command": "hub", "hardware": "board", "ops": "bench" }
         var want = String(pid)
         var alias = aliases[want.toLowerCase()]
         for (var i = 0; i < ins.length; i++) {
             var w = ins[i]
             if (w !== null && w.roleIds !== undefined
                     && (w.roleIds.indexOf(want) >= 0
-                        || (alias !== undefined && w.roleIds.indexOf(alias) >= 0)))
+                        || (alias !== undefined && w.roleIds.indexOf(alias) >= 0)
+                        || String(w.screenName).toLowerCase() === want.toLowerCase()))
                 return w
         }
         return null
@@ -522,7 +590,8 @@ Item {
 
     // The modal Navigator overlay — exactly once at root. It owns its own
     // nexuslink.nav IPC target, its overlay window, and its open state;
-    // HudV4 only feeds it stats and a deterministic default screen (DP-1).
+    // HudV4 only feeds it stats and a deterministic default screen (the
+    // command-role monitor — resolveNavScreen prefers isCommand).
     Navigator {
         id: nav
         stats: hud.stats
@@ -532,7 +601,9 @@ Item {
     // ------------------------------------------------------------- windows
     Variants {
         id: winVariants
-        model: Quickshell.screens
+        // glasses never reach this model — no deck, no invisible polling
+        // window on the wearable output
+        model: hud.hudScreens
 
         PanelWindow {
             id: win
@@ -540,10 +611,9 @@ Item {
             screen: modelData
 
             readonly property string screenName: String(modelData.name)
-            // unknown output names fall back to the command cockpit
-            readonly property string role: screenName === "DP-2" ? "hardware"
-                                       : screenName === "HDMI-A-3" ? "ops"
-                                       : "command"
+            // role from EDID identity (ScreenRoles.js); connector names are
+            // deliberately ignored and unknown identity falls back to command
+            readonly property string role: ScreenRoles.roleForScreen(modelData)
             readonly property bool isCommand:  role === "command"
             readonly property bool isHardware: role === "hardware"
             readonly property string deckId: isCommand ? "hub" : isHardware ? "board" : "bench"
@@ -572,6 +642,9 @@ Item {
             // ------------------------------ layout state (fractions of field)
             property var layoutMap: ({})
             property var hiddenMap: ({})
+            // per-screen deck prefs (tokens period toggle etc.) — stored under
+            // screens[name].prefs in hud-state-v4.json alongside the layout
+            property var prefMap: ({})
             property bool layoutReady: false
             property bool delegatesReady: false
             property bool animateLayout: false
@@ -651,6 +724,7 @@ Item {
                 }
                 layoutMap = m
                 hiddenMap = hid
+                prefMap = (st && st.prefs && typeof st.prefs === "object") ? st.prefs : ({})
                 layoutReady = true
                 animGate.restart()
             }
@@ -678,7 +752,17 @@ Item {
                 if (!layoutReady) return
                 var hidden = []
                 for (var k in hiddenMap) if (hiddenMap[k] === true) hidden.push(k)
-                hud.mergeScreenState(screenName, { panels: layoutMap, hidden: hidden })
+                hud.mergeScreenState(screenName, { panels: layoutMap, hidden: hidden,
+                                                   prefs: prefMap })
+            }
+            // deck-settable prefs (period toggles etc.) — land in the same
+            // screen entry via persist(), saved on the 500 ms debounce
+            function setPref(k, v) {
+                var m = {}
+                for (var kk in prefMap) m[kk] = prefMap[kk]
+                m[k] = v
+                prefMap = m
+                persist()
             }
 
             // ---- drag lifecycle (v3 invariants) ----
@@ -909,7 +993,7 @@ Item {
 
             Timer {
                 id: knotProbe
-                running: win.isCommand
+                running: win.isCommand && !win.isHidden(win.deckId)
                 // dense only while a transition cycle is actually in flight
                 interval: (win.knotNode !== null && win.knotNode !== undefined
                            && win.knotNode.effect >= 0) ? 250 : 1500
@@ -974,7 +1058,7 @@ Item {
                 id: initRetry
                 interval: 140
                 repeat: true
-                running: true
+                running: !win.layoutReady   // ensureLayout() is a no-op once ready
                 onTriggered: win.ensureLayout()
             }
             Connections {
@@ -1050,31 +1134,55 @@ Item {
                         onCanceled: () => win.dragAbort(deck)
                     }
 
-                    // ------- role screen (exactly one is visible per window)
-                    CommandHub {
+                    // ------- role screen (exactly one is instantiated per window)
+                    // M1 kit: the three decks share one input contract —
+                    // stats/tokData/crew/screenName/shown (+navigator/say on command).
+                    // The Loader gates CREATION on role, not just visibility:
+                    // each window builds only its own deck tree.
+                    Loader {
+                        id: deckLoader
                         anchors.fill: parent
-                        visible: win.isCommand
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        screenName: win.screenName
-                        navigator: nav
-                        sayText: hud.sayText
-                        sayFlash: hud.sayFlash
-                        shown: win.isCommand && deck.shown
+                        sourceComponent: win.isCommand ? commandScreen
+                                       : win.isHardware ? tokensScreen
+                                       : systemScreen
                     }
-                    BoardView {
-                        anchors.fill: parent
-                        visible: win.isHardware
-                        stats: hud.stats
-                        screenName: win.screenName
-                        running: win.isHardware && deck.shown
+                    Component {
+                        id: commandScreen
+                        DeckCommand {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            navigator: nav
+                            sayText: hud.sayText
+                            sayFlash: hud.sayFlash
+                            shown: deck.shown
+                        }
                     }
-                    Workbench {
-                        anchors.fill: parent
-                        visible: win.role === "ops"
-                        stats: hud.stats
-                        tokData: hud.tokData
-                        screenName: win.screenName
+                    Component {
+                        id: tokensScreen
+                        DeckTokens {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                            prefs: win.prefMap
+                            onSetPref: function (k, v) { win.setPref(k, v) }
+                        }
+                    }
+                    Component {
+                        id: systemScreen
+                        DeckSystem {
+                            anchors.fill: parent
+                            stats: hud.stats
+                            tokData: hud.tokData
+                            crew: hud.crew
+                            screenName: win.screenName
+                            shown: deck.shown
+                        }
                     }
 
                     // machined slab edge — the deck's chrome frame
@@ -1178,8 +1286,22 @@ Item {
         function hide(id: string): string { return hud.ipcShowHide(id, true) }
         function layout(name: string): string { return hud.ipcLayout(name) }
         function selftest(): string { return JSON.stringify(hud.selftestData()) }
+        function roleprobe(): string {
+            var out = []
+            var ins = winVariants.instances
+            for (var i = 0; i < ins.length; i++) {
+                var md = ins[i].screen
+                out.push({ name: String(md.name),
+                           ident: ScreenRoles.identityOf(md),
+                           role: ScreenRoles.roleForScreen(md) })
+            }
+            return JSON.stringify(out)
+        }
         // raw ingest frame path — the last committed TSV batch verbatim
         function framesAlive(): string { return hud.lastFrameRaw }
+        // grounded GPU attribution: inventory cards + live dev_gpuN_*
+        // readings exactly as the DeckSystem graphics cell sees them
+        function gpus(): string { return JSON.stringify(GpuCards.cards(hud.stats)) }
         function reload(): string {
             if (!streamProc.running) streamProc.running = true
             if (!probeProc.running) probeProc.running = true
