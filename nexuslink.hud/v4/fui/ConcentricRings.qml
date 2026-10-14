@@ -4,23 +4,29 @@ import QtQuick
 
 // ConcentricRings.qml — N concentric rings around a centre hole (F2-style
 // provider limit rings, M1 DP-2 hero). Per-ring model entries:
-//   { label:"OCG", color:FuiTokens.ice,
+//   { label:"OpenCode Go", color:FuiTokens.ice,
 //     value:0.66,          // 0..1 thin arc (share)   — null hides the arc
-//     limit:1.0,           // 0..1 thick arc (limit used) — null = no feed
+//     limit:1.0,           // 0..1 thick arc (limit used) — null = no feed,
+//                          // nothing drawn
 //     state:"alert",       // ok|warn|alert — colours the thick arc
 //     dash:[2,3],          // optional dash pattern for the thin arc
-//     valueText:"1.46B", reset:"≤5h" }   // shown in the inside label
-// Labels float in the mid-gap between rings at the lower-left (angle table),
-// each tied to its ring by a short radial nub; the
-// outer bezel carries a 0-100% graduated scale. Canvas repaints only when
-// `model` or geometry changes. Centre content via the default property.
+//     valueText:"1.46B", reset:"≤5h" }   // shown in the label
+// labelMode "inside"  — labels float in the mid-gap between rings at the
+//     lower-left (angle table), each tied to its ring by a radial nub.
+// labelMode "outside" — a `labelReserve`-wide column on the left holds one
+//     two-line label per ring, clear of the bezel; a hairline leader runs
+//     from the ring edge to each label's anchor.
+// The outer bezel carries a 0-100 graduated scale with the unit printed on
+// it ("0-100 %" at the zero index). Canvas repaints only when `model` or
+// geometry changes. Centre content via the default property.
 Item {
     id: root
 
     property var model: []
-    property bool bezel: true         // outer 0-100% graduated scale
+    property bool bezel: true         // outer graduated scale
     property bool bezelLabels: true
-    property string labelMode: "inside"   // "inside" | "none"
+    property string labelMode: "inside"   // "inside" | "outside" | "none"
+    property real labelReserve: 0     // left column width (outside mode)
     property real innerHole: 0.34     // fraction of radius kept for centre
     property real ringPitch: 0        // 0 = auto from available space
     property real margin: 6
@@ -30,14 +36,33 @@ Item {
     implicitWidth: 460
     implicitHeight: 460
 
-    readonly property int ringCount: model.length
-    readonly property real rOuter: Math.min(width, height) / 2 - margin - (bezel ? 26 : 0)
+    // the dial's centre — with outside labels the circle sits right of the
+    // label column, so cx is not simply width/2
+    readonly property real cx: labelMode === "outside"
+            ? labelReserve + Math.max(0, width - labelReserve) / 2
+            : width / 2
+    readonly property real cy: height / 2
+    readonly property real rOuter: Math.min(
+            width - (labelMode === "outside" ? labelReserve : 0), height) / 2
+            - margin - (bezel ? 26 : 0)
     readonly property real rInner: rOuter * innerHole
+    readonly property int ringCount: model.length
     readonly property real pitch: ringCount > 0
             ? (ringPitch > 0 ? ringPitch
                              : Math.max(13, (rOuter - rInner) / Math.max(1, ringCount)))
             : 0
     function ringR(i) { return rOuter - i * pitch; }
+
+    // ---- outside-label geometry (shared by canvas leaders + repeater) ----
+    readonly property real labelH: 32
+    function labelCY(i) {       // vertical centre of label row i
+        return cy - ringCount * labelH / 2 + i * labelH + labelH / 2;
+    }
+    function labelAnchorX() { return labelReserve - 8; }
+    function leaderDeg(i) {     // angle pointing at the label's anchor
+        var dx = labelAnchorX() - cx, dy = labelCY(i) - cy;
+        return Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    }
 
     Canvas {
         id: rings
@@ -48,8 +73,8 @@ Item {
             ctx.globalAlpha = 1;
             if (width <= 0 || height <= 0 || !(root.rOuter > 0))
                 return;
-            var cx = width / 2, cy = height / 2;
-            // ---- outer 0-100% bezel (major 10, minor 2, micro 0.5) --------
+            var cx = root.cx, cy = root.cy;
+            // ---- outer graduated bezel (major 10, minor 2, micro 0.5) ----
             if (root.bezel) {
                 var rb = root.rOuter + 10;
                 ctx.strokeStyle = FuiTokens.css(FuiTokens.ice);
@@ -68,10 +93,13 @@ Item {
                     ctx.fillStyle = FuiTokens.css(FuiTokens.mute);
                     ctx.font = FuiTokens.px.micro + "px \"" + FuiTokens.mono + "\"";
                     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-                    for (var m = 0; m <= 10; m++) {
+                    // 0 and 100 share the top index — print the scale's unit
+                    // there once instead of two colliding numerals
+                    for (var m = 1; m <= 9; m++) {
                         var pt = FuiTokens.pol(cx, cy, rb + 9, m * 36);
                         ctx.fillText(String(m * 10), pt.x, pt.y);
                     }
+                    ctx.fillText("0-100 %", cx, cy - rb - 9);
                 }
                 // acid zero index at the ring origin (m_lib: green index = 0%)
                 var z0 = FuiTokens.pol(cx, cy, rb - 12, 0);
@@ -93,7 +121,7 @@ Item {
                 ctx.strokeStyle = FuiTokens.css(FuiTokens.hair3);
                 ctx.lineWidth = FuiTokens.lwHair;
                 ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-                // thin share arc 0 -> value
+                // thin share arc 0 -> value, drawn ON the track
                 if (e.value !== null && e.value !== undefined && isFinite(Number(e.value))) {
                     var vf = Math.min(1, Math.max(0, Number(e.value)));
                     ctx.strokeStyle = FuiTokens.css(col);
@@ -104,7 +132,8 @@ Item {
                     ctx.stroke();
                     ctx.setLineDash([]);
                 }
-                // thick limit arc 0 -> limit (colour by state)
+                // thick limit arc 0 -> limit (colour by state); only when a
+                // limits feed exists — a null limit draws nothing
                 if (e.limit !== null && e.limit !== undefined && isFinite(Number(e.limit))) {
                     var lf = Math.min(1, Math.max(0, Number(e.limit)));
                     var lc = e.state === "alert" ? FuiTokens.alert
@@ -131,9 +160,9 @@ Item {
                 }
             }
             ctx.setLineDash([]);
-            // label nubs: short radial ticks from each ring into its label's
-            // mid-gap lane (same angle table as the label repeater)
             if (root.labelMode === "inside") {
+                // label nubs: short radial ticks from each ring into its
+                // label's mid-gap lane (same angle table as the repeater)
                 ctx.lineWidth = 1;
                 ctx.strokeStyle = FuiTokens.css(FuiTokens.tone(FuiTokens.ice, 0.35));
                 for (var li = 0; li < root.ringCount; li++) {
@@ -142,6 +171,27 @@ Item {
                     var n1 = FuiTokens.pol(cx, cy,
                                  root.ringR(li) - Math.max(16, root.pitch / 2) + 3, la);
                     ctx.beginPath(); ctx.moveTo(n0.x, n0.y); ctx.lineTo(n1.x, n1.y); ctx.stroke();
+                }
+            } else if (root.labelMode === "outside") {
+                // leader lines: ring edge -> past the bezel -> label anchor
+                ctx.lineWidth = 1;
+                for (var gi = 0; gi < root.ringCount; gi++) {
+                    var md = root.model[gi] || {};
+                    var lc2 = md.state === "alert" ? FuiTokens.alert
+                            : md.state === "warn" ? FuiTokens.warn
+                            : (md.color !== undefined ? md.color : FuiTokens.ice);
+                    var deg = root.leaderDeg(gi);
+                    var s = FuiTokens.pol(cx, cy, root.ringR(gi) - 2, deg);
+                    var mpt = FuiTokens.pol(cx, cy, root.rOuter + 22, deg);
+                    ctx.globalAlpha = 0.55;
+                    ctx.strokeStyle = FuiTokens.css(lc2);
+                    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(mpt.x, mpt.y);
+                    ctx.lineTo(root.labelAnchorX(), root.labelCY(gi)); ctx.stroke();
+                    // small dot at the anchor
+                    ctx.fillStyle = FuiTokens.css(lc2);
+                    ctx.beginPath();
+                    ctx.arc(root.labelAnchorX(), root.labelCY(gi), 1.6, 0, Math.PI * 2);
+                    ctx.fill();
                 }
             }
             ctx.globalAlpha = 1;
@@ -152,6 +202,7 @@ Item {
             function onBezelChanged() { rings.requestPaint(); }
             function onBezelLabelsChanged() { rings.requestPaint(); }
             function onLabelModeChanged() { rings.requestPaint(); }
+            function onLabelReserveChanged() { rings.requestPaint(); }
             function onInnerHoleChanged() { rings.requestPaint(); }
             function onRingPitchChanged() { rings.requestPaint(); }
             function onMarginChanged() { rings.requestPaint(); }
@@ -210,9 +261,56 @@ Item {
         }
     }
 
+    // outside ring labels — two-line blocks in the reserved left column,
+    // each aimed at by its leader line; clear of bezel ticks and numerals
+    Repeater {
+        model: root.labelMode === "outside" ? root.model : []
+        delegate: Item {
+            id: olbl
+            required property int index
+            required property var modelData
+            x: 0
+            y: root.labelCY(index) - root.labelH / 2
+            width: Math.max(40, root.labelAnchorX() - 8)
+            height: root.labelH
+            Column {
+                anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                spacing: 1
+                Row {
+                    anchors.right: parent.right
+                    spacing: 6
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 5; height: 5
+                        color: olbl.modelData.state === "alert" ? FuiTokens.alert
+                             : olbl.modelData.state === "warn" ? FuiTokens.warn
+                             : (olbl.modelData.color !== undefined ? olbl.modelData.color : FuiTokens.ice)
+                    }
+                    Text {
+                        text: String(olbl.modelData.label || "")
+                        color: FuiTokens.white
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.tag
+                        font.letterSpacing: FuiTokens.ls.tag
+                    }
+                }
+                Text {
+                    anchors.right: parent.right
+                    visible: text !== ""
+                    text: String(olbl.modelData.valueText || "")
+                          + (olbl.modelData.reset ? " · " + String(olbl.modelData.reset) : "")
+                    color: FuiTokens.dim
+                    font.family: FuiTokens.mono
+                    font.pixelSize: FuiTokens.px.micro
+                }
+            }
+        }
+    }
+
     Item {
         id: centre
-        anchors.centerIn: parent
+        x: root.cx - root.rInner
+        y: root.cy - root.rInner
         width: root.rInner * 2
         height: root.rInner * 2
     }

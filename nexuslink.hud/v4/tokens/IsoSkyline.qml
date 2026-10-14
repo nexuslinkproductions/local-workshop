@@ -56,6 +56,7 @@ Item {
             var n = R.length;
             if (n === 0 || width < 120 || height < 90)
                 return;
+
             ctx.globalAlpha = 1;
             ctx.lineWidth = 1;
             var ICE = FuiTokens.css(FuiTokens.ice);
@@ -67,12 +68,15 @@ Item {
             // floats top-right over the back wall, it needs no side lane)
             var axL = 56;                    // room for value-axis labels
             var rightPad = 10;
-            var O = { x: axL + 18, y: height - 44 };
+            var O = { x: axL + 18, y: 0 };
             var bvx = 14, bvy = -10;
             var avail = width - O.x - bvx - rightPad;
             var avx = Math.max(6, avail / n);
             var avy = avx * 0.156;
             bvx = Math.min(16, avx * 0.9);
+            // floor drops n*avy along the day axis; reserve 42px under the
+            // LAST floor point so ruler ticks + date labels stay on-canvas
+            O.y = Math.max(56, height - 42 - n * avy);
             var fw = 0.78;
 
             var maxTot = 0;
@@ -84,6 +88,7 @@ Item {
                     : axisFit(maxTot);
             var vpx = O.y - 66;              // chart headroom for peak label
             function P(i, f, d, v) {
+                v = v || 0;
                 return { x: O.x + (i + f) * avx + d * bvx,
                          y: O.y + (i + f) * avy + d * bvy - v / fit.vmax * vpx };
             }
@@ -128,19 +133,19 @@ Item {
             line(P(0, 0, 1, 0), P(0, 0, 1, fit.vmax), ICE, 0.2);
 
             // ---- value axis (back-left vertical) --------------------------
+            // minimal scale: 3 hairline ticks with values — 0, mid, max
             var axX = P(0, 0, 1).x - 4, axY = P(0, 0, 1).y;
             line({ x: axX, y: axY }, { x: axX, y: axY - vpx }, ICE, 0.55);
-            var sub = fit.step / 5;
-            for (v = 0; v <= fit.vmax; v += sub) {
-                var y = axY - v / fit.vmax * vpx;
-                var isMaj = Math.abs(v / fit.step - Math.round(v / fit.step)) < 1e-6;
-                var isMid = !isMaj && Math.abs(v / (fit.step / 2) - Math.round(v / (fit.step / 2))) < 1e-6;
-                var tl = isMaj ? 8 : (isMid ? 5 : 3);
-                line({ x: axX - tl, y: y }, { x: axX, y: y }, ICE, isMaj ? 0.55 : 0.3);
-                if (isMaj)
-                    txt(axX - tl - 3, y + 3, fmtM(v), FuiTokens.css(FuiTokens.dim), "right");
+            var midV = Math.round(fit.vmax / 2 / fit.step) * fit.step;
+            var ticks = [0];
+            if (midV > 0 && midV < fit.vmax) ticks.push(midV);
+            ticks.push(fit.vmax);
+            for (var ti = 0; ti < ticks.length; ti++) {
+                var y = axY - ticks[ti] / fit.vmax * vpx;
+                line({ x: axX - 7, y: y }, { x: axX, y: y }, ICE, 0.55);
+                txt(axX - 10, y + 3, fmtM(ticks[ti]), FuiTokens.css(FuiTokens.dim), "right");
             }
-            txt(axX - 12, axY - vpx - 10, "LIN", ICE, "right");
+            txt(axX - 12, axY - vpx - 10, "LIN " + root.unit, ICE, "right");
 
             // ---- prisms / zero-day footprints ------------------------------
             function prism(i, v0, v1, key) {
@@ -180,20 +185,35 @@ Item {
             }
 
             // ---- date ruler along the front base ---------------------------
+            // ticks every bucket; date labels only at start / peak / end
             for (i = 0; i <= n; i++) {
                 var a = P(i, 0, 0), mj7 = i % 7 === 0;
                 line({ x: a.x, y: a.y + 4 }, { x: a.x, y: a.y + (mj7 ? 12 : 7) }, ICE, mj7 ? 0.55 : 0.3);
             }
-            var labEvery = n >= 29 ? 7 : Math.max(2, Math.floor(n / 5));
-            for (i = 0; i < n; i += labEvery) {
-                a = P(i + fw / 2, 0, 0);
-                txt(a.x, a.y + 26, String(R[i].label || ""), FuiTokens.css(FuiTokens.dim), "center");
-            }
+            var ipD = -1;
+            for (i = 0; i < n; i++)
+                if (ipD < 0 || (R[i].total || 0) > (R[ipD].total || 0))
+                    ipD = i;
+            var labIdx = [0, n - 1];
+            if (ipD > 2 && ipD < n - 3) labIdx.push(ipD);
+            labIdx.sort(function (p, q) { return p - q; });
             var last = R[n - 1] || {};
+            for (var li = 0; li < labIdx.length; li++) {
+                var bi = labIdx[li];
+                a = P(bi + fw / 2, 0, 0);
+                var peakDay = bi === ipD && labIdx.length > 2;
+                var partial = bi === n - 1 && last.partial;
+                var lab = String(R[bi].label || "")
+                        + (peakDay ? " pk" : "") + (partial ? " partial" : "");
+                var hw = lab.length * 3.6;      // ~half ink width at 11px mono
+                txt(Math.max(axX + 4 + hw, Math.min(width - 6 - hw, a.x)),
+                    Math.min(a.y + 24, height - 6), lab,
+                    partial ? ACID : (peakDay ? WHITE : FuiTokens.css(FuiTokens.dim)),
+                    "center");
+            }
             if (last.partial) {
                 a = P(n - 1 + fw / 2, 0, 0);
-                line({ x: a.x + 3, y: a.y + 5 }, { x: a.x + 3, y: a.y + 31 }, ACID, 0.6);
-                txt(a.x - 2, a.y + 42, String(last.label) + " partial", ACID, "start");
+                line({ x: a.x + 3, y: a.y + 5 }, { x: a.x + 3, y: a.y + 18 }, ACID, 0.6);
             }
 
             // ---- longest zero-run bracket ----------------------------------

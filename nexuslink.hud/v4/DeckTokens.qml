@@ -74,6 +74,28 @@ Item {
         "claude", "opencode-go", "codex", "devin", "opencode", "haze",
         "fireworks", "custom", "nous"
     ]
+    // readable short names — the SAME string in the providers table, the
+    // ring leader labels and the trend legend (nothing elides mid-word)
+    readonly property var laneShort: ({
+        "auto": "Auto", "bonsai-local": "Bonsai", "claude": "Claude",
+        "clinepass": "ClinePass", "codex": "Codex",
+        "conductor-relay": "Conductor", "cursor": "Cursor",
+        "custom": "Custom EP", "deepseek": "DeepSeek", "devin": "Devin",
+        "fireworks": "Fireworks", "gmi": "GMI", "haze": "Haze",
+        "kimi-coding": "Kimi", "minimax-oauth": "MiniMax", "moa": "MoA",
+        "nous": "Nous", "october": "October", "ollama": "Ollama",
+        "ollama-cloud": "Ollama Cloud", "opencode": "opencode",
+        "opencode-go": "OpenCode Go", "unattributed": "Unattributed",
+        "xai-oauth": "xAI"
+    })
+    function laneName(pid, fallback) {
+        if (laneShort[pid]) return laneShort[pid];
+        var s = String(fallback || pid);
+        if (s.length <= 14) return s;
+        // unknown long label: trim at a word boundary, never mid-word
+        var cut = s.slice(0, 14), sp = cut.lastIndexOf(" ");
+        return sp > 4 ? cut.slice(0, sp) : cut;
+    }
     function laneKey(pid) {
         var s = laneStyle[pid];
         if (s) return s.key;
@@ -150,6 +172,20 @@ Item {
         var v = Number(x);
         return "$" + (v >= 1000 ? (v / 1000).toFixed(2) + "k"
                     : v >= 100 ? v.toFixed(1) : v.toFixed(2));
+    }
+    // precise fmtTok (~4 significant digits) for figures a share% is read
+    // against: shares are computed on raw integers and rounded once for
+    // display, and the shown totals must reproduce the shown share to
+    // within 0.1% (37.92/41.79 = 90.74 -> "90.7%" checks out).
+    function fmtTokP(n) {
+        var v = Math.abs(Number(n) || 0);
+        if (v >= 1e10) return (v / 1e9).toFixed(2) + "B";
+        if (v >= 1e9)  return (v / 1e9).toFixed(3) + "B";
+        if (v >= 1e8)  return (v / 1e6).toFixed(1) + "M";
+        if (v >= 1e6)  return (v / 1e6).toFixed(2) + "M";
+        if (v >= 1e4)  return (v / 1e3).toFixed(1) + "K";
+        if (v >= 1e3)  return (v / 1e3).toFixed(2) + "K";
+        return String(Math.round(v));
     }
     function p2(x) { return (x < 10 ? "0" : "") + x; }
     function isoDay(d) {
@@ -246,9 +282,11 @@ Item {
             var id = ids[i], pr = p[id] || {}, v2 = periodVal(id);
             var hasHist = root.tokData && root.tokData.history
                           && (root.tokData.history[id] || []).length > 0;
+            var nm = String((pr.meta && pr.meta.label) || pr.label || id);
             out.push({
                 "id": id, "key": laneKey(id),
-                "name": String((pr.meta && pr.meta.label) || pr.label || id),
+                "name": nm,
+                "sname": laneName(id, nm),
                 "kind": String(pr.kind || "api"),
                 "col": laneCol(id, i),
                 "dash": laneStyle[id] ? laneStyle[id].dash : [1.5, 2.5],
@@ -307,14 +345,14 @@ Item {
         for (i = 0; i < sel.length; i++) {
             var l = sel[i], lim = limitInfo(l.id);
             mdl.push({
-                "label": l.key.toUpperCase(),
+                "label": l.sname,
                 "color": l.col,
                 "value": (sum > 0 && l.v !== null && l.v > 0) ? l.v / sum : null,
                 "limit": lim.frac,
                 "state": lim.sev === "na" ? "ok" : lim.sev,
                 "dash": l.dash === "double" ? [] : (l.dash || []),
                 "valueText": (l.v !== null && l.v > 0)
-                             ? FuiTokens.fmtTok(l.v)
+                             ? root.fmtTokP(l.v)
                                + " · " + Math.round(l.v / sum * 100) + "%"
                              : FuiTokens.unknownGlyph,
                 "reset": lim.eta
@@ -325,15 +363,24 @@ Item {
     }
 
     // ================= limit cells =========================================
-    // Providers with no limits[] feed never get a card — they collapse into
-    // the noFeedProviders strip so the grid only spends cells on real feeds.
-    readonly property var noFeedProviders: {
+    // Only omarchy agent records (~/.local/state/omarchy/agents/usage/*.json)
+    // can ever supply limits[] — their presence leaves a marker on meta
+    // (ready/status/tier/today_*/limits). A lane carrying such a record is
+    // "limit-configured"; every other lane is not a limit lane at all and is
+    // never counted as "no feed".
+    function isLimConfigured(pid) {
+        var mt = meta(pid);
+        return mt.limits !== undefined || mt.ready !== undefined
+               || !!mt.status || !!mt.tier || mt.today_tokens !== undefined;
+    }
+    // configured lanes without a limits[] feed — these are the only lanes the
+    // "no feed" counters and the names line ever talk about
+    readonly property var noFeedLanes: {
         var out = [], ls = lanes().list;
-        for (var i = 0; i < ls.length; i++) {
-            var lims = meta(ls[i].id).limits;
-            if (!(lims && lims.length))
-                out.push(ls[i].name);
-        }
+        for (var i = 0; i < ls.length; i++)
+            if (isLimConfigured(ls[i].id)
+                && !((meta(ls[i].id).limits || []).length))
+                out.push(ls[i].sname);
         return out;
     }
     function limitCells(cap) {
@@ -356,8 +403,8 @@ Item {
                 else if (pct >= 0.85) { sev = "warn"; sline = "NEAR LIMIT"; tag = "OK"; }
                 else { sev = "ok"; sline = "NOMINAL"; tag = "OK"; }
                 var nm = lim.title ? String(lim.title).toUpperCase().replace(/\s*WEEKLY\s*/i, "").trim()
-                                   : d.name;
-                if (nm === "") nm = d.name;
+                                   : d.sname;
+                if (nm === "") nm = d.sname;
                 // LIM-XXX: titled limits get a consonant abbrev (Fable->FBL)
                 var ck = lim.title
                        ? String(lim.title).replace(/[^a-z]/gi, "")
@@ -413,7 +460,7 @@ Item {
         var cells = limitCells(0), c = { "alert": 0, "warn": 0, "na": 0, "ok": 0 };
         for (var i = 0; i < cells.length; i++)
             c[(cells[i].sev in c) ? cells[i].sev : "na"]++;
-        c["na"] += root.noFeedProviders.length;
+        c["na"] += root.noFeedLanes.length;
         m.limBus = c;
         return c;
     }
@@ -573,7 +620,7 @@ Item {
         var out = [];
         for (i = 0; i < ls.length; i++)
             if (tot[ls[i].key])
-                out.push({ "key": ls[i].key, "label": ls[i].name,
+                out.push({ "key": ls[i].key, "label": ls[i].sname,
                            "col": ls[i].col, "dash": ls[i].dash,
                            "winSum": tot[ls[i].key] });
         out.sort(function (a, b) { return b.winSum - a.winSum; });
@@ -706,7 +753,7 @@ Item {
                         text: {
                             var s = root.periodSum();
                             if (s <= 0) return "0";
-                            var t = FuiTokens.fmtTok(s);
+                            var t = root.fmtTokP(s);
                             return t.slice(0, -1);
                         }
                     }
@@ -718,7 +765,7 @@ Item {
                                   bottom: heroNum.bottom; bottomMargin: 7 }
                         text: {
                             var s = root.periodSum();
-                            var t = FuiTokens.fmtTok(s);
+                            var t = root.fmtTokP(s);
                             return s > 0 && /[BKM]$/.test(t) ? t.slice(-1) : "";
                         }
                     }
@@ -779,7 +826,7 @@ Item {
                     role: "cap"; tone: FuiTokens.faint
                     width: parent.width
                     wrapMode: Text.Wrap
-                    text: "ring arc: lane share of period Σ · thick arc: provider limit used · bezel 0..100%"
+                    text: "ring arc (thin, on the track) = lane share of period Σ · outer thick arc = provider limit used, only when fed · bezel 0-100 %"
                 }
                 Tk.Tx {
                     role: "cap"; tone: FuiTokens.faint
@@ -798,8 +845,10 @@ Item {
                 }
             }
 
-            // centre/right — concentric rings: thin arc = share of period Σ,
-            // thick arc = limit used; per-lane labels lower-left (no chips)
+            // centre/right — concentric rings: thin arc on each track = lane
+            // share of period Σ, thick arc riding outside = limit used (drawn
+            // only when a limits feed exists). Lane labels sit OUTSIDE the
+            // bezel in a left column, tied to their ring by a leader line.
             Item {
                 id: ringBox
                 anchors { left: heroLeft.right; leftMargin: 20
@@ -808,8 +857,10 @@ Item {
                 ConcentricRings {
                     id: rings
                     anchors.centerIn: parent
-                    width: Math.min(parent.width, parent.height)
-                    height: width
+                    width: parent.width
+                    height: parent.height
+                    labelMode: "outside"
+                    labelReserve: Math.min(190, Math.max(120, width * 0.34))
                     model: root.ringModel()
 
                     // centre readout (default property)
@@ -852,37 +903,44 @@ Item {
             id: prvBox
             anchors.fill: parent
             readonly property var ls: root.lanes().list
-            // hot lanes ranked by period Σ — non-zero first (value desc), then
-            // idle feeds by last-seen date so recently-live lanes keep a row
-            readonly property var hot: {
-                var a = ls.filter(function (l) { return l.hasFeed; });
-                a.sort(function (x, y) {
-                    var vx = x.v || 0, vy = y.v || 0;
-                    if ((vx > 0) !== (vy > 0)) return vy - vx;
-                    if (vx > 0 && vy > 0) return vy - vx;
-                    var lx = root.lastHist(x.id), ly = root.lastHist(y.id);
-                    if (lx !== ly) return lx < ly ? 1 : -1;
-                    return x.name < y.name ? -1 : 1;
+            // the table lists only lanes with tokens in the window, ranked by
+            // period Σ; every zero lane folds into the idle footnote
+            readonly property var live: {
+                var a = ls.filter(function (l) {
+                    return l.v !== null && l.v > 0;
                 });
+                a.sort(function (x, y) { return y.v - x.v; });
                 return a;
             }
+            // fed-but-zero lanes -> one muted "idle:" line (hasFeed means the
+            // lane produced once; it is idle in this window, not feedless)
+            readonly property var idle: ls.filter(function (l) {
+                return l.hasFeed && !(l.v !== null && l.v > 0);
+            })
             readonly property var cold: ls.filter(function (l) { return !l.hasFeed; })
+            // join names but never let a collapse line run past its row:
+            // append "+N more" instead of eliding mid-name
+            function capNames(list) {
+                var out = "", i = 0;
+                for (; i < list.length; i++) {
+                    var t = out === "" ? list[i] : out + " · " + list[i];
+                    if (t.length > 56) break;
+                    out = t;
+                }
+                if (i < list.length)
+                    out += (out === "" ? "" : " · ") + "+" + (list.length - i) + " more";
+                return out;
+            }
             readonly property real rowH: 30
             readonly property real headH: 20
-            // footer reserve: Σ row + up to two collapse lines
-            readonly property real footH: 60
+            // footer reserve: Σ row + up to three collapse lines
+            readonly property real footH: 78
             readonly property int rowCap: Math.max(3, Math.floor((height - headH - footH - 10) / (rowH + 2)))
-            readonly property var shownLanes: hot.slice(0, rowCap)
-            readonly property var over: hot.slice(rowCap)
-            readonly property var idleOver: over.filter(function (l) {
-                return !(l.v !== null && l.v > 0);
-            }).map(function (l) { return l.name; })
+            readonly property var shownLanes: live.slice(0, rowCap)
+            readonly property var over: live.slice(rowCap)
             readonly property real overSum: over.reduce(function (a, l) {
-                return a + ((l.v !== null && l.v > 0) ? l.v : 0);
+                return a + l.v;
             }, 0)
-            readonly property int overNz: over.filter(function (l) {
-                return l.v !== null && l.v > 0;
-            }).length
 
             // column header
             Item {
@@ -914,6 +972,18 @@ Item {
                         required property var modelData
                         width: prvCol.width
                         height: 30
+                        // the row is two real lines: name on top, status note
+                        // below — they can never sit on top of each other
+                        readonly property string note: {
+                            var l = prow.modelData;
+                            if (root.isAuth(root.meta(l.id))) return "auth pending";
+                            var b = root.bk(l.id, root.period);
+                            var iN = b["in"], oN = b["out"];
+                            if ((iN === null || iN === undefined)
+                                && (oN === null || oN === undefined) && b["total"] > 0)
+                                return "snapshot lane";
+                            return "";
+                        }
                         // lane swatch (colour + dash shared with ring + skyline)
                         Canvas {
                             id: sw
@@ -937,10 +1007,11 @@ Item {
                             }
                             onLaneChanged: requestPaint()
                         }
-                        Tk.Tx {  // name (module dir, no prefix needed)
-                            role: "lbl"; text: prow.modelData.name; tone: FuiTokens.white
+                        Tk.Tx {  // name on its own line
+                            role: "lbl"; text: prow.modelData.sname; tone: FuiTokens.white
                             anchors { left: parent.left; leftMargin: 34
-                                      verticalCenter: parent.verticalCenter }
+                                      verticalCenter: parent.verticalCenter
+                                      verticalCenterOffset: prow.note !== "" ? -7 : 0 }
                             width: Math.min(implicitWidth, 190)
                             elide: Text.ElideRight
                         }
@@ -949,9 +1020,7 @@ Item {
                             anchors { right: shareBox.left; rightMargin: 10
                                       verticalCenter: parent.verticalCenter }
                             width: 84; horizontalAlignment: Text.AlignRight
-                            text: prow.modelData.v !== null && prow.modelData.v > 0
-                                  ? FuiTokens.fmtTok(prow.modelData.v)
-                                  : (prow.modelData.v === 0 ? "0" : FuiTokens.unknownGlyph)
+                            text: root.fmtTokP(prow.modelData.v)
                         }
                         // share bar + % — one visual per lane, period-scoped
                         Item {
@@ -984,50 +1053,49 @@ Item {
                                   ? (prow.modelData.share * 100).toFixed(1) + "%"
                                   : FuiTokens.unknownGlyph
                         }
-                        // honesty line under the row: idle lanes say when they
-                        // last produced, auth lanes say what is missing
+                        // status note on the second line — auth lanes say what
+                        // is missing, snapshot rows say what the figure is
                         Tk.Tx {
+                            visible: prow.note !== ""
                             role: "faint"
                             anchors { left: parent.left; leftMargin: 34
-                                      bottom: parent.bottom; bottomMargin: -1 }
+                                      bottom: parent.bottom; bottomMargin: 2 }
                             font.pixelSize: FuiTokens.px.micro
-                            text: {
-                                var l = prow.modelData;
-                                if (root.isAuth(root.meta(l.id))) return "auth pending";
-                                if (l.v !== null && l.v > 0) return "";
-                                var lag = root.histLag(l.id);
-                                if (lag === "no rows") return "no recorded feed";
-                                if (lag !== "") return "idle · " + lag;
-                                return "idle today";
-                            }
+                            text: prow.note
                         }
                     }
                 }
             }
 
-            // overflow + cold lanes collapse to honest lines; Σ row pins total
+            // overflow + zero/feedless lanes collapse to honest lines;
+            // Σ row pins the total at the bottom
             Item {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
                 height: sigRow.height + 8
+                        + (overTx.visible ? overTx.implicitHeight + 4 : 0)
                         + (idleTx.visible ? idleTx.implicitHeight + 4 : 0)
                         + (coldTx.visible ? coldTx.implicitHeight + 4 : 0)
+                Tk.Tx {
+                    id: overTx
+                    role: "cap"; tone: FuiTokens.faint
+                    anchors { left: parent.left; right: parent.right
+                              bottom: idleTx.visible ? idleTx.top
+                                   : (coldTx.visible ? coldTx.top : sigRow.top)
+                              bottomMargin: 4 }
+                    visible: prvBox.over.length > 0
+                    text: "+ " + prvBox.over.length + " lanes · Σ "
+                          + root.fmtTokP(prvBox.overSum)
+                    elide: Text.ElideRight
+                }
                 Tk.Tx {
                     id: idleTx
                     role: "cap"; tone: FuiTokens.faint
                     anchors { left: parent.left; right: parent.right
                               bottom: coldTx.visible ? coldTx.top : sigRow.top
                               bottomMargin: 4 }
-                    visible: prvBox.over.length > 0
-                    text: {
-                        var p = prvBox, t = "";
-                        if (p.overNz > 0)
-                            t = "+ " + p.overNz + " lanes · Σ "
-                                + FuiTokens.fmtTok(p.overSum);
-                        if (p.idleOver.length > 0)
-                            t += (t !== "" ? " · " : "") + "0 in window: "
-                                 + p.idleOver.join(" · ");
-                        return t;
-                    }
+                    visible: prvBox.idle.length > 0
+                    text: "idle: " + prvBox.capNames(
+                              prvBox.idle.map(function (l) { return l.sname; }))
                     elide: Text.ElideRight
                 }
                 Tk.Tx {
@@ -1036,8 +1104,8 @@ Item {
                     anchors { left: parent.left; right: parent.right
                               bottom: sigRow.top; bottomMargin: 4 }
                     visible: prvBox.cold.length > 0
-                    text: "no recorded feed: "
-                          + prvBox.cold.map(function (l) { return l.name; }).join(" · ")
+                    text: "no recorded feed: " + prvBox.capNames(
+                              prvBox.cold.map(function (l) { return l.sname; }))
                     elide: Text.ElideRight
                 }
                 Item {
@@ -1054,7 +1122,7 @@ Item {
                     Tk.Tx {
                         role: "num"
                         anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                        text: root.periodSum() > 0 ? FuiTokens.fmtTok(root.periodSum()) : "0"
+                        text: root.periodSum() > 0 ? root.fmtTokP(root.periodSum()) : "0"
                     }
                 }
             }
@@ -1202,17 +1270,45 @@ Item {
             readonly property var gridCells: cells.filter(function (c) {
                 return !(c.sev === "warn" && c.frac === null && c.action !== null);
             })
+            // no lane reports a limits[] feed at all -> the panel collapses
+            // to one honest line instead of an empty grid + empty timeline
+            readonly property bool collapsed: root.limitCells(0).length === 0
             readonly property int nCells: Math.min(4, gridCells.length)
             readonly property int cols: 2
             readonly property int nRows: Math.ceil(nCells / cols)
             readonly property real stripH: compactCells.length > 0
                                            ? compactCells.length * 34 + 4 : 0
-            readonly property real nfH: root.noFeedProviders.length > 0 ? 20 : 0
+            readonly property string nfText: "no limit feed: "
+                                             + root.noFeedLanes.join(" · ")
+            // wraps to a second line rather than truncating when several
+            // configured lanes are quiet at once
+            readonly property real nfH: root.noFeedLanes.length > 0
+                                        ? (nfText.length > 58 ? 34 : 20) : 0
             readonly property real tlH: Math.max(46, Math.min(120, height * 0.24))
             readonly property real cardsH: height - stripH - nfH - tlH - 30
             readonly property real ch2: nRows > 0
                     ? Math.max(120, (cardsH - (nRows - 1) * 9) / nRows) : 0
             readonly property real cw2: (width - 16 - (cols - 1) * 9) / cols
+
+            // collapsed state: one line, plus which configured lanes are quiet
+            Column {
+                visible: limGrid.collapsed
+                anchors { left: parent.left; right: parent.right
+                          verticalCenter: parent.verticalCenter }
+                spacing: 6
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.dim
+                    text: "no limit feeds yet"
+                    font.letterSpacing: 2
+                }
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.faint
+                    visible: root.noFeedLanes.length > 0
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: "configured, no feed: " + root.noFeedLanes.join(" · ")
+                }
+            }
 
             // compact auth-pending rows: one line + login button each
             Repeater {
@@ -1283,9 +1379,10 @@ Item {
                 }
             }
 
-            // collapsed providers without a limits[] feed — one honest line
+            // configured lanes without a limits[] feed — one honest line,
+            // wraps instead of eliding so no name is ever cut
             Item {
-                visible: limGrid.nfH > 0
+                visible: !limGrid.collapsed && limGrid.nfH > 0
                 x: 8
                 y: 4 + limGrid.stripH + limGrid.nRows * (limGrid.ch2 + 9)
                 width: limGrid.width - 16
@@ -1294,8 +1391,9 @@ Item {
                     role: "cap"; tone: FuiTokens.faint
                     anchors { left: parent.left; right: parent.right
                               verticalCenter: parent.verticalCenter }
-                    text: "no limit feed: " + root.noFeedProviders.join(" · ")
-                    elide: Text.ElideRight
+                    text: limGrid.nfText
+                    wrapMode: Text.Wrap
+                    elide: Text.ElideNone
                 }
                 HoverHandler { id: stripHover }
                 QQC.ToolTip {
@@ -1308,6 +1406,7 @@ Item {
 
             // RESET TIMELINE band
             Column {
+                visible: !limGrid.collapsed
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
                 spacing: 4
                 Item {
