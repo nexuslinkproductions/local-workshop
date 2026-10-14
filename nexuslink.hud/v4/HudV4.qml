@@ -642,6 +642,9 @@ Item {
             // ------------------------------ layout state (fractions of field)
             property var layoutMap: ({})
             property var hiddenMap: ({})
+            // per-screen deck prefs (tokens period toggle etc.) — stored under
+            // screens[name].prefs in hud-state-v4.json alongside the layout
+            property var prefMap: ({})
             property bool layoutReady: false
             property bool delegatesReady: false
             property bool animateLayout: false
@@ -721,6 +724,7 @@ Item {
                 }
                 layoutMap = m
                 hiddenMap = hid
+                prefMap = (st && st.prefs && typeof st.prefs === "object") ? st.prefs : ({})
                 layoutReady = true
                 animGate.restart()
             }
@@ -748,7 +752,17 @@ Item {
                 if (!layoutReady) return
                 var hidden = []
                 for (var k in hiddenMap) if (hiddenMap[k] === true) hidden.push(k)
-                hud.mergeScreenState(screenName, { panels: layoutMap, hidden: hidden })
+                hud.mergeScreenState(screenName, { panels: layoutMap, hidden: hidden,
+                                                   prefs: prefMap })
+            }
+            // deck-settable prefs (period toggles etc.) — land in the same
+            // screen entry via persist(), saved on the 500 ms debounce
+            function setPref(k, v) {
+                var m = {}
+                for (var kk in prefMap) m[kk] = prefMap[kk]
+                m[k] = v
+                prefMap = m
+                persist()
             }
 
             // ---- drag lifecycle (v3 invariants) ----
@@ -1155,6 +1169,8 @@ Item {
                             crew: hud.crew
                             screenName: win.screenName
                             shown: deck.shown
+                            prefs: win.prefMap
+                            onSetPref: function (k, v) { win.setPref(k, v) }
                         }
                     }
                     Component {

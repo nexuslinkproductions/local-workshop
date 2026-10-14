@@ -6,14 +6,24 @@ import Quickshell
 import "tokens" as Tk
 
 // DeckTokens.qml — M1 DP-2 deck (token flux / limits), matching the approved
-// M1-dp2 sheet (gen_M1_dp2.py): concentric provider limit rings around the
-// today total (hero), LIM-02 limit cells + reset timeline, 30-day isometric
-// skyline, 26-week heatmap, top sessions, per-provider ledger.
+// M1-dp2 sheet (gen_M1_dp2.py). Redesign pass (daily/weekly):
+//   TKN-01  hero — DAY/WEEK segmented toggle, period Σ, concentric rings
+//           (thin arc = share of period Σ, thick arc = provider limit used,
+//           bezel = 0..100%), rate block (avg since anchor + pace).
+//   PRV-02  provider lanes — one row per ledger lane in the period window:
+//           swatch, name, period tokens, share bar, status note. Lanes with
+//           no recorded feed collapse into one honest footnote line.
+//   TRD-03  trend — IsoSkyline over last 30 days (DAY) or ISO-week buckets
+//           (WEEK), right rail = window Σ / avg / peak.
+//   LIM-04  limits — severity-ordered LIM cells + LIM-BUS + reset timeline;
+//           providers without a limits[] feed collapse into one line.
 //
 // Two-lane rule (tokens/SCHEMA.md): for claude/codex, `in`/`out`/`cost` are
 // the Hermes event lane, `total` is the CLI snapshot lane. Never added
-// silently — the codex block/table label the split, and the skyline stacks
-// the snapshot lane as its own `cdxs` segment (azure, double-edge cue).
+// silently — the codex row marks the snapshot lane as such.
+//
+// Period state persists via prefs.tokensWin ("day"|"week") — the host window
+// stores it in hud-state-v4.json screens[screen].prefs.
 Item {
     id: root
 
@@ -27,6 +37,13 @@ Item {
     property string sayText: ""
     property bool sayFlash: false
 
+    // ---- period selection (persisted by the host) -------------------------
+    property var prefs: ({})
+    property var onSetPref: function (k, v) {}
+    readonly property string period:
+        (prefs && prefs.tokensWin === "week") ? "week" : "day"
+    function setPeriod(p) { root.onSetPref("tokensWin", p) }
+
     // ---- per-minute clock (countdowns only — the allowed slow mover) -----
     property real nowMs: 0
     Timer {
@@ -39,34 +56,37 @@ Item {
     onShownChanged: if (root.shown) root.nowMs = Date.now()
     onTokDataChanged: root.nowMs = Date.now()
 
-    // ---- provider descriptors (ring order: outer -> inner) ---------------
-    // OCG's headline lane is `opencode-go` (Hermes crew events); the local
-    // opencode.db CLI lane stays `opencode` and renders as its own skyline
-    // segment + ledger row — two labelled lanes, never silently summed.
-    readonly property var pdesc: [
-        { "id": "opencode-go", "key": "ocg", "name": "Go (Hermes)",
-          "code": "PRV-OCG", "col": FuiTokens.ice,   "dash": null },
-        { "id": "claude",   "key": "cld", "name": "Claude",
-          "code": "PRV-CLD", "col": FuiTokens.white, "dash": null },
-        { "id": "codex",    "key": "cdx", "name": "Codex",
-          "code": "PRV-CDX", "col": FuiTokens.azure, "dash": "double" },
-        { "id": "devin",    "key": "dvn", "name": "Devin",
-          "code": "PRV-DVN", "col": FuiTokens.dim,   "dash": [1.5, 2.5] }
+    // ---- lane style table (one canonical colour per lane, every widget) --
+    // col/dash also drive the trend stack order below; a lane's swatch, ring
+    // arc, provider row and skyline segment always share the same stroke.
+    readonly property var laneStyle: ({
+        "claude":      { "key": "cld", "col": FuiTokens.white, "dash": null },
+        "opencode-go": { "key": "ocg", "col": FuiTokens.ice,   "dash": null },
+        "codex":       { "key": "cdx", "col": FuiTokens.azure, "dash": "double" },
+        "devin":       { "key": "dvn", "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
+        "opencode":    { "key": "occ", "col": FuiTokens.ice,   "dash": [2, 2] },
+        "haze":        { "key": "hze", "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] },
+        "fireworks":   { "key": "fwk", "col": FuiTokens.dim,   "dash": null },
+        "custom":      { "key": "cst", "col": FuiTokens.warn,  "dash": [4, 2] },
+        "nous":        { "key": "nus", "col": FuiTokens.dim,   "dash": [4, 2] }
+    })
+    readonly property var laneOrder: [
+        "claude", "opencode-go", "codex", "devin", "opencode", "haze",
+        "fireworks", "custom", "nous"
     ]
-    // skyline stack order incl. opencode CLI lane + codex snapshot lane + haze
-    // label: short readable name for legend / readout (key stays the stack id)
-    readonly property var stackDef: [
-        { "key": "ocg",    "label": "Go (Hermes)",    "col": FuiTokens.ice,   "dash": null },
-        { "key": "ocgcli", "label": "OpenCode CLI",   "col": FuiTokens.ice,   "dash": [2, 2] },
-        { "key": "cld",    "label": "Claude",         "col": FuiTokens.white, "dash": null },
-        { "key": "cdx",    "label": "Codex",          "col": FuiTokens.azure, "dash": null },
-        { "key": "cdxs",   "label": "Codex snapshot", "col": FuiTokens.azure, "dash": "double" },
-        { "key": "dvn",    "label": "Devin",          "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
-        { "key": "hze",    "label": "Haze",           "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
-    ]
-    readonly property var ledgerOrder: ["claude", "codex", "devin",
-                                         "opencode-go", "opencode", "haze",
-                                         "fireworks"]
+    function laneKey(pid) {
+        var s = laneStyle[pid];
+        if (s) return s.key;
+        var k = String(pid).replace(/[^a-z0-9]/gi, "").toUpperCase();
+        return k.slice(0, 3) || "???";
+    }
+    function laneCol(pid, i) {
+        var s = laneStyle[pid];
+        if (s) return s.col;
+        // lanes beyond the style table stay in the ice family — labeled
+        // rows carry the identity, the stroke just keeps them consistent
+        return i % 2 === 0 ? FuiTokens.mute : FuiTokens.dim;
+    }
 
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "tk"].concat(argv));
@@ -84,17 +104,19 @@ Item {
         var p = provs()[pid];
         return (p && p.meta) ? p.meta : {};
     }
-    // day bucket value: in+out (event lane); total only when in/out are null
-    // (snapshot-only day). Zero is real, null is unknown.
-    function dayVal(pid) {
-        var b = bk(pid, "day");
+    // period bucket value: in+out (event lane); total only when in/out are
+    // null (snapshot-only bucket). Zero is real, null is unknown.
+    function periodVal(pid) {
+        var b = bk(pid, root.period);
         var iN = b["in"], oN = b["out"];
         if ((iN === null || iN === undefined) && (oN === null || oN === undefined))
             return b["total"] > 0 ? b["total"] : null;
         return (iN || 0) + (oN || 0);
     }
+    // two-lane split for snapshot-carrying providers (codex/claude):
+    // hrm = event lane, snap = snapshot rollup — disjoint, never summed
     function laneSplit(pid, which) {
-        var b = bk(pid, which);
+        var b = bk(pid, which || root.period);
         var hrm = (b["in"] || 0) + (b["out"] || 0);
         var snap = b["total"];
         return { "hrm": hrm,
@@ -102,30 +124,23 @@ Item {
     }
 
     // ---- model memo --------------------------------------------------------
-    // The heavy row/model builders were re-run by every binding that called
-    // them (skyRows x4, histIndex inside sparkSeries/heatCells/lastHist ~x12
-    // per data refresh) — plus the two non-DP-2 monitor decks each doing the
-    // same work while invisible. _mm() epochs all derived models on
-    // (tokData, nowMs); builders early-return [] / null while !shown so a
-    // dead deck never pays for a ledger refresh it can't paint.
-    //
-    // _memo is assigned ONCE and only its fields are mutated — a property
-    // write inside a binding's own dependency chain trips Qt's binding-loop
-    // detection. Bindings still depend on tokData/nowMs (read below), so
-    // every model re-derives exactly once per epoch.
+    // Heavy row/model builders re-run once per (tokData, nowMs) epoch; the
+    // memo object is assigned once and only its fields mutate — a property
+    // write inside a binding's own dependency chain trips binding-loop
+    // detection. Builders early-return [] while !shown so a dead deck never
+    // pays for a ledger refresh it can't paint.
     property var _memo: ({})
     function _mm() {
         var m = root._memo;
-        if (m._t === root.tokData && m._n === root.nowMs)
+        if (m._t === root.tokData && m._n === root.nowMs && m._p === root.period)
             return m;
-        var fields = ["histIdx", "skyRows", "heatCells", "heroVals",
-                      "compRows", "ledgerRows", "sessionRows", "limCells",
-                      "limBus", "resetMarks"];
+        var fields = ["histIdx", "skyRows", "weekRows", "lanes", "ringMdl",
+                      "limCells", "limBus", "resetMarks", "stackLanes"];
         for (var i = 0; i < fields.length; i++)
             m[fields[i]] = null;
-        m.sparks = ({});
         m._t = root.tokData;
         m._n = root.nowMs;
+        m._p = root.period;
         return m;
     }
 
@@ -139,6 +154,20 @@ Item {
     function p2(x) { return (x < 10 ? "0" : "") + x; }
     function isoDay(d) {
         return d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate());
+    }
+    // local-midnight Date of the Monday starting the ISO week containing d
+    function weekStart(d) {
+        var t = new Date(d.getTime());
+        t.setHours(0, 0, 0, 0);
+        return new Date(t.getTime() - ((t.getDay() + 6) % 7) * 86400e3);
+    }
+    // ISO week number ("W42") for a local Date
+    function isoWeek(d) {
+        var t = weekStart(d);
+        var thu = new Date(t.getTime() + 3 * 86400e3);
+        var jan1 = new Date(thu.getFullYear(), 0, 1);
+        var wk = Math.ceil(((thu - jan1) / 86400e3 + 1) / 7);
+        return "W" + (wk < 10 ? "0" : "") + wk;
     }
     function fmtDur(ms) {
         var s = Math.max(0, Math.round(ms / 1000));
@@ -191,71 +220,119 @@ Item {
         return { "frac": null, "sev": "na", "resetMs": 0, "eta": "", "noFeed": "no feed" };
     }
 
-    function heroVals() {
+    // ---- canonical lane list ----------------------------------------------
+    // Every provider the ledger reports, in stable display order, with the
+    // period value + share precomputed. Lanes with no records anywhere are
+    // still listed here; the providers frame folds them into a footnote.
+    function lanes() {
         var m = root._mm();
-        if (m.heroVals)
-            return m.heroVals;
-        var v = {}, sum = 0;
-        for (var i = 0; i < pdesc.length; i++) {
-            var dv = dayVal(pdesc[i].id);
-            v[pdesc[i].key] = dv;
-            if (dv !== null && dv > 0) sum += dv;
+        if (m.lanes)
+            return m.lanes;
+        var p = provs(), ids = [], seenK = {};
+        var i, j;
+        for (i = 0; i < laneOrder.length; i++)
+            if (p[laneOrder[i]]) { ids.push(laneOrder[i]); seenK[laneOrder[i]] = true; }
+        var rest = [];
+        for (var pid in p)
+            if (!seenK[pid]) rest.push(pid);
+        rest.sort();
+        ids = ids.concat(rest);
+        var out = [], sum = 0;
+        for (i = 0; i < ids.length; i++) {
+            var v = periodVal(ids[i]);
+            if (v !== null && v > 0) sum += v;
         }
-        m.heroVals = { "v": v, "sum": sum };
-        return m.heroVals;
-    }
-    // "max 626M 10-04" caption for a PrvCard's 30d sparkline
-    function sparkMaxOf(pid) {
-        var ser = sparkSeries(pid, root.nowMs), mx = 0, imx = -1;
-        for (var i = 0; i < ser.length; i++)
-            if (ser[i] !== null && ser[i] > mx) { mx = ser[i]; imx = i; }
-        if (imx < 0 || mx <= 0) return "";
-        var d = new Date(root.nowMs || Date.now());
-        d.setHours(0, 0, 0, 0);
-        d = new Date(d.getTime() - (29 - imx) * 86400e3);
-        return "max " + (mx >= 1000 ? (mx / 1000).toFixed(2) + "B"
-                        : mx >= 10 ? mx.toFixed(1) + "M" : mx.toFixed(2) + "M")
-             + " " + isoDay(d).slice(5);
-    }
-    function histLag(pid) {
-        var lh = lastHist(pid);
-        var today = isoDay(new Date(root.nowMs || Date.now()));
-        if (!lh) return "no rows";
-        return lh < today ? "last " + lh.slice(5) : "";
-    }
-
-    function ringModel() {
-        var hv = heroVals(), m = [];
-        for (var i = 0; i < pdesc.length; i++) {
-            var d = pdesc[i], lim = limitInfo(d.id), dv = hv.v[d.key];
-            m.push({
-                "label": d.key.toUpperCase(),
-                "color": d.col,
-                "value": (hv.sum > 0 && dv !== null && dv > 0) ? dv / hv.sum : null,
-                "limit": lim.frac,
-                "state": lim.sev === "na" ? "ok" : lim.sev,
-                "dash": d.dash === "double" ? [] : (d.dash || []),
-                "valueText": dv !== null ? FuiTokens.fmtTok(dv) : FuiTokens.unknownGlyph,
-                "reset": "",
-                // HeroLeaders extras
-                "resetMs": lim.resetMs,
-                "resetText": lim.eta,
-                "noFeedText": lim.noFeed
+        for (i = 0; i < ids.length; i++) {
+            var id = ids[i], pr = p[id] || {}, v2 = periodVal(id);
+            var hasHist = root.tokData && root.tokData.history
+                          && (root.tokData.history[id] || []).length > 0;
+            out.push({
+                "id": id, "key": laneKey(id),
+                "name": String((pr.meta && pr.meta.label) || pr.label || id),
+                "kind": String(pr.kind || "api"),
+                "col": laneCol(id, i),
+                "dash": laneStyle[id] ? laneStyle[id].dash : [1.5, 2.5],
+                "v": v2,
+                "share": (sum > 0 && v2 !== null && v2 > 0) ? v2 / sum : null,
+                "hasFeed": hasHist || (v2 !== null && v2 > 0)
+                          || (bk(id, "week")["in"] || bk(id, "week")["out"]
+                              || bk(id, "week")["total"] ? true : false)
             });
         }
-        return m;
+        m.lanes = { "list": out, "sum": sum };
+        return m.lanes;
+    }
+    function periodSum() { return lanes().sum; }
+
+    // period anchors for the rate block
+    function periodStartMs() {
+        var d = new Date(root.nowMs || Date.now());
+        if (root.period === "week") return weekStart(d).getTime();
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+    }
+    function periodSpanH() { return root.period === "week" ? 168 : 24; }
+    function elapsedH() {
+        return Math.max(0.05, ((root.nowMs || Date.now()) - periodStartMs()) / 3600e3);
+    }
+    function periodScope() {
+        var d = new Date(root.nowMs || Date.now());
+        if (root.period === "week")
+            return "ISO " + isoWeek(d) + " · since Mon " + isoDay(weekStart(d)).slice(5);
+        return "since 00:00 local · " + isoDay(d).slice(5);
+    }
+    function periodTitle() { return root.period === "week" ? "This week" : "Today"; }
+
+    function ringModel() {
+        var m = root._mm();
+        if (m.ringMdl)
+            return m.ringMdl;
+        var ls = lanes().list, sum = lanes().sum;
+        // top lanes by period value get a ring (max 5); the rest live in the
+        // providers table only — a ring per cold lane is just noise
+        var scored = [];
+        for (var i = 0; i < ls.length; i++)
+            if (ls[i].v !== null && ls[i].v > 0) scored.push(ls[i]);
+        scored.sort(function (a, b) { return b.v - a.v; });
+        var limFed = {};
+        for (i = 0; i < ls.length; i++)
+            if (limitInfo(ls[i].id).frac !== null) limFed[ls[i].id] = true;
+        // max 4 rings: ConcentricRings stacks inside labels at 195°+i·17° —
+        // a fifth label lands at 263° and clips the frame's bottom edge
+        var sel = scored.slice(0, 4);
+        for (i = 0; i < ls.length && sel.length < 4; i++)
+            if (limFed[ls[i].id] && sel.indexOf(ls[i]) < 0)
+                sel.push(ls[i]);    // fed-but-zero lanes still show their limit arc
+        var mdl = [];
+        for (i = 0; i < sel.length; i++) {
+            var l = sel[i], lim = limitInfo(l.id);
+            mdl.push({
+                "label": l.key.toUpperCase(),
+                "color": l.col,
+                "value": (sum > 0 && l.v !== null && l.v > 0) ? l.v / sum : null,
+                "limit": lim.frac,
+                "state": lim.sev === "na" ? "ok" : lim.sev,
+                "dash": l.dash === "double" ? [] : (l.dash || []),
+                "valueText": (l.v !== null && l.v > 0)
+                             ? FuiTokens.fmtTok(l.v)
+                               + " · " + Math.round(l.v / sum * 100) + "%"
+                             : FuiTokens.unknownGlyph,
+                "reset": lim.eta
+            });
+        }
+        m.ringMdl = mdl;
+        return mdl;
     }
 
     // ================= limit cells =========================================
-    // cap=0 -> all cells (for bus counts); grid shows the first 5 by severity.
     // Providers with no limits[] feed never get a card — they collapse into
-    // the noFeedProviders strip row so the grid only spends cells on real feeds.
+    // the noFeedProviders strip so the grid only spends cells on real feeds.
     readonly property var noFeedProviders: {
-        var out = [];
-        for (var i = 0; i < pdesc.length; i++) {
-            var lims = meta(pdesc[i].id).limits;
+        var out = [], ls = lanes().list;
+        for (var i = 0; i < ls.length; i++) {
+            var lims = meta(ls[i].id).limits;
             if (!(lims && lims.length))
-                out.push(pdesc[i].name);
+                out.push(ls[i].name);
         }
         return out;
     }
@@ -264,8 +341,9 @@ Item {
         if (m.limCells)
             return cap > 0 ? m.limCells.slice(0, cap) : m.limCells;
         var cells = [], i, j, lim, ms, wms;
-        for (i = 0; i < pdesc.length; i++) {
-            var d = pdesc[i], mt = meta(d.id), lims = mt.limits;
+        var ls = lanes().list;
+        for (i = 0; i < ls.length; i++) {
+            var d = ls[i], mt = meta(d.id), lims = mt.limits;
             if (!lims || !lims.length) continue;
             for (j = 0; j < lims.length; j++) {
                 lim = lims[j];
@@ -345,8 +423,9 @@ Item {
         if (m.resetMarks)
             return m.resetMarks;
         var marks = [], i, j;
-        for (i = 0; i < pdesc.length; i++) {
-            var d = pdesc[i], mt = meta(d.id), lims = mt.limits;
+        var ls = lanes().list;
+        for (i = 0; i < ls.length; i++) {
+            var d = ls[i], mt = meta(d.id), lims = mt.limits;
             if (lims && lims.length) {
                 for (j = 0; j < lims.length; j++) {
                     var lim = lims[j], ms = Date.parse(String(lim.resetsAt || ""));
@@ -364,16 +443,13 @@ Item {
                         "note": winAbbrev(lim.label).toLowerCase() + " lim"
                     });
                 }
-            } else {
-                marks.push({ "label": d.key.toUpperCase(), "color": d.col,
-                             "atMs": 0, "status": "na", "etaText": "NO FEED", "note": "" });
             }
         }
         m.resetMarks = marks;
         return marks;
     }
 
-    // ================= history (skyline + heatmap + sparks) ================
+    // ================= history (trend) =====================================
     function histIndex() {
         var m = root._mm();
         if (m.histIdx)
@@ -399,35 +475,24 @@ Item {
             return ((iN || 0) + (oN || 0)) / 1e6;
         return (r["total"] || 0) / 1e6;
     }
-    // last 30 local days, oldest -> today (M tokens per stack key)
-    function skyRows(nowMs) {
+    // last 30 local days, oldest -> today (M tokens per lane key)
+    function skyRows() {
         if (!root.shown)
             return [];
         var m = root._mm();
         if (m.skyRows)
             return m.skyRows;
         var idx = histIndex(), rows = [];
-        var today = new Date(nowMs || Date.now());
+        var today = new Date(root.nowMs || Date.now());
         today.setHours(0, 0, 0, 0);
-        var keys = { "ocg": "opencode-go", "ocgcli": "opencode",
-                     "cld": "claude", "cdx": "codex",
-                     "dvn": "devin", "hze": "haze" };
+        var ls = lanes().list;
         for (var i = 29; i >= 0; i--) {
             var d = new Date(today.getTime() - i * 86400e3);
             var iso = isoDay(d), parts = {}, total = 0;
-            for (var k in keys) {
-                var r = idx[keys[k]] ? idx[keys[k]][iso] : null;
+            for (var k = 0; k < ls.length; k++) {
+                var r = idx[ls[k].id] ? idx[ls[k].id][iso] : null;
                 var v = hval(r);
-                if (k === "cdx" && r) {
-                    // snapshot lane is disjoint — stack it as its own segment
-                    var iN2 = r["in"], oN2 = r["out"];
-                    var hasIo = (iN2 !== null && iN2 !== undefined)
-                             || (oN2 !== null && oN2 !== undefined);
-                    var snap = (r["total"] || 0) / 1e6;
-                    v = hasIo ? ((iN2 || 0) + (oN2 || 0)) / 1e6 : 0;
-                    if (snap > 0) { parts["cdxs"] = snap; total += snap; }
-                }
-                if (v > 0) { parts[k] = v; total += v; }
+                if (v > 0) { parts[ls[k].key] = v; total += v; }
             }
             rows.push({ "iso": iso, "label": iso.slice(5), "total": total,
                         "parts": parts, "partial": i === 0 });
@@ -445,183 +510,93 @@ Item {
         m.skyRows = rows;
         return rows;
     }
-    function sparkSeries(pid, nowMs) {
+    // ISO-week buckets, oldest -> current (M tokens per lane key); the ledger
+    // keeps 90 days of history so up to ~13 full weeks resolve
+    function weekRows() {
+        if (!root.shown)
+            return [];
         var m = root._mm();
-        var ser = m.sparks[pid];
-        if (ser)
-            return ser;
-        var idx = histIndex(), vals = [];
-        var today = new Date(nowMs || Date.now());
-        today.setHours(0, 0, 0, 0);
-        for (var i = 29; i >= 0; i--) {
-            var iso = isoDay(new Date(today.getTime() - i * 86400e3));
-            var r = idx[pid] ? idx[pid][iso] : null;
-            vals.push(r ? hval(r) : null);
+        if (m.weekRows)
+            return m.weekRows;
+        var idx = histIndex(), ls = lanes().list;
+        var thisMon = weekStart(new Date(root.nowMs || Date.now()));
+        var rows = [];
+        for (var w = 11; w >= 0; w--) {
+            var mon = new Date(thisMon.getTime() - w * 7 * 86400e3);
+            var parts = {}, total = 0;
+            for (var dd = 0; dd < 7; dd++) {
+                var iso = isoDay(new Date(mon.getTime() + dd * 86400e3));
+                for (var k = 0; k < ls.length; k++) {
+                    var r = idx[ls[k].id] ? idx[ls[k].id][iso] : null;
+                    var v = hval(r);
+                    if (v > 0) { parts[ls[k].key] = (parts[ls[k].key] || 0) + v; total += v; }
+                }
+            }
+            rows.push({ "iso": isoDay(mon),
+                        "label": isoWeek(mon) + "·" + isoDay(mon).slice(5),
+                        "total": total, "parts": parts, "partial": w === 0 });
         }
-        m.sparks[pid] = vals;
-        return vals;
+        var first = -1;
+        for (var zi = 0; zi < rows.length; zi++) {
+            if ((rows[zi].total || 0) > 0) { first = zi; break; }
+        }
+        if (first > 0)
+            rows = rows.slice(first);
+        m.weekRows = rows;
+        return rows;
     }
-    function lastHist(pid, nowMs) {
+    function trendRows() {
+        return root.period === "week" ? weekRows() : skyRows();
+    }
+    function lastHist(pid) {
         var h = (root.tokData && root.tokData.history) ? root.tokData.history : {};
         var rows = h[pid] || [];
         return rows.length ? String(rows[rows.length - 1].d || "") : "";
     }
-
-    // ================= heatmap =============================================
-    function heatCells(nowMs) {
-        if (!root.shown)
-            return [];
+    function histLag(pid) {
+        var lh = lastHist(pid);
+        var today = isoDay(new Date(root.nowMs || Date.now()));
+        if (!lh) return "no rows";
+        return lh < today ? "last " + lh.slice(5) : "";
+    }
+    // lanes that appear in the trend legend/stack — only ones with any
+    // history in the displayed window, ranked by window Σ (legend caps at 8)
+    function stackLanes() {
         var m = root._mm();
-        if (m.heatCells)
-            return m.heatCells;
-        var idx = histIndex();
-        var today = new Date(nowMs || Date.now());
-        today.setHours(0, 0, 0, 0);
-        var todayIso = isoDay(today);
-        var dow = (today.getDay() + 6) % 7;                    // Mon=0
-        var start = new Date(today.getTime() - (dow + 25 * 7) * 86400e3);
-        var keys = ["claude", "codex", "devin", "opencode-go", "opencode",
-                    "haze", "fireworks"];
-        var cells = [];
-        for (var w = 0; w < 26; w++)
-            for (var dd = 0; dd < 7; dd++) {
-                var d = new Date(start.getTime() + (w * 7 + dd) * 86400e3);
-                if (d > today) { cells.push(null); continue; }
-                var iso = isoDay(d), tot = 0;
-                for (var k = 0; k < keys.length; k++) {
-                    var r = idx[keys[k]] ? idx[keys[k]][iso] : null;
-                    if (r) {
-                        tot += hval(r);
-                        // snapshot lane is part of the day total too
-                        var iN = r["in"], oN = r["out"];
-                        var hasIo = (iN !== null && iN !== undefined) || (oN !== null && oN !== undefined);
-                        if (hasIo && (r["total"] || 0) > 0) tot += (r["total"] || 0) / 1e6;
-                    }
-                }
-                cells.push({ "iso": iso, "label": iso.slice(5), "total": tot,
-                             "partial": iso === todayIso });
-            }
-        m.heatCells = cells;
-        return cells;
-    }
-    function heatStats(cells) {
-        var act = 0, sum = 0, mx = 0, mxl = "";
-        for (var i = 0; i < cells.length; i++) {
-            var c = cells[i];
-            if (!c) continue;
-            if ((c.total || 0) > 0) { act++; sum += c.total; if (c.total > mx) { mx = c.total; mxl = c.label; } }
+        if (m.stackLanes)
+            return m.stackLanes;
+        var ls = lanes().list, rows = trendRows(), tot = {};
+        for (var i = 0; i < rows.length; i++) {
+            var parts = rows[i].parts || {};
+            for (var k in parts) tot[k] = (tot[k] || 0) + parts[k];
         }
-        return { "act": act, "sum": sum, "mx": mx, "mxl": mxl, "days": cells.length };
+        var out = [];
+        for (i = 0; i < ls.length; i++)
+            if (tot[ls[i].key])
+                out.push({ "key": ls[i].key, "label": ls[i].name,
+                           "col": ls[i].col, "dash": ls[i].dash,
+                           "winSum": tot[ls[i].key] });
+        out.sort(function (a, b) { return b.winSum - a.winSum; });
+        m.stackLanes = out;
+        return out;
+    }
+    function legendLanes() {
+        var s = stackLanes();
+        if (s.length <= 8) return s;
+        var out = s.slice(0, 8);
+        out.push({ "key": "_more", "label": "+ " + (s.length - 8) + " lanes",
+                   "col": null, "dash": [], "winSum": 0 });
+        return out;
     }
 
-    // ================= tables ==============================================
-    function compRows() {
-        var m = root._mm();
-        if (m.compRows)
-            return m.compRows;
-        var hv = heroVals(), rows = [], cum = 0;
-        for (var i = 0; i < pdesc.length; i++) {
-            var d = pdesc[i], dv = hv.v[d.key];
-            var sh = (hv.sum > 0 && dv !== null && dv > 0) ? dv / hv.sum : null;
-            if (sh !== null) cum += sh;
-            rows.push({
-                "prv": { "v": d.name, "c": d.col },
-                "v":   { "v": dv !== null ? FuiTokens.fmtTok(dv) : FuiTokens.unknownGlyph },
-                "sh":  { "v": sh !== null ? (sh * 100).toFixed(2) + "%" : FuiTokens.unknownGlyph },
-                "cum": { "v": hv.sum > 0 ? (cum * 100).toFixed(1) : FuiTokens.unknownGlyph }
-            });
+    function trendStats() {
+        var r = trendRows(), s = 0, nz = 0, mx = 0, mxl = "";
+        for (var i = 0; i < r.length; i++) {
+            var v = r[i].total || 0;
+            s += v;
+            if (v > 0) { nz++; if (v > mx) { mx = v; mxl = r[i].label; } }
         }
-        rows.push({
-            "prv": { "v": "Σ", "c": FuiTokens.white },
-            "v":   { "v": hv.sum > 0 ? FuiTokens.fmtTok(hv.sum) : "0" },
-            "sh":  { "v": hv.sum > 0 ? "100.00%" : FuiTokens.unknownGlyph },
-            "cum": { "v": "" }
-        });
-        m.compRows = rows;
-        return rows;
-    }
-
-    function lnum(x) {
-        return { "v": (x === null || x === undefined) ? "n/a" : FuiTokens.fmtTok(x) };
-    }
-    function ledgerRows() {
-        var m = root._mm();
-        if (m.ledgerRows)
-            return m.ledgerRows;
-        // display aliases — readable provider names (keys/order untouched)
-        var shortPrv = { "claude": "Claude", "codex": "Codex", "devin": "Devin",
-                         "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
-                         "haze": "Haze", "fireworks": "Fireworks" };
-        var rows = [];
-        for (var i = 0; i < ledgerOrder.length; i++) {
-            var pid = ledgerOrder[i], p = provs()[pid];
-            if (!p) continue;
-            var w = bk(pid, "week"), mo = bk(pid, "month");
-            var mt = meta(pid);
-            var st = mt.status ? String(mt.status).toLowerCase() : "";
-            var kind = String(p.kind || "sub") + (st ? "·" + st.slice(0, 7) : "");
-            rows.push({
-                "prv": { "v": shortPrv[pid]
-                              || String(p.label || pid).slice(0, 14),
-                         "c": st ? FuiTokens.faint : FuiTokens.ice },
-                "kind": { "v": kind, "c": st ? FuiTokens.faint : FuiTokens.mute },
-                "wi": lnum(w["in"]), "wo": lnum(w["out"]), "wc": { "v": fmtMoney(w["cost"]) },
-                "mi": lnum(mo["in"]), "mo": lnum(mo["out"]), "mc": { "v": fmtMoney(mo["cost"]) }
-            });
-        }
-        m.ledgerRows = rows;
-        return rows;
-    }
-
-    function sessionRows() {
-        var m = root._mm();
-        if (m.sessionRows)
-            return m.sessionRows;
-        var s = (root.tokData && root.tokData.sessions) ? root.tokData.sessions : [];
-        var rows = [];
-        for (var i = 0; i < s.length && i < 8; i++) {
-            var e = s[i] || {};
-            var t = String(e.title || "");
-            if (t === "") {
-                // untitled — identify by profile + start time + model
-                var st = e.start
-                       ? Qt.formatDateTime(new Date(e.start * 1000), "MM-dd hh:mm")
-                       : "?";
-                t = String(e.bot || "?") + "·" + st
-                  + "·" + String(e.model || "?").slice(0, 10);
-            }
-            rows.push({
-                "n":   { "v": p2(i + 1) },
-                "bot": { "v": String(e.bot || "?"), "c": FuiTokens.ice },
-                "ti":  { "v": t.length > 26 ? t.slice(0, 25) + "~" : t },
-                "mo":  { "v": String(e.model || "").slice(0, 13) },
-                "iN":  { "v": e["in"] !== undefined ? FuiTokens.fmtTok(e["in"]) : "n/a" },
-                "oN":  { "v": e["out"] !== undefined ? FuiTokens.fmtTok(e["out"]) : "n/a" },
-                "t":   { "v": e["last"] ? Qt.formatDateTime(new Date(e["last"] * 1000), "hh:mm") : "" }
-            });
-        }
-        m.sessionRows = rows;
-        return rows;
-    }
-    function sessionStats() {
-        var s = (root.tokData && root.tokData.sessions) ? root.tokData.sessions : [];
-        var bots = {}, tin = 0;
-        for (var i = 0; i < s.length; i++) {
-            bots[s[i].bot] = true;
-            tin += (s[i]["in"] || 0) + (s[i]["out"] || 0);
-        }
-        var n = 0;
-        for (var k in bots) n++;
-        return { "n": s.length, "bots": n, "tin": tin };
-    }
-
-    function costSumMonth() {
-        var s = 0, any = false;
-        for (var i = 0; i < ledgerOrder.length; i++) {
-            var c = bk(ledgerOrder[i], "month").cost;
-            if (c !== null && c !== undefined) { s += Number(c); any = true; }
-        }
-        return any ? s : null;
+        return { "sum": s, "active": nz, "n": r.length, "mx": mx, "mxl": mxl };
     }
 
     function ledgerStamp() {
@@ -671,134 +646,165 @@ Item {
     }
 
     // ============================ layout ==================================
-    // mock 1920x1200, margin 32: r1 h640 | r2 h472 (gap 24)
+    // 2x2 grid: TOKENS | PROVIDERS over TREND | LIMITS
     readonly property int mg: FuiTokens.deckMargin
     readonly property int gg: 24
-    readonly property real row1H: (height - 2 * mg - gg) * (640.0 / 1136)
+    readonly property real row1H: (height - 2 * mg - gg) * 0.50
     readonly property real row2Y: mg + row1H + gg
     readonly property real row2H: height - row2Y - mg
-    readonly property real heroW: (width - 2 * mg - gg) * (1128.0 / 1856)
-    readonly property real limW: width - mg * 2 - heroW - gg
-    readonly property real skyW: (width - 2 * mg - gg) * (880.0 / 1856)
-    readonly property real rightX: mg + skyW + gg
+    readonly property real heroW: (width - 2 * mg - gg) * 0.56
+    readonly property real rightX: mg + heroW + gg
     readonly property real rightW: width - rightX - mg
-    readonly property real heatH: row2H * (184.0 / 472)
-    readonly property real bot2Y: row2Y + heatH + gg
-    readonly property real bot2H: height - bot2Y - mg
-    readonly property real sesW: rightW * (464.0 / 952)
-    readonly property real ledX: rightX + sesW + gg
-    readonly property real ledW: width - ledX - mg
 
     // ---------------- TKN-01 hero ----------------------------------------
     FuiFrame {
         x: root.mg; y: root.mg
         width: root.heroW; height: root.row1H
         code: "TKN-01"
-        title: "Today"
+        title: "Tokens / " + (root.period === "week" ? "week" : "day")
         meta: "src: tokens.json · event lanes · " + root.ledgerStamp()
 
         Item {
             id: heroArea
             anchors.fill: parent
-            readonly property real colW: Math.min(292, Math.max(220, width * 0.26))
 
-            // left column — composition table + burn block, OCG card bottom
+            // period segmented control, top-left
+            Tk.PeriodToggle {
+                id: pToggle
+                anchors { left: parent.left; top: parent.top; topMargin: 2 }
+                value: root.period
+                segments: [
+                    { "v": "day",  "label": "DAY" },
+                    { "v": "week", "label": "WEEK" }
+                ]
+                onPicked: function (v) { root.setPeriod(v) }
+            }
+            Tk.Tx {
+                role: "cap"; tone: FuiTokens.dim
+                anchors { left: pToggle.right; leftMargin: 14
+                          verticalCenter: pToggle.verticalCenter }
+                text: root.periodScope()
+            }
+
+            // left column — period Σ + rate block
             Column {
-                anchors { left: parent.left; top: parent.top }
-                width: heroArea.colW
-                spacing: 4
-                Tk.Tx { role: "hdr"; text: "COMPOSITION" }
-                Tk.MiniTable {
-                    width: parent.width
-                    columns: [
-                        { "key": "prv", "label": "PROVIDER", "flex": 1 },
-                        { "key": "v",   "label": "TODAY",    "align": "r", "w": 72 },
-                        { "key": "sh",  "label": "SHARE",    "align": "r", "w": 56 }
-                    ]
-                    rows: root.compRows()
-                    total: true
-                    rowH: 16
+                id: heroLeft
+                anchors { left: parent.left; top: parent.top; topMargin: 56
+                          bottom: parent.bottom }
+                width: Math.min(320, Math.max(250, parent.width * 0.34))
+                spacing: 6
+
+                Tk.Tx { role: "hdr"; text: "TOKENS " + (root.period === "week" ? "/ ISO WEEK" : "/ TODAY") }
+                Item {
+                    width: parent.width; height: heroNum.implicitHeight
+                    Tk.Tx {
+                        id: heroNum
+                        role: "num"
+                        font.family: FuiTokens.display
+                        font.pixelSize: FuiTokens.px.hero
+                        anchors.left: parent.left
+                        text: {
+                            var s = root.periodSum();
+                            if (s <= 0) return "0";
+                            var t = FuiTokens.fmtTok(s);
+                            return t.slice(0, -1);
+                        }
+                    }
+                    Tk.Tx {
+                        role: "num"
+                        font.pixelSize: FuiTokens.px.big
+                        tone: FuiTokens.ice
+                        anchors { left: heroNum.right; leftMargin: 6
+                                  bottom: heroNum.bottom; bottomMargin: 7 }
+                        text: {
+                            var s = root.periodSum();
+                            var t = FuiTokens.fmtTok(s);
+                            return s > 0 && /[BKM]$/.test(t) ? t.slice(-1) : "";
+                        }
+                    }
+                }
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.dim
+                    text: "Σ in + out · " + root.periodScope()
                 }
                 Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3
-                            visible: burnBlock.visible }
+                            visible: root.periodSum() > 0 }
+                // burn-rate block — a true average over the elapsed period,
+                // not an instantaneous rate; the label says what it measures
                 Column {
-                    id: burnBlock
                     width: parent.width
-                    visible: root.heroVals().sum > 0
-                    spacing: 2
+                    visible: root.periodSum() > 0
+                    spacing: 3
                     Item {
-                        width: parent.width; height: 14
-                        Tk.Tx { role: "lbl"; text: "BURN NOW"; anchors.left: parent.left }
+                        width: parent.width; height: 15
+                        Tk.Tx { role: "lbl"; text: "AVG RATE"; anchors.left: parent.left }
                         Tk.Tx {
                             role: "num"
                             anchors { right: parent.right }
                             text: {
-                                var d = new Date(root.nowMs || Date.now());
-                                var hrs = Math.max(0.25, d.getHours() + d.getMinutes() / 60
-                                                   + d.getSeconds() / 3600);
-                                var s = root.heroVals().sum;
-                                return s > 0 ? (FuiTokens.fmtTok(s / hrs) + "/h")
+                                var s = root.periodSum();
+                                return s > 0 ? (FuiTokens.fmtTok(s / root.elapsedH()) + "/h")
                                              : FuiTokens.unknownGlyph;
                             }
                         }
                     }
-                    Tk.Tx { role: "cap"; text: "avg since midnight" }
+                    Tk.Tx {
+                        role: "cap"; tone: FuiTokens.mute
+                        text: "period Σ ÷ " + root.elapsedH().toFixed(1)
+                              + "h elapsed (" + (root.period === "week" ? "Mon 00:00" : "00:00")
+                              + " anchor)"
+                    }
                     Item {
-                        width: parent.width; height: 14
-                        Tk.Tx { role: "lbl"; text: "24H AVG"; anchors.left: parent.left }
+                        width: parent.width; height: 15
+                        Tk.Tx { role: "lbl"; text: "PACE PROJ"; anchors.left: parent.left }
                         Tk.Tx {
-                            role: "num"
+                            role: "num"; tone: FuiTokens.ice
                             anchors { right: parent.right }
                             text: {
-                                var s = root.heroVals().sum;
-                                return s > 0 ? FuiTokens.fmtTok(s / 24) + "/h"
-                                             : FuiTokens.unknownGlyph;
+                                var s = root.periodSum();
+                                return s > 0
+                                    ? FuiTokens.fmtTok(s / root.elapsedH() * root.periodSpanH())
+                                    : FuiTokens.unknownGlyph;
                             }
                         }
+                    }
+                    Tk.Tx {
+                        role: "cap"; tone: FuiTokens.mute
+                        text: "at current avg · full "
+                              + (root.period === "week" ? "168h week" : "24h day")
+                    }
+                }
+                Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.faint
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: "ring arc: lane share of period Σ · thick arc: provider limit used · bezel 0..100%"
+                }
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.faint
+                    visible: {
+                        var l = root.laneSplit("codex");
+                        return l.snap !== null;
+                    }
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: {
+                        var l = root.laneSplit("codex");
+                        return l.snap !== null
+                            ? "codex snapshot lane " + FuiTokens.fmtTok(l.snap)
+                              + " held separate (never summed)" : "";
                     }
                 }
             }
 
-            Tk.PrvCard {
-                anchors { left: parent.left; bottom: parent.bottom }
-                width: heroArea.colW
-                name: "Go (Hermes)"
-                code: "PRV-OCG"
-                color: FuiTokens.ice
-                valueText: {
-                    var v = root.dayVal("opencode-go");
-                    return v !== null ? FuiTokens.fmtTok(v) : FuiTokens.unknownGlyph;
-                }
-                share: {
-                    var hv = root.heroVals(), v = hv.v["ocg"];
-                    return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
-                }
-                costLine: {
-                    var mo = root.bk("opencode-go", "month");
-                    return (mo["cost"] !== null && mo["cost"] !== undefined)
-                           ? "month " + root.fmtMoney(mo["cost"]) : "";
-                }
-                // real warning only: stale/missing history is the only
-                // extra line worth keeping on the card
-                extraLine: {
-                    var lag = root.histLag("opencode-go");
-                    if (lag === "no rows") return "no history rows";
-                    if (lag !== "") return "history lags (" + lag + ")";
-                    return "";
-                }
-                warned: root.histLag("opencode-go") !== ""
-                spark: root.sparkSeries("opencode-go", root.nowMs)
-                sparkMax: root.sparkMaxOf("opencode-go")
-            }
-
-            // centre — concentric limit rings + countdown chips
+            // centre/right — concentric rings: thin arc = share of period Σ,
+            // thick arc = limit used; per-lane labels lower-left (no chips)
             Item {
                 id: ringBox
-                anchors {
-                    left: parent.left; leftMargin: heroArea.colW + 12
-                    right: parent.right; rightMargin: heroArea.colW + 12
-                    top: parent.top; bottom: parent.bottom
-                }
+                anchors { left: heroLeft.right; leftMargin: 20
+                          right: parent.right; top: parent.top; topMargin: 44
+                          bottom: parent.bottom }
                 ConcentricRings {
                     id: rings
                     anchors.centerIn: parent
@@ -813,183 +819,399 @@ Item {
                         spacing: 2
                         Tk.Tx {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            role: "lbl"; text: "TOKENS / TODAY"; tone: FuiTokens.ice
-                        }
-                        Item {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            width: heroNum.implicitWidth + heroUnit.implicitWidth + 6
-                            height: heroNum.implicitHeight
-                            Tk.Tx {
-                                id: heroNum
-                                role: "num"
-                                font.family: FuiTokens.display
-                                font.pixelSize: Math.min(FuiTokens.px.hero, rings.width * 0.13)
-                                text: {
-                                    var s = root.heroVals().sum;
-                                    if (s <= 0) return "0";
-                                    var t = FuiTokens.fmtTok(s);
-                                    return t.slice(0, -1);
-                                }
-                            }
-                            Tk.Tx {
-                                id: heroUnit
-                                role: "num"
-                                font.pixelSize: Math.min(FuiTokens.px.big, rings.width * 0.07)
-                                tone: FuiTokens.ice
-                                anchors { left: heroNum.right; leftMargin: 6
-                                          bottom: heroNum.bottom; bottomMargin: 6 }
-                                text: {
-                                    var s = root.heroVals().sum;
-                                    var t = FuiTokens.fmtTok(s);
-                                    return s > 0 && /[BKM]$/.test(t) ? t.slice(-1) : "";
-                                }
-                            }
+                            role: "lbl"; text: "SHARE OF Σ"; tone: FuiTokens.ice
                         }
                         Tk.Tx {
                             anchors.horizontalCenter: parent.horizontalCenter
                             role: "cap"; tone: FuiTokens.dim
-                            text: "Σ " + (root.heroVals().sum / 1e6).toFixed(1) + " M"
+                            text: root.period === "week" ? "ISO " + root.isoWeek(new Date(root.nowMs || Date.now()))
+                                                         : "TODAY"
                         }
                         Tk.Tx {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            role: "cap"
-                            text: "Codex snapshot lane counted separately"
+                            role: "num"; font.pixelSize: FuiTokens.px.mid
+                            text: root.periodSum() > 0
+                                  ? FuiTokens.fmtTok(root.periodSum())
+                                  : "0"
                         }
                     }
-                }
-                Tk.HeroLeaders {
-                    anchors.fill: rings
-                    host: rings
-                    model: root.ringModel()
-                    nowMs: root.nowMs
-                }
-            }
-
-            // right column — DVN / CDX / CLD blocks (mock order top->bottom)
-            Column {
-                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
-                width: heroArea.colW
-                spacing: 10
-
-                Tk.PrvCard {
-                    width: parent.width
-                    name: "Devin"; code: "PRV-DVN"
-                    color: FuiTokens.dim; dash: [1.5, 2.5]
-                    valueText: {
-                        var v = root.dayVal("devin");
-                        return v !== null ? FuiTokens.fmtTok(v) : FuiTokens.unknownGlyph;
-                    }
-                    share: {
-                        var hv = root.heroVals(), v = hv.v["dvn"];
-                        return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
-                    }
-                    costLine: ""
-                    extraLine: {
-                        var mo = root.bk("devin", "month");
-                        var mi = mo["in"], mout = mo["out"];
-                        return (mi || mout)
-                               ? "month " + FuiTokens.fmtTok((mi||0)+(mout||0))
-                                 + " · no limit feed" : "";
-                    }
-                    spark: root.sparkSeries("devin", root.nowMs)
-                    sparkMax: root.sparkMaxOf("devin")
-                }
-                Tk.PrvCard {
-                    width: parent.width
-                    name: "Codex"; code: "PRV-CDX"
-                    color: FuiTokens.azure; dash: "double"
-                    valueText: {
-                        var v = root.dayVal("codex");
-                        return v !== null ? FuiTokens.fmtTok(v) : FuiTokens.unknownGlyph;
-                    }
-                    share: {
-                        var hv = root.heroVals(), v = hv.v["cdx"];
-                        return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
-                    }
-                    costLine: ""
-                    extraLine: {
-                        var l = root.laneSplit("codex", "week");
-                        var s = "";
-                        if (l.hrm > 0) s = "events " + FuiTokens.fmtTok(l.hrm);
-                        if (l.snap !== null)
-                            s += (s ? " + " : "") + FuiTokens.fmtTok(l.snap)
-                               + " snapshot";
-                        return s;
-                    }
-                    spark: root.sparkSeries("codex", root.nowMs)
-                    sparkMax: root.sparkMaxOf("codex")
-                }
-                Tk.PrvCard {
-                    width: parent.width
-                    name: "Claude"; code: "PRV-CLD"
-                    color: FuiTokens.white
-                    valueText: {
-                        var v = root.dayVal("claude");
-                        return v !== null ? FuiTokens.fmtTok(v) : FuiTokens.unknownGlyph;
-                    }
-                    share: {
-                        var hv = root.heroVals(), v = hv.v["cld"];
-                        return (hv.sum > 0 && v !== null && v > 0) ? v / hv.sum : null;
-                    }
-                    costLine: {
-                        var dd = root.bk("claude", "day"), wk = root.bk("claude", "week");
-                        var t = "";
-                        if (dd["cost"] !== null && dd["cost"] !== undefined)
-                            t = "today " + root.fmtMoney(dd["cost"]);
-                        if (wk["cost"] !== null && wk["cost"] !== undefined)
-                            t += (t !== "" ? " · " : "") + "wk " + root.fmtMoney(wk["cost"]);
-                        return t;
-                    }
-                    // real warning only — auth state, not the feed census
-                    extraLine: {
-                        var mt = root.meta("claude");
-                        return root.isAuth(mt) ? "auth pending" : "";
-                    }
-                    warned: root.isAuth(root.meta("claude"))
-                    spark: root.sparkSeries("claude", root.nowMs)
-                    sparkMax: root.sparkMaxOf("claude")
                 }
             }
         }
     }
 
-    // ---------------- LIM-02 limits ---------------------------------------
+    // ---------------- PRV-02 providers ------------------------------------
     FuiFrame {
-        x: root.mg + root.heroW + root.gg; y: root.mg
-        width: root.limW; height: root.row1H
-        code: "LIM-02"
-        title: "Limits / Resets"
+        x: root.rightX; y: root.mg
+        width: root.rightW; height: root.row1H
+        code: "PRV-02"
+        title: "Providers / " + (root.period === "week" ? "ISO week" : "today")
+        meta: "src: tokens.json · " + root.ledgerStamp()
+
+        Item {
+            id: prvBox
+            anchors.fill: parent
+            readonly property var ls: root.lanes().list
+            // hot lanes ranked by period Σ — non-zero first (value desc), then
+            // idle feeds by last-seen date so recently-live lanes keep a row
+            readonly property var hot: {
+                var a = ls.filter(function (l) { return l.hasFeed; });
+                a.sort(function (x, y) {
+                    var vx = x.v || 0, vy = y.v || 0;
+                    if ((vx > 0) !== (vy > 0)) return vy - vx;
+                    if (vx > 0 && vy > 0) return vy - vx;
+                    var lx = root.lastHist(x.id), ly = root.lastHist(y.id);
+                    if (lx !== ly) return lx < ly ? 1 : -1;
+                    return x.name < y.name ? -1 : 1;
+                });
+                return a;
+            }
+            readonly property var cold: ls.filter(function (l) { return !l.hasFeed; })
+            readonly property real rowH: 30
+            readonly property real headH: 20
+            // footer reserve: Σ row + up to two collapse lines
+            readonly property real footH: 60
+            readonly property int rowCap: Math.max(3, Math.floor((height - headH - footH - 10) / (rowH + 2)))
+            readonly property var shownLanes: hot.slice(0, rowCap)
+            readonly property var over: hot.slice(rowCap)
+            readonly property var idleOver: over.filter(function (l) {
+                return !(l.v !== null && l.v > 0);
+            }).map(function (l) { return l.name; })
+            readonly property real overSum: over.reduce(function (a, l) {
+                return a + ((l.v !== null && l.v > 0) ? l.v : 0);
+            }, 0)
+            readonly property int overNz: over.filter(function (l) {
+                return l.v !== null && l.v > 0;
+            }).length
+
+            // column header
+            Item {
+                id: prvHead
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                height: 20
+                Tk.Tx { role: "code"; text: "LANE"; anchors.left: parent.left; leftPadding: 34 }
+                Tk.Tx { role: "code"; text: root.period === "week" ? "WEEK" : "TODAY"
+                        anchors.right: shTx.left; anchors.rightMargin: 10
+                        width: 84; horizontalAlignment: Text.AlignRight }
+                Tk.Tx { id: shTx; role: "code"; text: "SHARE"
+                        anchors.right: parent.right; width: 60
+                        horizontalAlignment: Text.AlignRight }
+            }
+            Rectangle { anchors { left: parent.left; right: parent.right
+                                  top: prvHead.bottom }
+                        height: 1; color: FuiTokens.hair2 }
+
+            Column {
+                id: prvCol
+                anchors { left: parent.left; right: parent.right
+                          top: prvHead.bottom; topMargin: 6 }
+                spacing: 2
+                Repeater {
+                    model: prvBox.shownLanes
+                    delegate: Item {
+                        id: prow
+                        required property int index
+                        required property var modelData
+                        width: prvCol.width
+                        height: 30
+                        // lane swatch (colour + dash shared with ring + skyline)
+                        Canvas {
+                            id: sw
+                            width: 24; height: 10
+                            anchors { left: parent.left; leftMargin: 4
+                                      verticalCenter: parent.verticalCenter }
+                            property var lane: prow.modelData
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                ctx.strokeStyle = FuiTokens.css(lane.col);
+                                ctx.lineWidth = 1.4;
+                                if (lane.dash === "double") {
+                                    ctx.beginPath(); ctx.moveTo(0, 3); ctx.lineTo(width, 3); ctx.stroke();
+                                    ctx.beginPath(); ctx.moveTo(0, 7); ctx.lineTo(width, 7); ctx.stroke();
+                                } else {
+                                    ctx.setLineDash(lane.dash || []);
+                                    ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(width, 5); ctx.stroke();
+                                    ctx.setLineDash([]);
+                                }
+                            }
+                            onLaneChanged: requestPaint()
+                        }
+                        Tk.Tx {  // name (module dir, no prefix needed)
+                            role: "lbl"; text: prow.modelData.name; tone: FuiTokens.white
+                            anchors { left: parent.left; leftMargin: 34
+                                      verticalCenter: parent.verticalCenter }
+                            width: Math.min(implicitWidth, 190)
+                            elide: Text.ElideRight
+                        }
+                        Tk.Tx {
+                            role: "num"
+                            anchors { right: shareBox.left; rightMargin: 10
+                                      verticalCenter: parent.verticalCenter }
+                            width: 84; horizontalAlignment: Text.AlignRight
+                            text: prow.modelData.v !== null && prow.modelData.v > 0
+                                  ? FuiTokens.fmtTok(prow.modelData.v)
+                                  : (prow.modelData.v === 0 ? "0" : FuiTokens.unknownGlyph)
+                        }
+                        // share bar + % — one visual per lane, period-scoped
+                        Item {
+                            id: shareBox
+                            anchors { right: shPct.left; rightMargin: 10
+                                      verticalCenter: parent.verticalCenter }
+                            width: Math.max(80, Math.min(190, parent.width * 0.28))
+                            height: 8
+                            Rectangle {
+                                anchors.fill: parent
+                                color: "transparent"; border.width: 1
+                                border.color: FuiTokens.hair3
+                            }
+                            Rectangle {
+                                anchors { left: parent.left; top: parent.top
+                                          bottom: parent.bottom }
+                                width: prow.modelData.share !== null
+                                       ? Math.max(2, parent.width * prow.modelData.share) : 0
+                                color: FuiTokens.tone(prow.modelData.col, 0.55)
+                                visible: prow.modelData.share !== null
+                            }
+                        }
+                        Tk.Tx {
+                            id: shPct
+                            role: "num"; tone: FuiTokens.dim
+                            anchors { right: parent.right; rightMargin: 2
+                                      verticalCenter: parent.verticalCenter }
+                            width: 60; horizontalAlignment: Text.AlignRight
+                            text: prow.modelData.share !== null
+                                  ? (prow.modelData.share * 100).toFixed(1) + "%"
+                                  : FuiTokens.unknownGlyph
+                        }
+                        // honesty line under the row: idle lanes say when they
+                        // last produced, auth lanes say what is missing
+                        Tk.Tx {
+                            role: "faint"
+                            anchors { left: parent.left; leftMargin: 34
+                                      bottom: parent.bottom; bottomMargin: -1 }
+                            font.pixelSize: FuiTokens.px.micro
+                            text: {
+                                var l = prow.modelData;
+                                if (root.isAuth(root.meta(l.id))) return "auth pending";
+                                if (l.v !== null && l.v > 0) return "";
+                                var lag = root.histLag(l.id);
+                                if (lag === "no rows") return "no recorded feed";
+                                if (lag !== "") return "idle · " + lag;
+                                return "idle today";
+                            }
+                        }
+                    }
+                }
+            }
+
+            // overflow + cold lanes collapse to honest lines; Σ row pins total
+            Item {
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: sigRow.height + 8
+                        + (idleTx.visible ? idleTx.implicitHeight + 4 : 0)
+                        + (coldTx.visible ? coldTx.implicitHeight + 4 : 0)
+                Tk.Tx {
+                    id: idleTx
+                    role: "cap"; tone: FuiTokens.faint
+                    anchors { left: parent.left; right: parent.right
+                              bottom: coldTx.visible ? coldTx.top : sigRow.top
+                              bottomMargin: 4 }
+                    visible: prvBox.over.length > 0
+                    text: {
+                        var p = prvBox, t = "";
+                        if (p.overNz > 0)
+                            t = "+ " + p.overNz + " lanes · Σ "
+                                + FuiTokens.fmtTok(p.overSum);
+                        if (p.idleOver.length > 0)
+                            t += (t !== "" ? " · " : "") + "0 in window: "
+                                 + p.idleOver.join(" · ");
+                        return t;
+                    }
+                    elide: Text.ElideRight
+                }
+                Tk.Tx {
+                    id: coldTx
+                    role: "cap"; tone: FuiTokens.faint
+                    anchors { left: parent.left; right: parent.right
+                              bottom: sigRow.top; bottomMargin: 4 }
+                    visible: prvBox.cold.length > 0
+                    text: "no recorded feed: "
+                          + prvBox.cold.map(function (l) { return l.name; }).join(" · ")
+                    elide: Text.ElideRight
+                }
+                Item {
+                    id: sigRow
+                    anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                    height: 20
+                    Rectangle { anchors { left: parent.left; right: parent.right
+                                          top: parent.top; topMargin: -4 }
+                                height: 1; color: FuiTokens.hair2 }
+                    Tk.Tx {
+                        role: "hdr"; text: "Σ " + (root.period === "week" ? "ISO WEEK" : "TODAY")
+                        anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                    }
+                    Tk.Tx {
+                        role: "num"
+                        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                        text: root.periodSum() > 0 ? FuiTokens.fmtTok(root.periodSum()) : "0"
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- TRD-03 trend ----------------------------------------
+    FuiFrame {
+        x: root.mg; y: root.row2Y
+        width: root.heroW; height: root.row2H
+        code: "TRD-03"
+        title: root.period === "week" ? "Trend / ISO weeks" : "Trend / 30 days"
+        meta: {
+            var r = root.trendRows();
+            return "src: tokens.json history · " + (r.length ? r[0].label : "—")
+                 + ".." + (r.length ? r[r.length - 1].label : "—") + " · " + root.ledgerStamp();
+        }
+
+        Item {
+            anchors.fill: parent
+
+            // legend — wrapping Flow in a reserved strip above the bars
+            Flow {
+                id: keyFlow
+                anchors { left: parent.left; top: parent.top; leftMargin: 58
+                          right: readRail.left; rightMargin: 12; topMargin: 2 }
+                spacing: 6
+                Repeater {
+                    model: root.legendLanes()
+                    delegate: Row {
+                        required property var modelData
+                        spacing: 4
+                        rightPadding: 8
+                        Canvas {
+                            width: 20; height: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: parent.modelData.col !== null
+                            property var md: parent.modelData
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.clearRect(0, 0, width, height);
+                                if (!md.col) return;
+                                ctx.strokeStyle = FuiTokens.css(md.col);
+                                ctx.lineWidth = 1.4;
+                                if (md.dash === "double") {
+                                    ctx.beginPath(); ctx.moveTo(0, 3); ctx.lineTo(width, 3); ctx.stroke();
+                                    ctx.beginPath(); ctx.moveTo(0, 7); ctx.lineTo(width, 7); ctx.stroke();
+                                } else {
+                                    ctx.setLineDash(md.dash || []);
+                                    ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(width, 5); ctx.stroke();
+                                    ctx.setLineDash([]);
+                                }
+                            }
+                            onMdChanged: requestPaint()
+                        }
+                        Tk.Tx { role: "tag"; text: String(parent.modelData.label) }
+                    }
+                }
+            }
+
+            Tk.IsoSkyline {
+                anchors { left: parent.left; right: readRail.left; top: parent.top
+                          bottom: parent.bottom; rightMargin: 10; topMargin: 46 }
+                rows: root.trendRows()
+                providers: root.stackLanes()
+            }
+
+            // right readout rail — window statistics only (no duplicated
+            // per-provider table; PRV-02 owns the breakdown)
+            Column {
+                id: readRail
+                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                width: Math.min(210, parent.width * 0.24)
+                spacing: 3
+                Tk.Tx { role: "hdr"; text: root.period === "week" ? "WK Σ" : "30D Σ" }
+                Item {
+                    width: parent.width; height: sumNum.implicitHeight
+                    Tk.Tx {
+                        id: sumNum
+                        role: "num"
+                        font.pixelSize: FuiTokens.px.big + 4
+                        anchors.left: parent.left
+                        text: {
+                            var s = root.trendStats().sum;
+                            return s >= 1000 ? (s / 1000).toFixed(2) : s.toFixed(0);
+                        }
+                    }
+                    Tk.Tx { role: "num"; tone: FuiTokens.ice; font.pixelSize: FuiTokens.px.mid
+                            text: root.trendStats().sum >= 1000 ? "B" : "M"
+                            anchors { left: sumNum.right; leftMargin: 6
+                                      bottom: sumNum.bottom; bottomMargin: 4 } }
+                }
+                Tk.MiniTable {
+                    width: parent.width
+                    header: false
+                    rowH: 16
+                    columns: [
+                        { "key": "nm", "label": "", "role": "dim" },
+                        { "key": "v",  "label": "", "align": "r" },
+                        { "key": "t",  "label": "", "align": "r", "role": "faint", "w": 52 }
+                    ]
+                    rows: {
+                        var s = root.trendStats();
+                        var bucket = root.period === "week" ? "/ wk" : "/ day";
+                        function fm(vv) {
+                            return vv >= 1000 ? (vv / 1000).toFixed(2) + "B"
+                                 : vv >= 10 ? vv.toFixed(1) + "M" : vv.toFixed(2) + "M";
+                        }
+                        return [
+                            { "nm": "avg" + bucket, "v": fm(s.n ? s.sum / s.n : 0), "t": "all" },
+                            { "nm": "avg" + bucket, "v": s.active ? fm(s.sum / s.active) : "—", "t": "act" },
+                            { "nm": "buckets", "v": s.active + " / " + s.n, "t": "live" },
+                            { "nm": "peak", "v": s.mx > 0 ? fm(s.mx) : "—", "t": s.mxl }
+                        ];
+                    }
+                }
+                Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
+                Tk.Tx {
+                    role: "cap"; tone: FuiTokens.faint
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: root.period === "week"
+                          ? "buckets = ISO weeks (Mon-start) · current week partial"
+                          : "buckets = local days · today partial · dashed footprint = no record"
+                }
+            }
+        }
+    }
+
+    // ---------------- LIM-04 limits ---------------------------------------
+    FuiFrame {
+        x: root.rightX; y: root.row2Y
+        width: root.rightW; height: root.row2H
+        code: "LIM-04"
+        title: "Limits / resets"
         meta: "src: tokens.json limits[] · " + root.ledgerStamp()
 
         Item {
             id: limGrid
             anchors.fill: parent
-            // real limit feeds only; providers with no limits[] collapse into
-            // the nfStrip line so the freed cells give the real cards more room
-            readonly property var cells: root.limitCells(5)
-            // auth-pending cells (frac null + warn + action) drop to a compact
-            // one-line strip — a full gauge card just to say "log in" wastes
-            // the grid; the freed room goes to the real cards + timeline
+            readonly property var cells: root.limitCells(4)
             readonly property var compactCells: cells.filter(function (c) {
                 return c.sev === "warn" && c.frac === null && c.action !== null;
             })
             readonly property var gridCells: cells.filter(function (c) {
                 return !(c.sev === "warn" && c.frac === null && c.action !== null);
             })
-            readonly property int nCells: gridCells.length + 1    // + LIM-BUS cell
-            readonly property int cols: nCells <= 3 ? Math.max(1, nCells)
-                                      : (nCells <= 4 ? 2 : 3)
+            readonly property int nCells: Math.min(4, gridCells.length)
+            readonly property int cols: 2
             readonly property int nRows: Math.ceil(nCells / cols)
             readonly property real stripH: compactCells.length > 0
                                            ? compactCells.length * 34 + 4 : 0
-            readonly property real nfH: root.noFeedProviders.length > 0 ? 22 : 0
-            // cards are capped at 224; whatever is left goes to the timeline
-            // (min 56) so an auth-pending day never leaves dead lanes
-            readonly property real cardsWant: nRows * 224 + Math.max(0, nRows - 1) * 9
-            readonly property real tlH: Math.max(56, Math.min(240,
-                    height - 4 - stripH - nfH - cardsWant - 28))
-            readonly property real cardsH: height - 4 - stripH - nfH - (20 + tlH) - 8
-            readonly property real ch2: Math.max(140, (cardsH - (nRows - 1) * 9) / nRows)
+            readonly property real nfH: root.noFeedProviders.length > 0 ? 20 : 0
+            readonly property real tlH: Math.max(46, Math.min(120, height * 0.24))
+            readonly property real cardsH: height - stripH - nfH - tlH - 30
+            readonly property real ch2: nRows > 0
+                    ? Math.max(120, (cardsH - (nRows - 1) * 9) / nRows) : 0
             readonly property real cw2: (width - 16 - (cols - 1) * 9) / cols
 
             // compact auth-pending rows: one line + login button each
@@ -1037,7 +1259,7 @@ Item {
             }
 
             Repeater {
-                model: limGrid.gridCells
+                model: limGrid.gridCells.slice(0, 4)
                 delegate: Tk.LimitCard {
                     required property int index
                     required property var modelData
@@ -1061,93 +1283,22 @@ Item {
                 }
             }
 
-            // LIM-BUS summary cell (last grid slot)
-            Item {
-                id: busCell
-                x: 8 + ((limGrid.nCells - 1) % limGrid.cols) * (limGrid.cw2 + 9)
-                y: 4 + limGrid.stripH
-                   + Math.floor((limGrid.nCells - 1) / limGrid.cols)
-                     * (limGrid.ch2 + 9)
-                width: limGrid.cw2
-                height: limGrid.ch2
-                Rectangle {
-                    anchors.fill: parent
-                    color: Qt.rgba(4/255, 6/255, 8/255, 0.35)
-                    border.width: 1
-                    border.color: FuiTokens.hair3
-                }
-                Column {
-                    anchors { fill: parent; margins: 8 }
-                    spacing: 3
-                    Item {
-                        width: parent.width; height: 13
-                        Tk.Tx {
-                            role: "tag"
-                            anchors { right: parent.right }
-                            text: {
-                                var b = root.limitBus();
-                                return b.alert + " / " + (b.alert + b.warn + b.na + b.ok) + " EXH";
-                            }
-                            tone: root.limitBus().alert > 0 ? FuiTokens.alert : FuiTokens.dim
-                            topPadding: 1; bottomPadding: 1; leftPadding: 4; rightPadding: 4
-                            Rectangle {
-                                z: -1; anchors.fill: parent
-                                color: "transparent"; border.width: 1
-                                border.color: root.limitBus().alert > 0
-                                              ? FuiTokens.tone(FuiTokens.alert, 0.6) : FuiTokens.hair2
-                            }
-                        }
-                    }
-                    Tk.Tx { role: "lbl"; text: "Rate limits"; tone: FuiTokens.white; topPadding: 4 }
-                    Tk.MiniTable {
-                        width: parent.width
-                        header: false
-                        rowH: 15
-                        columns: [
-                            { "key": "led", "label": "", "w": 12 },
-                            { "key": "nm",  "label": "", "role": "dim" },
-                            { "key": "n",   "label": "", "align": "r" }
-                        ]
-                        rows: {
-                            var b = root.limitBus();
-                            return [
-                                { "led": { "v": "●", "c": FuiTokens.alert },
-                                  "nm": "EXHAUSTED", "n": b.alert },
-                                { "led": { "v": "●", "c": FuiTokens.warn },
-                                  "nm": "AUTH PENDING", "n": b.warn },
-                                { "led": { "v": "●", "c": FuiTokens.ice },
-                                  "nm": "NO FEED", "n": b.na },
-                                { "led": { "v": "●", "c": FuiTokens.acid },
-                                  "nm": "NOMINAL", "n": b.ok }
-                            ];
-                        }
-                    }
-                }
-            }
-
-            // collapsed providers without a limits[] feed — one compact line,
-            // the freed cells went to the real cards above
+            // collapsed providers without a limits[] feed — one honest line
             Item {
                 visible: limGrid.nfH > 0
                 x: 8
                 y: 4 + limGrid.stripH + limGrid.nRows * (limGrid.ch2 + 9)
                 width: limGrid.width - 16
                 height: limGrid.nfH
-                Rectangle {
-                    anchors.fill: parent
-                    color: Qt.rgba(4/255, 6/255, 8/255, 0.35)
-                    border.width: 1
-                    border.color: FuiTokens.hair3
-                }
                 Tk.Tx {
-                    role: "cap"
-                    anchors { left: parent.left; leftMargin: 8
-                              right: parent.right; rightMargin: 8
+                    role: "cap"; tone: FuiTokens.faint
+                    anchors { left: parent.left; right: parent.right
                               verticalCenter: parent.verticalCenter }
-                    text: "Limits unavailable: " + root.noFeedProviders.join(" · ")
+                    text: "no limit feed: " + root.noFeedProviders.join(" · ")
+                    elide: Text.ElideRight
                 }
-                HoverHandler { id: stripHover }   // explains the strip on hover;
-                QQC.ToolTip {                     // no buttons, nothing swallowed
+                HoverHandler { id: stripHover }
+                QQC.ToolTip {
                     y: parent.height + 4
                     visible: stripHover.hovered
                     delay: 250
@@ -1163,381 +1314,21 @@ Item {
                     width: parent.width; height: 14
                     Tk.Tx { role: "lbl"; text: "RESET TIMELINE"; tone: FuiTokens.white
                             anchors.left: parent.left }
+                    Tk.Tx {
+                        role: "cap"; tone: FuiTokens.dim
+                        anchors { right: parent.right }
+                        text: {
+                            var b = root.limitBus();
+                            return b.alert + " exh · " + b.warn + " warn · "
+                                 + b.ok + " ok · " + b.na + " no feed";
+                        }
+                    }
                 }
                 Tk.ResetTimeline {
                     width: parent.width
                     height: limGrid.tlH
                     marks: root.resetMarks()
                     nowMs: root.nowMs
-                }
-            }
-        }
-    }
-
-    // ---------------- HST-03 skyline --------------------------------------
-    FuiFrame {
-        x: root.mg; y: root.row2Y
-        width: root.skyW; height: root.row2H
-        code: "HST-03"
-        title: "Skyline / 30 days"
-        meta: {
-            var r = root.skyRows(root.nowMs);
-            return "src: tokens.json history · " + (r.length ? r[0].label : "—")
-                 + ".." + (r.length ? r[r.length - 1].label : "—") + " · " + root.ledgerStamp();
-        }
-
-        Item {
-            anchors.fill: parent
-
-            // legend — a wrapping Flow with a reserved strip above the bars so
-            // the readable provider labels can never overlay the skyline
-            Flow {
-                id: keyFlow
-                anchors { left: parent.left; top: parent.top; leftMargin: 58
-                          right: readRail.left; rightMargin: 12; topMargin: 2 }
-                spacing: 6
-                Repeater {
-                    model: root.stackDef
-                    delegate: Row {
-                        required property var modelData
-                        spacing: 4
-                        rightPadding: 8
-                        Canvas {
-                            width: 20; height: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            property var md: parent.modelData
-                            onPaint: {
-                                var ctx = getContext("2d");
-                                ctx.clearRect(0, 0, width, height);
-                                ctx.strokeStyle = FuiTokens.css(md.col);
-                                ctx.lineWidth = 1.4;
-                                if (md.dash === "double") {
-                                    ctx.beginPath(); ctx.moveTo(0, 3); ctx.lineTo(width, 3); ctx.stroke();
-                                    ctx.beginPath(); ctx.moveTo(0, 7); ctx.lineTo(width, 7); ctx.stroke();
-                                } else {
-                                    ctx.setLineDash(md.dash || []);
-                                    ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(width, 5); ctx.stroke();
-                                    ctx.setLineDash([]);
-                                }
-                            }
-                            onMdChanged: requestPaint()
-                        }
-                        Tk.Tx { role: "tag"; text: String(parent.modelData.label) }
-                    }
-                }
-            }
-
-            Tk.IsoSkyline {
-                anchors { left: parent.left; right: readRail.left; top: parent.top
-                          bottom: parent.bottom; rightMargin: 10; topMargin: 46 }
-                rows: root.skyRows(root.nowMs)
-                providers: root.stackDef
-            }
-
-            // right readout rail
-            Column {
-                id: readRail
-                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
-                width: Math.min(232, parent.width * 0.28)
-                spacing: 3
-                Tk.Tx { role: "hdr"; text: "30D Σ" }
-                Item {
-                    width: parent.width; height: sumNum.implicitHeight
-                    Tk.Tx {
-                        id: sumNum
-                        role: "num"
-                        font.pixelSize: FuiTokens.px.big + 8
-                        anchors.left: parent.left
-                        text: {
-                            var r = root.skyRows(root.nowMs), s = 0;
-                            for (var i = 0; i < r.length; i++) s += r[i].total || 0;
-                            return (s / 1000).toFixed(2);
-                        }
-                    }
-                    Tk.Tx { role: "num"; tone: FuiTokens.ice; font.pixelSize: FuiTokens.px.mid
-                            text: "B"; anchors { left: sumNum.right; leftMargin: 6
-                                                 bottom: sumNum.bottom; bottomMargin: 4 } }
-                }
-                Tk.MiniTable {
-                    width: parent.width
-                    header: false
-                    rowH: 15
-                    columns: [
-                        { "key": "nm", "label": "", "role": "dim" },
-                        { "key": "v",  "label": "", "align": "r" },
-                        { "key": "t",  "label": "", "align": "r", "role": "faint", "w": 44 }
-                    ]
-                    rows: {
-                        var r = root.skyRows(root.nowMs);
-                        var s = 0, nz = 0, mx = 0, mxl = "", arr = [];
-                        for (var i = 0; i < r.length; i++) {
-                            var v = r[i].total || 0;
-                            arr.push(v); s += v;
-                            if (v > 0) nz++;
-                            if (v > mx) { mx = v; mxl = r[i].label; }
-                        }
-                        var sorted = arr.slice().sort(function (a, b) { return a - b; });
-                        var med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-                        function fm(vv) {
-                            return vv >= 1000 ? (vv / 1000).toFixed(2) + "B"
-                                 : vv >= 10 ? vv.toFixed(1) + "M" : vv.toFixed(2) + "M";
-                        }
-                        return [
-                            { "nm": "avg / day",     "v": fm(s / 30),        "t": "" },
-                            { "nm": "median / day",  "v": fm(med),           "t": "" },
-                            { "nm": "avg active day","v": nz ? fm(s / nz) : "—", "t": "" },
-                            { "nm": "active days",   "v": nz + " / 30",      "t": "" },
-                            { "nm": "peak day",      "v": fm(mx),            "t": mxl }
-                        ];
-                    }
-                }
-                Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3; visible: true }
-                Tk.Tx { role: "lbl"; text: "PER PROVIDER" }
-                Tk.MiniTable {
-                    width: parent.width
-                    header: false
-                    rowH: 15
-                    columns: [
-                        { "key": "prv", "label": "", "flex": 1 },
-                        { "key": "v",   "label": "", "align": "r", "w": 64 },
-                        { "key": "sh",  "label": "", "align": "r", "role": "code", "w": 46 }
-                    ]
-                    rows: {
-                        var r = root.skyRows(root.nowMs), tot = 0, pv = {};
-                        var i, j;
-                        for (i = 0; i < r.length; i++) {
-                            tot += r[i].total || 0;
-                            for (var k in r[i].parts) pv[k] = (pv[k] || 0) + r[i].parts[k];
-                        }
-                        var out = [];
-                        for (i = 0; i < root.stackDef.length; i++) {
-                            var kk = root.stackDef[i].key, vv = pv[kk] || 0;
-                            if (vv <= 0) continue;
-                            out.push({
-                                "prv": { "v": root.stackDef[i].label, "c": root.stackDef[i].col },
-                                "v":   { "v": vv >= 1000 ? (vv/1000).toFixed(2)+"B"
-                                            : vv.toFixed(1) + "M" },
-                                "sh":  { "v": tot > 0 ? (vv / tot * 100).toFixed(1) + "%" : "—" }
-                            });
-                        }
-                        return out;
-                    }
-                }
-                Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
-                Tk.Tx { role: "cap"; text: "dashed footprint = no record" }
-                Tk.Tx {
-                    role: "cap"; tone: FuiTokens.warn
-                    visible: text !== ""
-                    width: parent.width
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    text: {
-                        var lags = [];
-                        var today = root.isoDay(new Date(root.nowMs || Date.now()));
-                        var map = { "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
-                                    "devin": "Devin", "claude": "Claude", "codex": "Codex" };
-                        for (var pid in map) {
-                            var lh = root.lastHist(pid);
-                            if (lh && lh < today) lags.push(map[pid] + " updated " + lh.slice(5));
-                            else if (!lh) lags.push(map[pid] + " no rows");
-                        }
-                        return lags.join("\n");
-                    }
-                }
-            }
-        }
-    }
-
-    // ---------------- HST-04 heatmap --------------------------------------
-    FuiFrame {
-        x: root.rightX; y: root.row2Y
-        width: root.rightW; height: root.heatH
-        code: "HST-04"
-        title: "Heatmap / 26 weeks"
-        meta: "src: tokens.json history Σ incl. snap · log steps"
-
-        Item {
-            anchors.fill: parent
-            Tk.DayHeatmap {
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                width: parent.width - heatRail.width - 12
-                cells: root.heatCells(root.nowMs)
-                weeks: 26
-            }
-            Column {
-                id: heatRail
-                anchors { right: parent.right; top: parent.top }
-                width: Math.min(190, parent.width * 0.22)
-                spacing: 2
-                Tk.Tx { role: "cap"; text: "SCALE / DAY Σ"; tone: FuiTokens.dim }
-                Row {
-                    spacing: 3
-                    Repeater {
-                        model: ["0", "<10M", "10M", "50M", "200M", "1B+"]
-                        delegate: Item {
-                            id: legCell
-                            required property int index
-                            required property string modelData
-                            width: 30; height: 24
-                            Rectangle {
-                                anchors { left: parent.left; right: parent.right; top: parent.top }
-                                height: 11
-                                color: FuiTokens.tone(FuiTokens.ice,
-                                                      [0, 0.12, 0.24, 0.40, 0.62, 0.90][legCell.index])
-                                border.width: 1
-                                border.color: FuiTokens.tone(FuiTokens.ice, 0.3 + 0.1 * legCell.index)
-                            }
-                            Tk.Tx {
-                                role: "micro"; text: legCell.modelData
-                                anchors { top: parent.top; topMargin: 13
-                                          horizontalCenter: parent.horizontalCenter }
-                            }
-                        }
-                    }
-                }
-                Tk.Tx {
-                    role: "cap"; topPadding: 4
-                    text: {
-                        var s = root.heatStats(root.heatCells(root.nowMs));
-                        return "active " + s.act + " / " + s.days + " d";
-                    }
-                }
-                Tk.Tx {
-                    role: "cap"
-                    text: {
-                        var s = root.heatStats(root.heatCells(root.nowMs));
-                        return "26w Σ " + (s.sum >= 1000 ? (s.sum / 1000).toFixed(2) + "B"
-                                           : s.sum.toFixed(1) + "M");
-                    }
-                }
-                Tk.Tx {
-                    role: "cap"
-                    text: {
-                        var s = root.heatStats(root.heatCells(root.nowMs));
-                        return s.mx > 0 ? "max " + s.mxl + " " +
-                            (s.mx >= 1000 ? (s.mx / 1000).toFixed(2) + "B" : s.mx.toFixed(1) + "M")
-                            : "max —";
-                    }
-                }
-            }
-        }
-    }
-
-    // ---------------- SES-05 top sessions ---------------------------------
-    FuiFrame {
-        x: root.rightX; y: root.bot2Y
-        width: root.sesW; height: root.bot2H
-        code: "SES-05"
-        title: "Top Sessions"
-        meta: "src: tokens.json sessions[]"
-
-        Column {
-            anchors.fill: parent
-            spacing: 4
-            Tk.MiniTable {
-                width: parent.width
-                visible: root.sessionRows().length > 0
-                grid: true
-                rowH: 16
-                columns: [
-                    { "key": "ti",  "label": "SESSION", "flex": 1, "role": "dim" },
-                    { "key": "mo",  "label": "MODEL",   "w": 88, "role": "faint" },
-                    { "key": "iN",  "label": "INPUT",   "w": 70, "align": "r" }
-                ]
-                rows: root.sessionRows()
-            }
-            Tk.Tx {
-                role: "cap"; tone: FuiTokens.faint
-                visible: root.sessionRows().length === 0
-                width: parent.width
-                text: "— awaiting ledger sessions feed —"
-            }
-            Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3
-                        visible: root.sessionRows().length > 0 }
-            Item {
-                width: parent.width; height: 14
-                visible: root.sessionRows().length > 0
-                Tk.Tx {
-                    role: "cap"
-                    anchors.left: parent.left
-                    text: {
-                        var s = root.sessionStats();
-                        return "top" + root.sessionRows().length + " Σ "
-                             + FuiTokens.fmtTok(s.tin);
-                    }
-                }
-                Tk.Tx {
-                    role: "cap"; anchors { right: parent.right }
-                    text: {
-                        var s = root.sessionStats();
-                        return s.n + " sess / " + s.bots + " bots";
-                    }
-                }
-            }
-            Tk.Tx {
-                role: "cap"; tone: FuiTokens.faint
-                visible: root.sessionRows().length > 0
-                text: "last 14 days · sorted by input tokens"
-            }
-        }
-    }
-
-    // ---------------- LDG-06 ledger ---------------------------------------
-    FuiFrame {
-        x: root.ledX; y: root.bot2Y
-        width: root.ledW; height: root.bot2H
-        code: "LDG-06"
-        title: "Ledger"
-        meta: "src: tokens.json · " + root.ledgerStamp()
-
-        Column {
-            anchors.fill: parent
-            spacing: 4
-            Tk.MiniTable {
-                width: parent.width
-                grid: true
-                rowH: 16
-                columns: [
-                    { "key": "prv",  "label": "PROVIDER",  "w": 108 },
-                    { "key": "wi",   "label": "WEEK IN",   "align": "r" },
-                    { "key": "wo",   "label": "WEEK OUT",  "align": "r" },
-                    { "key": "mi",   "label": "MONTH IN",  "align": "r" },
-                    { "key": "mc",   "label": "MONTH $",   "align": "r", "role": "dim" }
-                ]
-                rows: root.ledgerRows()
-            }
-            Rectangle { width: parent.width; height: 1; color: FuiTokens.hair3 }
-            Item {
-                width: parent.width; height: 14
-                Tk.Tx {
-                    role: "cap"
-                    anchors.left: parent.left
-                    text: {
-                        var s = root.costSumMonth();
-                        return "known cost Σ month " + (s !== null ? root.fmtMoney(s) : "n/a");
-                    }
-                }
-                Tk.Tx {
-                    role: "cap"; anchors { right: parent.right }
-                    text: {
-                        var mo = root.bk("opencode", "month");
-                        return mo["msgs"] !== undefined && mo["msgs"] !== null
-                               ? "OpenCode CLI " + mo["msgs"] + " msgs/mo" : "";
-                    }
-                }
-            }
-            Tk.Tx {
-                role: "cap"; tone: FuiTokens.faint
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: {
-                    var l = root.laneSplit("codex", "week");
-                    var mo = root.bk("codex", "month");
-                    var s = "Codex: " + FuiTokens.fmtTok(l.hrm) + " events";
-                    if (l.snap !== null) s += " + " + FuiTokens.fmtTok(l.snap) + " snapshot";
-                    if (mo["total"]) s += " · month snapshot " + FuiTokens.fmtTok(mo["total"]);
-                    return s + " — separate lanes, never summed";
                 }
             }
         }

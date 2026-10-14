@@ -37,7 +37,15 @@ KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
          "haze": "team"}
 LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
           "devin": "Devin", "haze": "Haze team API",
-          "claude": "Claude", "codex": "Codex"}
+          "claude": "Claude", "codex": "Codex",
+          "custom": "Custom endpoint", "nous": "Nous",
+          "ollama": "Ollama", "ollama-cloud": "Ollama cloud",
+          "cursor": "Cursor", "clinepass": "ClinePass",
+          "kimi-coding": "Kimi coding", "deepseek": "DeepSeek",
+          "conductor-relay": "Conductor relay", "xai-oauth": "xAI",
+          "minimax-oauth": "MiniMax", "gmi": "GMI",
+          "bonsai-local": "Bonsai local", "october": "October",
+          "moa": "MoA", "auto": "Auto-picked", "unattributed": "Unattributed"}
 # Hermes billing_provider -> ledger id. Omarchy's codex/claude snapshot
 # collectors never scan Hermes paths (0 hits grepping for hermes), so folding
 # these onto the merged ids cannot double-count the snapshot lane.
@@ -45,9 +53,20 @@ LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
 # opencode.db lane (collect_opencode) and the Hermes crew lane are disjoint
 # event feeds of the same product — rendered as separate labelled lanes
 # (OCG crew / OCG CLI on DP-2), never summed silently.
+# Renames only — every billing_provider still folds into its own lane via
+# hermes_lane(); providers absent from this map keep their own sanitised id,
+# so a newly added upstream can never silently drop out of the ledger again.
 HERMES_PROVIDER_MAP = {"anthropic": "claude", "openai-codex": "codex",
                        "opencode-go": "opencode-go"}
 SID_TS = re.compile(r"^(\d{8})_(\d{6})")          # hermes session_id prefix
+_LANE_CLEAN = re.compile(r"[^a-z0-9-]+")
+
+
+def hermes_lane(prov):
+    """billing_provider -> ledger id: the rename map first, else the
+    sanitised provider name itself — every provider gets a lane."""
+    s = _LANE_CLEAN.sub("-", str(prov or "").strip().lower()).strip("-")
+    return HERMES_PROVIDER_MAP.get(s, s or "unattributed")
 
 
 def denied(path):
@@ -446,21 +465,20 @@ def _smu_fold(led, profile, db, row):
     incremental scan may overlap freely — only unrecorded tuples accrue."""
     (sid, model, prov, base, mode, task, tin_, tout_, rd_, wr_,
      cost, cstat, seen) = row
-    p = HERMES_PROVIDER_MAP.get(str(prov))
-    if p:
-        if not isinstance(cost, (int, float)) or cost <= 0 or \
-                str(cstat) in ("unknown", "included"):
-            cost = None
-        # in = input+cache_read+cache_write (SCHEMA: cache is prompt-side);
-        # out = output_tokens only (Anthropic/Responses already contain
-        # reasoning in it — adding reasoning_tokens would double count).
-        # No msgs=: Ledger.add deltas tin/tout/cost/acu but not msgs.
-        rid = "hm:%s:%s:%s:%s:%s:%s:%s" % (
-            profile, sid, model, prov, base or "-", mode or "-",
-            task or "-")
-        led.add(p, rid, parse_ts(seen),
-                tin=(tin_ or 0) + (rd_ or 0) + (wr_ or 0),
-                tout=tout_ or 0, cost=cost, model=model, path=db)
+    p = hermes_lane(prov)
+    if not isinstance(cost, (int, float)) or cost <= 0 or \
+            str(cstat) in ("unknown", "included"):
+        cost = None
+    # in = input+cache_read+cache_write (SCHEMA: cache is prompt-side);
+    # out = output_tokens only (Anthropic/Responses already contain
+    # reasoning in it — adding reasoning_tokens would double count).
+    # No msgs=: Ledger.add deltas tin/tout/cost/acu but not msgs.
+    rid = "hm:%s:%s:%s:%s:%s:%s:%s" % (
+        profile, sid, model, prov, base or "-", mode or "-",
+        task or "-")
+    led.add(p, rid, parse_ts(seen),
+            tin=(tin_ or 0) + (rd_ or 0) + (wr_ or 0),
+            tout=tout_ or 0, cost=cost, model=model, path=db)
     return float(seen or 0)
 
 
@@ -482,16 +500,21 @@ def collect_hermes(led):
     — outside every rendered window, left uncorrected rather than coupling
     the two collectors. `opencode-go` rows land on their own ledger id (the
     Hermes crew lane — disjoint from the local opencode.db `opencode` lane,
-    both rendered as labelled lanes on DP-2). `nous`/`ollama-cloud` rows are
-    still skipped (no ledger id; folding them is a product decision).
+    both rendered as labelled lanes on DP-2).
 
-    Provider-map migration (cursor v2): each store records which
+    Every billing_provider folds into a lane (hermes_lane): the map only
+    renames the three merged ids, everything else keeps its sanitised
+    provider name — `custom` (the chief* localhost endpoints), `nous`,
+    `ollama-cloud`, `cursor` and friends are lanes of their own instead of
+    being dropped. Lanes must never silently vanish: a provider Hermes adds
+    tomorrow appears on the deck on the next pass.
+
+    Provider-fold migration (cursor v2): each store records which
     billing_providers it has folded under `sqlite.hermes.__folded__`.
-    Rows for a provider that joined the map after this store's mark already
-    advanced were scanned past without folding — the version-1 cursor that
-    predates `opencode-go` is exactly that case — so a newly mapped provider
-    gets a one-time backfill of its OWN rows (`billing_provider IN (new)`),
-    while already-mapped providers keep their normal incremental mark.
+    Providers present in the store but not yet folded — whether newly
+    mapped or newly used — get a one-time backfill of their OWN rows
+    (`billing_provider IN (new)`), while already-folded providers keep
+    their normal incremental mark.
     Rid-dedup guarantees the two passes never double-count.
     """
     marks = led.cur.setdefault("sqlite", {}).setdefault("hermes", {})
@@ -510,16 +533,18 @@ def collect_hermes(led):
             mark = float(marks.get(str(db)) or 0)
             hi = mark
             done = set(folded.get(str(db)) or [])
-            new = sorted(set(HERMES_PROVIDER_MAP) - done)
-            # Register the store under both ids when it holds ANY mapped
-            # provider row, so tokens.json `sources` stays stable across warm
-            # cursor passes (a delta of zero must not erase the declared feed).
-            if con.execute("SELECT 1 FROM session_model_usage WHERE"
-                           " billing_provider IN (%s) LIMIT 1"
-                           % ",".join("?" * len(HERMES_PROVIDER_MAP)),
-                           tuple(HERMES_PROVIDER_MAP)).fetchone():
-                for led_id in set(HERMES_PROVIDER_MAP.values()):
-                    led.src(led_id, db)
+            try:
+                present = {r[0] for r in con.execute(
+                    "SELECT DISTINCT COALESCE(billing_provider, '')"
+                    " FROM session_model_usage")}
+            except sqlite3.Error:
+                present = set()
+            new = sorted(present - done)
+            # Register the store under each lane it feeds, so tokens.json
+            # `sources` stays stable across warm cursor passes (a delta of
+            # zero must not erase the declared feed).
+            for bp in present:
+                led.src(hermes_lane(bp), db)
             cols = ("session_id, model, billing_provider, billing_base_url,"
                     " billing_mode, task, input_tokens, output_tokens,"
                     " cache_read_tokens, cache_write_tokens,"
@@ -530,7 +555,7 @@ def collect_hermes(led):
                 # deduped anyway, but skipping them keeps the pass bounded
                 # even if `seen` was pruned at SEEN_CAP.
                 qb = ("SELECT %s FROM session_model_usage"
-                      " WHERE billing_provider IN (%s)"
+                      " WHERE COALESCE(billing_provider, '') IN (%s)"
                       % (cols, ",".join("?" * len(new))))
                 try:
                     for row in con.execute(qb, tuple(new)):
@@ -539,7 +564,7 @@ def collect_hermes(led):
                 except sqlite3.Error:
                     pass      # stays unfolded -> retried on the next pass
             elif mark == 0:
-                done.update(HERMES_PROVIDER_MAP)   # full scan below covers all
+                done.update(present)   # full scan below covers all present
             # No index on last_seen, but the table is ~5k rows (the 3 GB of the
             # db lives in messages/FTS), so the filtered scan is milliseconds.
             q = ("SELECT %s FROM session_model_usage"

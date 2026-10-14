@@ -111,7 +111,7 @@ set or zero tokens are skipped.
 | `opencode` | `$XDG_DATA_HOME/opencode/opencode.db` — `message.data` JSON `tokens{input,output,reasoning,cache{read,write}}` + `cost`; fallback `session.tokens_*`/`cost` columns | `oc:` + `message.id` / `ocs:` + `session.id` | `time_updated` / `time_created` (epoch ms) |
 | `devin` | `~/.local/share/devin/cli/sessions.db` — `message_nodes.chat_message` JSON `metadata.metrics{input_tokens,output_tokens,…}`, `metadata.committed_acu_cost`; plus `cli/transcripts/*.json` `steps[].metadata.committed_acu_cost` if present | `dv:` + session_id:row_id / `dvt:` + file:step | `created_at` (epoch s/ms) |
 | `claude` (merge) | `~/.claude/projects/**/*.jsonl`, `~/.local/share/claude/**/*.jsonl` — per-line `message.usage{input_tokens,output_tokens,cache_*}` | `cl:` + uuid/message.id/requestId | line `timestamp` (ISO) |
-| `claude`/`codex`/`opencode-go` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, `opencode-go`→`opencode-go` (own lane), other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
+| `claude`/`codex`/`opencode-go` (merge) + every other `billing_provider` | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db`: `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider` folds through `hermes_lane()`: `anthropic`→claude, `openai-codex`→codex, `opencode-go`→`opencode-go`, any other provider keeps its own sanitised id (`custom`, `nous`, `cursor`, `unattributed`, …) so no provider is silently dropped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
 | `haze` | `~/.hermes/usage/*.json` rollups (`input_tokens`,`output_tokens`,`cache_*`,`reasoning_tokens`,`estimated_cost_usd`,`session_id`,`provider`) + `~/.hermes/cron/usage_audit.jsonl` (`prompt_tokens`,`completion_tokens`,`fire_id`,`ts`; error rows skipped) + `~/.local/share/haze/**/*.{json,jsonl}` same shapes | `hz:`/`hzf:`/`hzl:`/`hzs:` + session_id/fire_id/file | `session_id` `YYYYMMDD_HHMMSS` prefix → file mtime → `undated`; audit rows `ts` |
 
 Hermes/state.db overlap with `haze`: the 8 stale (Aug 10) `~/.hermes/usage/*.json`
@@ -138,11 +138,13 @@ decides sub vs api; revisit `kind` if the HUD cares.
 ```
 
 `__folded__` (v2): per-store set of Hermes `billing_provider`s already
-covered. A provider added to `HERMES_PROVIDER_MAP` later gets a one-time
-backfill of its own rows (`WHERE billing_provider IN (new)`); the
-incremental mark alone cannot reach rows scanned past while unmapped.
-Rid-dedup keeps the two passes disjoint. A v1 cursor has no `__folded__`,
-so every mapped provider counts as new and backfills once.
+covered. A provider that appears in a store after its mark advanced gets a
+one-time backfill of its own rows (`WHERE COALESCE(billing_provider,'')
+IN (new)`), whether it joined `HERMES_PROVIDER_MAP` late or Hermes simply
+started emitting it; the incremental mark alone cannot reach rows scanned
+past while unmapped. Rid-dedup keeps the two passes disjoint. A v1 cursor
+has no `__folded__`, so every present provider counts as new and
+backfills once.
 
 Idempotency: records keyed by rid accumulate only the *delta* vs the stored
 tuple — safe for opencode rows whose token fields update mid-stream. Omarchy
