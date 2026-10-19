@@ -45,13 +45,23 @@ DEVIN_SQL = (
     + _J % "json_extract(chat_message,'$.metadata.committed_acu_cost')" + " AS acu, "
     + _J % "json_extract(chat_message,'$.metadata.generation_model')" + " AS model "
     "FROM message_nodes) WHERE metrics IS NOT NULL OR acu IS NOT NULL")
-REMOTE_CMD = ('for f in %s/state.db %s/profiles/*/state.db; do'
+# One read per store: `-readonly` first; a WAL store whose -wal/-shm are
+# gone (gateway stopped) fails with "unable to open database file (14)", so
+# fall back to the `file:...?immutable=1` URI (db file only, no WAL). A store
+# that fails both ways is UNREADABLE -> exit nonzero -> the pull keeps the
+# previous snapshot instead of writing a partial one that drops Mac lanes.
+_SQLITE = ('sq() { o=$(sqlite3 -readonly -json "$1" "$2" 2>/dev/null) &&'
+           ' { printf "%s\\n" "$o"; return 0; };'
+           ' sqlite3 -json "file:$1?immutable=1" "$2"; };')
+REMOTE_CMD = (_SQLITE +
+              ' for f in %s/state.db %s/profiles/*/state.db; do'
               ' [ -f "$f" ] || continue; echo "@@$f";'
-              ' sqlite3 -readonly -json "$f" %s; echo; done;'
+              ' sq "$f" %s || exit 3; echo; done;'
               ' if [ -f %s ]; then echo "@@%s";'
-              ' sqlite3 -readonly -json %s %s; echo; fi'
+              ' sq %s %s || exit 4; echo; fi'
               % (REMOTE_ROOT, REMOTE_ROOT, shlex.quote(SQL),
-                 DEVIN_DB, DEVIN_TAG, DEVIN_DB, shlex.quote(DEVIN_SQL)))
+                 DEVIN_DB, DEVIN_TAG, shlex.quote(DEVIN_DB),
+                 shlex.quote(DEVIN_SQL)))
 
 
 def _profile(db_path):
@@ -93,6 +103,11 @@ def run():
         raise RuntimeError("ssh rc=%s: %s"
                            % (out.returncode, out.stderr.strip()[:200]))
     recs = parse(out.stdout)     # raises on malformed JSON -> nothing written
+    if not recs:
+        # an empty snapshot means every store came back unreadable/empty --
+        # writing it would wipe the Mac lanes in the HUD. Keep the previous
+        # file and fail loudly instead.
+        raise RuntimeError("empty snapshot from %s" % REMOTE_HOST)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     tmp = OUT_DIR / (REMOTE_HOST + ".jsonl.tmp")
     with open(tmp, "w") as fh:
