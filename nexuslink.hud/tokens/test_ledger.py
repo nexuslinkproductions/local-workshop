@@ -22,16 +22,17 @@ ledger._smu_fold(led, "mac:default", "x",
                   None, None, TS), suffix="@mac")
 assert "codex@mac" in led.days and "codex" not in led.days
 
-# LIVE_PROVIDERS filters build() output; cursor keeps hidden providers
+# LIVE_PROVIDERS / REMOTE_PROVIDERS filter build() output; cursor keeps the rest
 led = ledger.Ledger({})
-led.add("haze", "hz:1", NOW, 100, 100)
-led.add("custom", "hm:x", NOW, 100, 100)
-led.add("claude", "cl:1", NOW, 1, 1)
-led.add("claude@mac", "x", NOW, 1, 1)
+for p in ("haze", "custom", "fireworks", "fireworks@mac", "codex@mac",
+          "claude@mac", "codex", "claude", "devin", "opencode",
+          "opencode-go", "devin@mac", "opencode-go@mac"):
+    led.add(p, "rid:" + p, NOW, 1, 1)
 out = ledger.build(led, NOW)
-assert set(out["providers"]) == {"claude", "claude@mac"}
-assert set(out["history"]) == {"claude", "claude@mac"}
-assert "haze" in led.days and "custom" in led.days
+assert set(out["providers"]) == {"claude", "codex", "devin", "opencode",
+                                 "opencode-go", "devin@mac", "opencode-go@mac"}
+assert set(out["history"]) == set(out["providers"])
+assert "haze" in led.days and "custom" in led.days and "fireworks" in led.days
 
 assert ledger._label("codex@mac") == "Codex (mac)"
 assert ledger._label("codex") == "Codex"
@@ -43,27 +44,39 @@ sample = ("@@/Users/m/.hermes/state.db\n"
           '"input_tokens":10,"output_tokens":5,"cache_read_tokens":0,'
           '"cache_write_tokens":0,"estimated_cost_usd":null,'
           '"cost_status":"included","last_seen":1787000000.0}]\n'
-          "@@/Users/m/.hermes/profiles/levi/state.db\n\n")
+          "@@/Users/m/.hermes/profiles/levi/state.db\n\n"
+          "@@devin\n"
+          '[{"row_id":7,"session_id":"sA","created_at":1787000000,'
+          '"metrics":"{\\"input_tokens\\":100,\\"output_tokens\\":20}",'
+          '"acu":0.5,"model":"m"}]\n')
 recs = pull_remote.parse(sample)
-assert len(recs) == 1 and recs[0]["profile"] == "default" \
-    and recs[0]["input_tokens"] == 10
+assert len(recs) == 2
+assert recs[0]["profile"] == "default" and recs[0]["input_tokens"] == 10
+assert recs[1]["kind"] == "devin" and recs[1]["row_id"] == 7
 assert pull_remote.parse("@@/x/profiles/levi/state.db\n\n") == []
 
-# collect_remote: one jsonl record -> codex@mac with in/out; idempotent
+# collect_remote: session_model_usage row -> codex@mac; devin row -> devin@mac;
+# both idempotent on re-feed
 rdir = Path(TMP) / "nexuslink" / "remote"
 rdir.mkdir(parents=True)
-(rdir / "mac.jsonl").write_text(
-    json.dumps({"profile": "default", "session_id": "s1", "model": "m",
-                "billing_provider": "openai-codex", "billing_base_url": None,
-                "billing_mode": "sub", "task": "chat", "input_tokens": 10,
-                "output_tokens": 5, "cache_read_tokens": 0,
-                "cache_write_tokens": 0, "estimated_cost_usd": None,
-                "cost_status": "included", "last_seen": TS})
-    + "\nnot json\n")
+smu = {"profile": "default", "session_id": "s1", "model": "m",
+       "billing_provider": "openai-codex", "billing_base_url": None,
+       "billing_mode": "sub", "task": "chat", "input_tokens": 10,
+       "output_tokens": 5, "cache_read_tokens": 0, "cache_write_tokens": 0,
+       "estimated_cost_usd": None, "cost_status": "included", "last_seen": TS}
+dev = {"kind": "devin", "row_id": 7, "session_id": "sA",
+       "created_at": 1787000000,
+       "metrics": "{\"input_tokens\":100,\"output_tokens\":20}",
+       "acu": 0.5, "model": "m"}
+(rdir / "mac.jsonl").write_text(json.dumps(smu) + "\n" + json.dumps(dev)
+                                + "\nnot json\n")
 led = ledger.Ledger({})
 ledger.collect_remote(led)
 day = list(led.days["codex@mac"].values())[0]
 assert (day["in"], day["out"]) == (10, 5)
+dday = list(led.days["devin@mac"].values())[0]
+assert (dday["in"], dday["out"], round(dday["acu"], 2)) == (100, 20, 0.5)
+assert "dv:mac:sA:7" in led.seen["devin@mac"]
 before = json.dumps(led.days, sort_keys=True)
 ledger.collect_remote(led)
 assert json.dumps(led.days, sort_keys=True) == before

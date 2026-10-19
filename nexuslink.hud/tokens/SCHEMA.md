@@ -18,16 +18,18 @@ HUD renders `tokens.json` only — the cursor is internal.
 }
 ```
 
-Provider ids: `build()` output is allow-listed by `LIVE_PROVIDERS` —
-`claude`, `codex`, `devin`, `fireworks`, `opencode`, `opencode-go` — plus
-their remote lanes `<id>@<host>` (e.g. `claude@mac`, `codex@mac`,
-`opencode-go@mac`), fed from `remote/<host>.jsonl` written by
-`pull_remote.py` (systemd timer every 5 min, full snapshot per run; units
-in `systemd/`, not installed). `<id>@<host>` kind = the base id's kind;
-label = base label + ` (<host>)`; rids read `hm:<host>:<profile>:…`.
-Cursor rows for other providers (haze, legacy ids) are kept but hidden,
-not deleted. Unknown/missing sources are simply omitted — an absent
-provider key means "no local feed".
+Provider ids: `build()` output is allow-listed. Local ids must be in
+`LIVE_PROVIDERS` — `claude`, `codex`, `devin`, `opencode`, `opencode-go`.
+Remote lanes `<id>@<host>` are emitted only when `<id>` is in
+`REMOTE_PROVIDERS` — `opencode-go@mac`, `devin@mac` — fed from
+`remote/<host>.jsonl` written by `pull_remote.py` (systemd timer every
+5 min, full snapshot per run; units in `systemd/`, not installed).
+Everything else (`fireworks`, `haze`, `codex@mac`, `claude@mac`, legacy
+ids) stays in the cursor but is not emitted. `<id>@<host>` kind = the base
+id's kind; label = base label + ` (<host>)`; rids read
+`hm:<host>:<profile>:…` (session_model_usage) or `dv:<host>:<session>:<row>`
+(devin). Unknown/missing sources are simply omitted — an absent provider
+key means "no local feed".
 
 ## Provider object
 
@@ -61,8 +63,7 @@ Bucket semantics:
   quantity: render them separately, never add `total` into `in`+out, and
   never treat one as a corrected version of the other. `build()`'s
   snapshot-only nulling (`in: null, out: null`) no longer applies to a
-  lane pair; it still applies to providers with no event feed at all
-  (`fireworks`).
+  lane pair; it still applies to providers with no event feed at all.
 - `day` = local today; `week` = ISO week (Mon-start) containing today;
   `month` = calendar month. Windows are computed from record timestamps.
 - Snapshot-only providers (no per-event feed) emit `"in": null, "out": null`
@@ -120,6 +121,7 @@ skipped.
 | `claude` (merge) | `~/.claude/projects/**/*.jsonl`, `~/.local/share/claude/**/*.jsonl` — per-line `message.usage{input_tokens,output_tokens,cache_*}` | `cl:` + uuid/message.id/requestId | line `timestamp` (ISO) |
 | `claude`/`codex`/`opencode-go` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, `opencode-go`→`opencode-go` (own lane), other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
 | `<id>@<host>` | `$XDG_STATE_HOME/nexuslink/remote/<host>.jsonl` — full snapshot per pull, one JSON record per `session_model_usage` row (`profile` + the 13 columns), written by `pull_remote.py` over ssh; same provider map | `hm:` + `<host>:` + profile:session_id:… (same tuple), delta-folded via `seen` | `last_seen` (epoch s) |
+| `devin@<host>` | same `remote/<host>.jsonl`, records tagged `"kind": "devin"`: one per Devin message row from the host's `~/.local/share/devin/cli/sessions.db` `message_nodes` (read-only, same ssh call). Fields: `row_id`, `session_id`, `created_at`, `metrics` (`metadata.metrics`, else `metadata.usage`), `acu` (`metadata.committed_acu_cost`), `model` (`metadata.generation_model`). Ledger reads them with `_metrics()` exactly as `collect_devin` does | `dv:<host>:` + session_id:row_id, dedupe via `seen` | `created_at` (epoch s/ms) |
 
 `kind` mapping: claude/codex/devin/opencode/opencode-go → `sub`,
 fireworks → `api`; `<id>@<host>` inherits the base id's kind. opencode is

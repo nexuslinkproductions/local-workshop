@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""pull_remote — snapshot a remote host's Hermes session_model_usage rows.
+"""pull_remote — snapshot a remote host's Hermes and Devin usage rows.
 
 One ssh per run: a remote POSIX loop prints an `@@<path>` header before
-each store's `sqlite3 -readonly -json` output; the merged stream is parsed
-into records ({"profile": <name>, ...13 columns}) and written atomically
-to $XDG_STATE_HOME/nexuslink/remote/<host>.jsonl, one JSON object per
-line. Full snapshot per run — ledger's rid-dedup makes re-feeding
-identical tuples harmless. On any failure the previous file is kept.
+each Hermes store's `sqlite3 -readonly -json` output (session_model_usage
+rows -> {"profile": <name>, ...13 columns}); then an `@@devin` section with
+the Devin CLI sessions.db message rows (`kind: "devin"`, metrics extracted
+on the Mac exactly as ledger.collect_devin reads them). Merged records are
+written atomically to $XDG_STATE_HOME/nexuslink/remote/<host>.jsonl, one
+JSON object per line. Full snapshot per run — ledger's rid-dedup makes
+re-feeding identical tuples harmless. On any failure the previous file is kept.
 Stdlib only.
 """
 import argparse
@@ -21,6 +23,8 @@ from ledger import HERMES_PROVIDER_MAP
 
 REMOTE_HOST = "mac"
 REMOTE_ROOT = "/Users/marcelspatz/.hermes"
+DEVIN_DB = "/Users/marcelspatz/.local/share/devin/cli/sessions.db"
+DEVIN_TAG = "devin"
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or
                   Path.home() / ".local/state").expanduser()
 OUT_DIR = STATE_HOME / "nexuslink" / "remote"
@@ -30,10 +34,24 @@ COLS = ("session_id, model, billing_provider, billing_base_url,"
         " estimated_cost_usd, cost_status, last_seen")
 SQL = ("SELECT %s FROM session_model_usage WHERE billing_provider IN (%s)"
        % (COLS, ",".join("'%s'" % p for p in HERMES_PROVIDER_MAP)))
+# metrics = metadata.metrics (else metadata.usage), acu/model = metadata
+# fields — the inputs collect_devin's _metrics() reads. CASE guards bad JSON.
+_J = "CASE WHEN json_valid(chat_message) THEN %s END"
+DEVIN_SQL = (
+    "SELECT row_id, session_id, created_at, metrics, acu, model FROM ("
+    "SELECT row_id, session_id, created_at, "
+    + _J % "COALESCE(json_extract(chat_message,'$.metadata.metrics'),"
+           " json_extract(chat_message,'$.metadata.usage'))" + " AS metrics, "
+    + _J % "json_extract(chat_message,'$.metadata.committed_acu_cost')" + " AS acu, "
+    + _J % "json_extract(chat_message,'$.metadata.generation_model')" + " AS model "
+    "FROM message_nodes) WHERE metrics IS NOT NULL OR acu IS NOT NULL")
 REMOTE_CMD = ('for f in %s/state.db %s/profiles/*/state.db; do'
               ' [ -f "$f" ] || continue; echo "@@$f";'
-              ' sqlite3 -readonly -json "$f" %s; echo; done'
-              % (REMOTE_ROOT, REMOTE_ROOT, shlex.quote(SQL)))
+              ' sqlite3 -readonly -json "$f" %s; echo; done;'
+              ' if [ -f %s ]; then echo "@@%s";'
+              ' sqlite3 -readonly -json %s %s; echo; fi'
+              % (REMOTE_ROOT, REMOTE_ROOT, shlex.quote(SQL),
+                 DEVIN_DB, DEVIN_TAG, DEVIN_DB, shlex.quote(DEVIN_SQL)))
 
 
 def _profile(db_path):
@@ -48,7 +66,10 @@ def parse(text):
 
     def flush():
         body = "".join(buf).strip()
-        if path is not None and body:
+        if path == DEVIN_TAG and body:
+            for r in json.loads(body):
+                recs.append({"kind": "devin", **r})
+        elif path is not None and body:
             for r in json.loads(body):
                 recs.append({"profile": _profile(path), **r})
 
@@ -60,6 +81,7 @@ def parse(text):
             buf.append(line)
     flush()
     return recs
+
 
 
 def run():

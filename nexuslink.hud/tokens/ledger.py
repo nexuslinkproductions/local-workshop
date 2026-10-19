@@ -36,17 +36,22 @@ KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
          "opencode": "sub", "opencode-go": "sub", "devin": "sub"}
 LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
           "devin": "Devin", "claude": "Claude", "codex": "Codex"}
-# Output allow-list: the cursor keeps every provider's data — only
-# build() output is filtered to these ids (or `<id>@<host>`). haze is
-# not in it.
-LIVE_PROVIDERS = {"claude", "codex", "devin", "fireworks",
-                  "opencode", "opencode-go"}
+# Output allow-list: the cursor keeps every provider's data — only build()
+# output is filtered. Local ids must be in LIVE_PROVIDERS; remote lanes
+# `<id>@<host>` must have their base in REMOTE_PROVIDERS, else dropped.
+LIVE_PROVIDERS = {"claude", "codex", "devin", "opencode", "opencode-go"}
+REMOTE_PROVIDERS = {"opencode-go", "devin"}
 
 
 def _label(p):
     base, _, host = p.partition("@")
     lab = LABELS.get(base, base)
     return "%s (%s)" % (lab, host) if host else lab
+
+
+def _live(p):
+    base, _, host = p.partition("@")
+    return base in (REMOTE_PROVIDERS if host else LIVE_PROVIDERS)
 
 
 # Hermes billing_provider -> ledger id. Omarchy's codex/claude snapshot
@@ -496,13 +501,27 @@ def collect_hermes(led):
             con.close()
 
 
+def _remote_devin(led, prov, path, rec):
+    """One Mac Devin message row (pull_remote kind=devin) -> `devin@<host>`."""
+    meta = {"metrics": _json(rec.get("metrics")),
+            "committed_acu_cost": rec.get("acu"),
+            "generation_model": rec.get("model")}
+    tin, tout, acu, model = _metrics({"metadata": meta})   # same as collect_devin
+    led.add(prov, "dv:%s:%s:%s" % (path.stem, rec.get("session_id"),
+                                   rec.get("row_id")),
+            parse_ts(rec.get("created_at")), tin, tout, None, acu=acu,
+            model=model, path=path)
+
+
 def collect_remote(led):
     """remote/<host>.jsonl pull snapshots -> `<base-prov>@<host>` lanes.
 
-    Each file is a full snapshot of one host's session_model_usage rows
-    (written by pull_remote.py over ssh); rid-dedup makes re-feeding it
-    harmless. `profile` becomes `<host>:<profile>` inside the rid —
-    cross-host rids cannot collide; the provider id gains `@<host>`."""
+    Each file is a full snapshot of one host (written by pull_remote.py over
+    ssh); rid-dedup makes re-feeding it harmless. Records are either
+    session_model_usage rows (`<id>@<host>` via the Hermes fold) or
+    `kind: "devin"` message rows -> `devin@<host>`. `profile` becomes
+    `<host>:<profile>` inside the rid; devin rids are `dv:<host>:sid:row`,
+    so cross-host rids cannot collide."""
     rdir = STATE_HOME / "nexuslink" / "remote"
     for path in sorted(rdir.glob("*.jsonl")) if rdir.is_dir() else []:
         suffix = "@" + path.stem
@@ -517,6 +536,9 @@ def collect_remote(led):
                 except ValueError:
                     continue
                 if not isinstance(rec, dict):
+                    continue
+                if rec.get("kind") == "devin":
+                    _remote_devin(led, "devin" + suffix, path, rec)
                     continue
                 row = tuple(rec.get(k) for k in (
                     "session_id", "model", "billing_provider",
@@ -611,7 +633,7 @@ def build(led, now):
     w_s = (today - timedelta(days=today.weekday())).isoformat()  # ISO Mon start
     m_s = today.replace(day=1).isoformat()
     provs = {p for p in (set(led.days) | set(led.undated) | set(led.meta))
-             if p.split("@")[0] in LIVE_PROVIDERS}
+             if _live(p)}
     out_p, hist, srcs = {}, {}, {}
     for p in sorted(provs):
         days, meta = led.days.get(p, {}), led.meta.get(p) or {}
