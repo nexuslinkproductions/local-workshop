@@ -3,8 +3,8 @@
 
 Sources (read-only; never auth/cookie/config files): omarchy usage snapshots,
 opencode.db, devin sessions.db + transcripts, claude jsonl transcripts,
-hermes state.db session_model_usage, haze usage records. Incremental via
-ledger-cursor.json. Stdlib only.
+hermes state.db session_model_usage, remote/<host>.jsonl pull snapshots.
+Incremental via ledger-cursor.json. Stdlib only.
 Usage: python3 ledger.py [--once] [--reset] [-v]   — see SCHEMA.md.
 """
 import argparse
@@ -33,11 +33,22 @@ SESS_TOP = 10
 DENY = ("credentials", "auth.json", "mcp_config", "service.json", "cookie",
         ".vscdb", "mcp-tokens", ".lock", "bus-principals", "secret")
 KINDS = {"claude": "sub", "codex": "sub", "fireworks": "api",
-         "opencode": "sub", "opencode-go": "sub", "devin": "sub",
-         "haze": "team"}
+         "opencode": "sub", "opencode-go": "sub", "devin": "sub"}
 LABELS = {"opencode": "opencode CLI", "opencode-go": "OpenCode Go",
-          "devin": "Devin", "haze": "Haze team API",
-          "claude": "Claude", "codex": "Codex"}
+          "devin": "Devin", "claude": "Claude", "codex": "Codex"}
+# Output allow-list: the cursor keeps every provider's data — only
+# build() output is filtered to these ids (or `<id>@<host>`). haze is
+# not in it.
+LIVE_PROVIDERS = {"claude", "codex", "devin", "fireworks",
+                  "opencode", "opencode-go"}
+
+
+def _label(p):
+    base, _, host = p.partition("@")
+    lab = LABELS.get(base, base)
+    return "%s (%s)" % (lab, host) if host else lab
+
+
 # Hermes billing_provider -> ledger id. Omarchy's codex/claude snapshot
 # collectors never scan Hermes paths (0 hits grepping for hermes), so folding
 # these onto the merged ids cannot double-count the snapshot lane.
@@ -374,76 +385,13 @@ def collect_claude(led):
                     model=msg.get("model") or j.get("model"), path=f, msgs=1)
 
 
-def _team_rec(led, j, rid, ts, path, model=None):
-    """One haze/hermes-style usage record (rollup json or audit jsonl row)."""
-    tin = num(j.get("input_tokens"), j.get("prompt_tokens"),
-              (j.get("usage") or {}).get("input_tokens"),
-              (j.get("tokens") or {}).get("input")) or 0
-    tout = num(j.get("output_tokens"), j.get("completion_tokens"),
-               (j.get("usage") or {}).get("output_tokens"),
-               (j.get("tokens") or {}).get("output")) or 0
-    tin += (j.get("cache_read_tokens") or 0) + (j.get("cache_write_tokens") or 0)
-    tout += j.get("reasoning_tokens") or 0
-    cost = j.get("estimated_cost_usd")
-    if not isinstance(cost, (int, float)) or cost <= 0 or \
-            j.get("cost_status") in ("unknown", "included"):
-        cost = None
-    led.add("haze", rid, ts, tin, tout, cost,
-            model=model or j.get("model"), path=path, msgs=1)
-
-
-def collect_haze(led):
-    offs = led.cur.setdefault("files", {})
-    udir = HOME / ".hermes/usage"
-    for f in sorted(udir.glob("*.json")) if udir.is_dir() else []:
-        if denied(f):
-            continue
-        j = _json(f.read_text())
-        if not isinstance(j, dict):
-            continue
-        ts = parse_ts(j.get("session_id") or "")
-        if not ts:
-            try:
-                ts = datetime.fromtimestamp(f.stat().st_mtime, timezone.utc)
-            except OSError:
-                pass
-        _team_rec(led, j, "hz:" + str(j.get("session_id") or f.stem), ts, f)
-        if j.get("provider"):
-            led.meta.setdefault("haze", {}).setdefault("upstreams", set()) \
-                .add(str(j["provider"]))
-    audit = HOME / ".hermes/cron/usage_audit.jsonl"
-    if audit.is_file():
-        for line in _jsonl_tail(audit, offs):
-            j = _json(line)
-            if isinstance(j, dict) and not j.get("error"):
-                _team_rec(led, j, "hzf:" + str(j.get("fire_id") or hash(line)),
-                          parse_ts(j.get("ts")), audit)
-    hdir = DATA_HOME / "haze"
-    for f in ([Path(p) for p in glob.glob(str(hdir / "**" / "*.*"),
-                                         recursive=True)]
-              if hdir.is_dir() else []):
-        if denied(f) or f.suffix not in (".json", ".jsonl"):
-            continue
-        if f.suffix == ".jsonl":
-            for line in _jsonl_tail(f, offs):
-                j = _json(line)
-                if isinstance(j, dict):
-                    _team_rec(led, j, "hzl:" + str(j.get("id") or hash(line)),
-                              parse_ts(j.get("ts") or j.get("timestamp")), f)
-        else:
-            j = _json(f.read_text())
-            if isinstance(j, dict):
-                _team_rec(led, j, "hzs:%s/%s" % (f.parent.name, f.stem),
-                          parse_ts(j.get("ts") or j.get("timestamp") or
-                                   j.get("session_id")), f)
-
-
-def _smu_fold(led, profile, db, row):
+def _smu_fold(led, profile, db, row, suffix=""):
     """Fold one session_model_usage row; returns its last_seen (float).
 
-    Row -> mapped ledger id via HERMES_PROVIDER_MAP. Rid-dedup in
-    Ledger.add makes re-reading a row harmless, so backfill passes and the
-    incremental scan may overlap freely — only unrecorded tuples accrue."""
+    Row -> mapped ledger id via HERMES_PROVIDER_MAP (`suffix` = `@<host>`
+    for remote-pulled rows). Rid-dedup in Ledger.add makes re-reading a
+    row harmless, so backfill passes and the incremental scan may overlap
+    freely — only unrecorded tuples accrue."""
     (sid, model, prov, base, mode, task, tin_, tout_, rd_, wr_,
      cost, cstat, seen) = row
     p = HERMES_PROVIDER_MAP.get(str(prov))
@@ -458,7 +406,7 @@ def _smu_fold(led, profile, db, row):
         rid = "hm:%s:%s:%s:%s:%s:%s:%s" % (
             profile, sid, model, prov, base or "-", mode or "-",
             task or "-")
-        led.add(p, rid, parse_ts(seen),
+        led.add(p + suffix, rid, parse_ts(seen),
                 tin=(tin_ or 0) + (rd_ or 0) + (wr_ or 0),
                 tout=tout_ or 0, cost=cost, model=model, path=db)
     return float(seen or 0)
@@ -475,15 +423,11 @@ def collect_hermes(led):
     `openai-codex`->codex add a second, disjoint traffic lane: day.in/out
     then counts Hermes events while snapshot `total` counts Codex-CLI /
     Claude-Code events (never sum the two, SCHEMA.md rule for `total`).
-    Overlap note: collect_haze reads the stale `~/.hermes/usage/*.json`
-    rollups into provider `haze`; all 8 rollup session_ids (Aug 10) also
-    exist here (state.db is the superset), so the 4 rollup rows with
-    provider=openai-codex land in BOTH `haze` and `codex`, dated 2026-08-10
-    — outside every rendered window, left uncorrected rather than coupling
-    the two collectors. `opencode-go` rows land on their own ledger id (the
-    Hermes crew lane — disjoint from the local opencode.db `opencode` lane,
-    both rendered as labelled lanes on DP-2). `nous`/`ollama-cloud` rows are
-    still skipped (no ledger id; folding them is a product decision).
+    `opencode-go` rows land on their own ledger id (the Hermes crew lane
+    — disjoint from the local opencode.db `opencode` lane, both rendered
+    as labelled lanes on DP-2). `nous`/`ollama-cloud` rows are still
+    skipped (no ledger id; folding them is a product decision). Haze
+    usage rollups are no longer ingested.
 
     Provider-map migration (cursor v2): each store records which
     billing_providers it has folded under `sqlite.hermes.__folded__`.
@@ -552,6 +496,39 @@ def collect_hermes(led):
             con.close()
 
 
+def collect_remote(led):
+    """remote/<host>.jsonl pull snapshots -> `<base-prov>@<host>` lanes.
+
+    Each file is a full snapshot of one host's session_model_usage rows
+    (written by pull_remote.py over ssh); rid-dedup makes re-feeding it
+    harmless. `profile` becomes `<host>:<profile>` inside the rid —
+    cross-host rids cannot collide; the provider id gains `@<host>`."""
+    rdir = STATE_HOME / "nexuslink" / "remote"
+    for path in sorted(rdir.glob("*.jsonl")) if rdir.is_dir() else []:
+        suffix = "@" + path.stem
+        try:
+            fh = open(path)
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                row = tuple(rec.get(k) for k in (
+                    "session_id", "model", "billing_provider",
+                    "billing_base_url", "billing_mode", "task",
+                    "input_tokens", "output_tokens", "cache_read_tokens",
+                    "cache_write_tokens", "estimated_cost_usd",
+                    "cost_status", "last_seen"))
+                _smu_fold(led, "%s:%s" % (path.stem,
+                                          rec.get("profile") or "default"),
+                          path, row, suffix)
+
+
 def collect_sessions(led):
     """Hermes `sessions` table -> led.top_sessions (top-N by tokens, 14 days).
 
@@ -589,7 +566,7 @@ def collect_sessions(led):
                  " AND COALESCE(last_activity_at, ended_at, started_at) >= ?")
             for (sid, model, prov, start, last, title, calls, tin, tout) \
                     in con.execute(q, (cutoff,)):
-                if not (tin or tout):
+                if not (tin or tout) or prov == "haze":
                     continue
                 led.top_sessions.append({
                     "id": sid, "bot": profile, "provider": prov,
@@ -633,14 +610,15 @@ def build(led, now):
     t_s = today.isoformat()
     w_s = (today - timedelta(days=today.weekday())).isoformat()  # ISO Mon start
     m_s = today.replace(day=1).isoformat()
-    provs = set(led.days) | set(led.undated) | set(led.meta)
+    provs = {p for p in (set(led.days) | set(led.undated) | set(led.meta))
+             if p.split("@")[0] in LIVE_PROVIDERS}
     out_p, hist, srcs = {}, {}, {}
     for p in sorted(provs):
         days, meta = led.days.get(p, {}), led.meta.get(p) or {}
         has_events = any(r["in"] or r["out"] or r.get("cost") or r.get("acu")
                          for r in days.values()) or bool(led.undated.get(p))
-        entry = {"label": meta.get("label") or LABELS.get(p, p),
-                 "kind": KINDS.get(p, "api"),
+        entry = {"label": meta.get("label") or _label(p),
+                 "kind": KINDS.get(p.split("@")[0], "api"),
                  "day": _bucket(days, t_s, t_s),
                  "week": _bucket(days, w_s, t_s),
                  "month": _bucket(days, m_s, t_s)}
@@ -713,7 +691,7 @@ def main():
             cur = {}
     led = Ledger(cur if isinstance(cur, dict) else {})
     for fn in (collect_omarchy, collect_opencode, collect_devin,
-               collect_claude, collect_haze, collect_hermes,
+               collect_claude, collect_hermes, collect_remote,
                collect_sessions):
         try:
             fn(led)
