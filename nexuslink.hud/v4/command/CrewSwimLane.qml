@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import Quickshell.Io
 import ".."
 
 // CrewSwimLane.qml — M1 CRW-TL crew activity table: LED + handle cells,
@@ -14,6 +15,173 @@ Item {
 
     property var crew: ({})
     property bool shown: true
+
+    // ---- board feed (HUD 01) ----------------------------------------------
+    // The remote Mac board, relayed by tokens/pull_remote.py over the SAME
+    // ssh call as the token feed. It lands in its own file so the token
+    // lane stays byte-identical with and without the board.
+    //   $XDG_STATE_HOME/nexuslink/remote/<host>-kanban.json
+    // Shape (written by pull_remote.write_kanban):
+    //   {"updated": <iso>, "host": "mac", "stale": true?,
+    //    "cards": [{"id", "title", "status", "assignee", "model_override",
+    //               "started_at", "completed_at", "last_failure_error"}]}
+    // `body`/`result` are dropped upstream and never reach this file.
+    // The path mirrors pull_remote.py exactly: XDG_STATE_HOME when set,
+    // otherwise ~/.local/state. A hard-coded ".local/state" would miss
+    // the file whenever XDG_STATE_HOME points elsewhere.
+    readonly property string boardPath:
+        (Quickshell.env("XDG_STATE_HOME") !== ""
+         ? Quickshell.env("XDG_STATE_HOME")
+         : Quickshell.env("HOME") + "/.local/state")
+        + "/nexuslink/remote/mac-kanban.json"
+    property var board: ({})
+    property bool boardLoaded: false
+    // true while there is no usable payload (file absent, empty or
+    // unparseable). Set explicitly in loadBoard — a failed load must not
+    // look like "a board with zero cards".
+    property bool boardMissing: true
+    // A stale board still shows the last known cards; the strip says so.
+    readonly property bool boardStale: board && board.stale === true
+    // How often the board file is re-read. The relay writes it every
+    // 5 min; the HUD reads it on the same 60 s cadence as the crew feed.
+    readonly property int boardPollMs: 60000
+
+    FileView {
+        id: boardFile
+        path: root.boardPath
+        watchChanges: true
+        atomicWrites: true
+        printErrors: false
+        onFileChanged: boardFile.reload()
+        onLoaded: root.loadBoard(text())
+        onLoadFailed: root.loadBoard("")
+    }
+    Timer {
+        interval: root.boardPollMs
+        repeat: true
+        running: root.shown && root.visible
+        triggeredOnStart: true
+        onTriggered: boardFile.reload()
+    }
+    function loadBoard(raw) {
+        var data = null
+        try { data = JSON.parse(String(raw || "")) } catch (e) { data = null }
+        if (data === null || typeof data !== "object" || Array.isArray(data))
+            data = null
+        if (data === null) {
+            // no usable payload: say the feed is missing, never invent rows
+            board = ({})
+            boardMissing = true
+            boardLoaded = true
+            return
+        }
+        board = data
+        boardMissing = false
+        boardLoaded = true
+    }
+
+    // ---- board rows ------------------------------------------------------
+    // Running and blocked sort first; done last. Within a tier the
+    // oldest start comes first (longest-running on top).
+    readonly property var boardRows: {
+        var src = (board && board.cards) ? board.cards : []
+        var out = []
+        // running and blocked rank first (the two states that need a
+        // human now), then the rest. done always sits at the bottom.
+        function rank(s) {
+            if (s === "running") return 0
+            if (s === "blocked") return 1
+            if (s === "failed") return 2
+            if (s === "review") return 3
+            if (s === "ready") return 4
+            if (s === "scheduled") return 5
+            if (s === "todo" || s === "triage") return 6
+            if (s === "done") return 7
+            return 4
+        }
+        for (var i = 0; i < src.length; i++) {
+            var c = src[i]
+            if (!c || typeof c !== "object")
+                continue
+            out.push({
+                "id": String(c.id || ""),
+                "title": String(c.title || ""),
+                "status": String(c.status || ""),
+                "assignee": String(c.assignee || ""),
+                "model": String(c.model_override || ""),
+                "started": Number(c.started_at) || 0,
+                "completed": Number(c.completed_at) || 0,
+                "error": String(c.last_failure_error || "")
+            })
+        }
+        out.sort(function (a, b) {
+            return rank(a.status) - rank(b.status)
+                   || a.started - b.started
+                   || a.id.localeCompare(b.id)
+        })
+        return out
+    }
+
+    // at most 8 rows, then a "+N" row
+    readonly property int maxRows: 8
+    readonly property var shownRows: boardRows.length > maxRows
+                                    ? boardRows.slice(0, maxRows) : boardRows
+    readonly property int hiddenRows: boardRows.length - shownRows.length
+
+    // ---- TASKS strip geometry --------------------------------------------
+    // Compact by design: the crew table keeps the rest of the panel. The
+    // strip is 13 px per row (micro type) plus a one-line header.
+    readonly property real stripHeadH: 15
+    readonly property real stripRowH: 13
+    readonly property int stripLineCount: shownRows.length
+                                        + (hiddenRows > 0 ? 1 : 0)
+    readonly property real stripH: stripHeadH + stripLineCount * stripRowH + 6
+
+    // elapsed time since started_at, compact ("4m", "2h10", "3d")
+    function elapsed(started) {
+        if (!started)
+            return ""
+        var s = Math.max(0, Math.floor(root.now - started))
+        if (s < 60)
+            return s + "s"
+        var m = Math.floor(s / 60)
+        if (m < 60)
+            return m + "m"
+        var h = Math.floor(m / 60)
+        if (h < 24)
+            return h + "h" + (m % 60)
+        return Math.floor(h / 24) + "d"
+    }
+    // dot colour: running = accent, blocked/failed = red, ready = muted,
+    // done = dim
+    function statusColor(status) {
+        switch (String(status)) {
+        case "running": return FuiTokens.acid
+        case "blocked": return FuiTokens.alert
+        case "failed": return FuiTokens.alert
+        case "review": return FuiTokens.warn
+        case "ready": return FuiTokens.mute
+        case "done": return FuiTokens.faint
+        default: return FuiTokens.mute
+        }
+    }
+    // A done row carries a dim check instead of the status dot. The mono
+    // faces (KodeMono / Michroma) have no U+2713, so the check is drawn
+    // from two hairline strokes — no new font, no missing-glyph box.
+    function isDone(status) {
+        return String(status) === "done"
+    }
+    // `updated` is an ISO-8601 string (pull_remote writes
+    // datetime.now(timezone.utc).isoformat). Date.parse reads it; the
+    // result is epoch ms, which fmtHm wants in seconds.
+    function updatedHm() {
+        if (!board || !board.updated)
+            return FuiTokens.unknownGlyph
+        var ms = Date.parse(String(board.updated))
+        if (!isFinite(ms))
+            return FuiTokens.unknownGlyph
+        return FuiTokens.fmtHm(ms / 1000)
+    }
 
     property double now: Date.now() / 1000
     // auto-fit the axis to the earliest event in the last 24h (min 2h) —
@@ -69,7 +237,9 @@ Item {
     }
 
     // ---- geometry (fractions of the 1420px design panel) -------------------
-    readonly property real headH: 66                    // ruler/header zone
+    // headH carries the TASKS strip: the strip owns the top of the panel,
+    // the crew table starts under it.
+    readonly property real headH: 66 + root.stripH        // ruler/header zone
     readonly property real footH: 30
     readonly property real trackX0: width * (196 / 1420)
     readonly property real trackW: width * (864 / 1420)
@@ -151,6 +321,178 @@ Item {
                        "ping": !r.open && (r.s1 - r.s0) < 90, "title": r.title });
         }
         return out;
+    }
+
+    // ===================================================== TASKS strip ====
+    // The Mac board as a compact status list. Sits above the crew table:
+    // the board answers "what is the crew doing RIGHT NOW", the table
+    // answers "how did it get here". Never invents rows — a missing or
+    // stale file says so in words.
+    Item {
+        id: strip
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: root.stripH
+        visible: root.shown
+
+        // strip header: TASKS · n cards · source stamp
+        Text {
+            id: stripHead
+            x: 12; y: 2
+            text: "TASKS"
+            color: FuiTokens.ice
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
+        Text {
+            x: stripHead.x + stripHead.implicitWidth + 8; y: 2
+            text: root.boardRows.length + (root.boardRows.length === 1 ? " card" : " cards")
+            color: FuiTokens.dim
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+        }
+        Text {
+            anchors { right: parent.right; rightMargin: 12; top: parent.top; topMargin: 2 }
+            text: (root.boardMissing || root.boardStale) ? "board feed stale"
+                 : root.updatedHm()
+            color: (root.boardMissing || root.boardStale) ? FuiTokens.alert : FuiTokens.mute
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
+        Rectangle {
+            anchors { left: parent.left; leftMargin: 12; right: parent.right; rightMargin: 12; top: parent.top; topMargin: root.stripHeadH }
+            height: 1
+            color: FuiTokens.hair3
+        }
+
+        // missing / stale board: say so, invent nothing
+        Text {
+            visible: root.boardMissing
+            x: 12; y: root.stripHeadH + 3
+            text: "board feed stale"
+            color: FuiTokens.mute
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
+
+        Column {
+            y: root.stripHeadH + 2
+            Repeater {
+                model: root.shownRows
+                delegate: Item {
+                    id: taskRow
+                    required property int index
+                    required property var modelData
+                    readonly property var card: modelData
+                    readonly property bool running: card.status === "running"
+                    width: strip.width
+                    height: root.stripRowH
+
+                    // status dot — the ONLY moving element on the strip
+                    Item {
+                        id: dot
+                        x: 14
+                        width: 8; height: 8
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Rectangle {
+                            id: dotDot
+                            visible: !root.isDone(taskRow.card.status)
+                            anchors.centerIn: parent
+                            width: 6; height: 6; radius: 3
+                            color: root.statusColor(taskRow.card.status)
+                            // running = accent + slow pulse. Everything else
+                            // is static, so an idle board costs nothing.
+                            SequentialAnimation on opacity {
+                                running: taskRow.running && taskRow.visible
+                                         && root.shown && strip.visible
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.3; duration: 1400; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1.0; duration: 1400; easing.type: Easing.InOutSine }
+                            }
+                        }
+
+                        // done = a dim check, drawn from two hairlines
+                        // (the mono faces have no U+2713)
+                        Canvas {
+                            visible: root.isDone(taskRow.card.status)
+                            anchors.centerIn: parent
+                            width: 8; height: 8
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.strokeStyle = FuiTokens.css(FuiTokens.faint)
+                                ctx.lineWidth = 1
+                                ctx.beginPath()
+                                ctx.moveTo(1.5, 4.2)
+                                ctx.lineTo(3.4, 6.2)
+                                ctx.lineTo(6.8, 1.8)
+                                ctx.stroke()
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors { left: dot.right; leftMargin: 7; verticalCenter: parent.verticalCenter }
+                        width: strip.width * (520 / 1420) - 30
+                        elide: Text.ElideRight
+                        text: taskRow.card.title
+                        color: taskRow.card.status === "done" ? FuiTokens.faint
+                             : taskRow.card.status === "blocked" || taskRow.card.status === "failed"
+                               ? FuiTokens.white : FuiTokens.dim
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+
+                    // assignee
+                    Text {
+                        anchors { left: parent.left; leftMargin: strip.width * (520 / 1420); verticalCenter: parent.verticalCenter }
+                        width: strip.width * (96 / 1420)
+                        elide: Text.ElideRight
+                        text: taskRow.card.assignee.toUpperCase()
+                        color: FuiTokens.faint
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                        font.letterSpacing: FuiTokens.ls.tag
+                    }
+
+                    // failure reason (only when the card carries one) — the
+                    // red dot says something broke, this says what
+                    Text {
+                        visible: taskRow.card.error !== ""
+                        anchors { left: parent.left; leftMargin: strip.width * (620 / 1420); verticalCenter: parent.verticalCenter }
+                        width: strip.width * (300 / 1420)
+                        elide: Text.ElideRight
+                        text: taskRow.card.error
+                        color: FuiTokens.alert
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+
+                    // elapsed since started_at
+                    Text {
+                        anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
+                        text: root.elapsed(taskRow.card.started)
+                        color: FuiTokens.faint
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+                }
+            }
+        }
+
+        // "+N" overflow row
+        Text {
+            visible: root.hiddenRows > 0
+            x: 27; y: root.stripHeadH + 2 + root.shownRows.length * root.stripRowH
+            text: "+ " + root.hiddenRows + " more"
+            color: FuiTokens.mute
+            font.family: FuiTokens.mono
+            font.pixelSize: FuiTokens.px.micro
+            font.letterSpacing: FuiTokens.ls.cap
+        }
     }
 
     // ------------------------------------------------------------ header
