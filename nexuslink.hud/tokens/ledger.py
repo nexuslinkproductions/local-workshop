@@ -8,6 +8,7 @@ Incremental via ledger-cursor.json. Stdlib only.
 Usage: python3 ledger.py [--once] [--reset] [-v]   — see SCHEMA.md.
 """
 import argparse
+import base64
 import glob
 import json
 import os
@@ -305,6 +306,90 @@ def _metrics(obj):
     return tin, tout, acu, meta.get("generation_model") or met.get("model")
 
 
+DEVIN_CACHE = HOME / ".cache/devin/cli"
+
+
+def _pb_msg(buf):
+    """Walk one protobuf message -> {field_no: [(wire_type, value)]}. Stdlib only."""
+    # varint key = field<<3 | wire; wire 0 -> int varint, 2 -> bytes slice;
+    # skip/stop cleanly on 1/5 and on truncation (never raise).
+    out, i, n = {}, 0, len(buf)
+
+    def _var():
+        nonlocal i
+        v, sh = 0, 0
+        while i < n and sh < 64:
+            b = buf[i]
+            i += 1
+            v |= (b & 0x7F) << sh
+            if not b & 0x80:
+                return v
+            sh += 7
+        return None
+
+    while i < n:
+        key = _var()
+        if key is None:
+            break
+        fld, wire = key >> 3, key & 7
+        if wire == 0:
+            v = _var()
+            if v is None:
+                break
+            out.setdefault(fld, []).append((wire, v))
+        elif wire == 2:
+            ln = _var()
+            if ln is None or i + ln > n:
+                break
+            out.setdefault(fld, []).append((wire, buf[i:i + ln]))
+            i += ln
+        elif wire == 1:
+            i += 8
+        elif wire == 5:
+            i += 4
+        else:
+            break
+    return out
+
+
+def merge_devin_limits(led):
+    """Weekly Devin quota from the CLI's cached GetUserStatus reply.
+
+    Sets led.meta['devin']['limits'] + ['limits_as_of']; never replaces the
+    devin meta dict (token data from collect_devin stays intact). No cache or
+    no decodable reply -> no limits, no crash.
+    """
+    try:
+        files = sorted(DEVIN_CACHE.glob("user_status.*.bin"),
+                       key=lambda f: -f.stat().st_mtime)   # newest first
+    except OSError:
+        return
+    for f in files:
+        try:
+            top = _pb_msg(base64.b64decode(
+                json.loads(f.read_text())["payload"]))
+            sub = next((v for w, v in top.get(13, []) if w == 2), None)
+            plan = _pb_msg(sub) if sub is not None else {}
+            q = {k: next((v for w, v in plan.get(k, []) if w == 0), None)
+                 for k in (14, 15, 17, 18)}   # daily/weekly rem% + reset unix
+            if None in q.values() or not (
+                    0 <= q[14] <= 100 and 0 <= q[15] <= 100
+                    and q[17] > 1_600_000_000 and q[18] > 1_600_000_000):
+                continue                      # not a sane PlanStatus -> next
+            m = led.meta.setdefault("devin", {})
+            # Daily is not emitted: DeckTokens windowMs() only knows 5h,
+            # weekly/7-day, month, "<n> day" — a "Daily" label gets no arc.
+            m["limits"] = [{"label": "Weekly",
+                            "percent": round((100 - q[15]) / 100, 4),
+                            "resetsAt": datetime.fromtimestamp(
+                                q[18], timezone.utc).isoformat()}]
+            m["limits_as_of"] = datetime.fromtimestamp(
+                f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+            return
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+
+
 def collect_devin(led):
     db = HOME / ".local/share/devin/cli/sessions.db"
     con = _ro_db(db)
@@ -343,6 +428,7 @@ def collect_devin(led):
                           (step or {}).get("created_at") or j.get("created_at"))
             led.add("devin", "dvt:%s:%d" % (f.stem, i), ts, tin, tout, None,
                     acu=acu, model=model, path=f)
+    merge_devin_limits(led)   # overrides any stale snapshot limits
 
 
 def _jsonl_tail(path, offsets):
@@ -651,7 +737,8 @@ def build(led, now):
             entry["undated"] = {k: v for k, v in led.undated[p].items() if v}
         m = {"label": entry["label"], "kind": entry["kind"]}
         for k in ("ready", "tier", "status", "today_tokens", "today_prompts",
-                  "today_sessions", "limits", "today_by_model", "sessions_db"):
+                  "today_sessions", "limits", "limits_as_of", "today_by_model",
+                  "sessions_db"):
             if meta.get(k) not in (None, "", [], {}):
                 m[k] = meta[k]
         if meta.get("upstreams"):

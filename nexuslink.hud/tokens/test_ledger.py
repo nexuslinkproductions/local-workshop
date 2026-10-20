@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Scratch checks for ledger.py + pull_remote.py — python3 test_ledger.py."""
+import base64
 import json
 import os
 import sys
@@ -106,5 +107,55 @@ except RuntimeError as e:
     assert "empty snapshot" in str(e), e
 assert (rdir / "mac.jsonl").read_text() == prev   # previous file kept
 _pr.OUT_DIR = _out
+
+
+# merge_devin_limits: newest decodable user_status.*.bin -> devin Weekly limit
+def _var(v):
+    o = b""
+    while True:
+        b, v = v & 0x7F, v >> 7
+        o += bytes([b | (0x80 if v else 0)])
+        if not v:
+            return o
+
+
+def _enc(field, val):
+    return _var(field << 3) + _var(val)             # wire 0 varint field
+
+
+def _enc_msg(field, payload):
+    return _var(field << 3 | 2) + _var(len(payload)) + payload  # wire 2
+
+
+plan = _enc(14, 100) + _enc(15, 95) + _enc(17, 1787000000) + \
+    _enc(18, 1792915200)
+env = {"version": 1, "identity_digest": "x", "fetched_at_secs": 1,
+       "payload": base64.b64encode(_enc_msg(13, plan)).decode()}
+cdir = Path(TMP) / "devin-cache"
+cdir.mkdir()
+_cache = ledger.DEVIN_CACHE
+ledger.DEVIN_CACHE = cdir
+old, bad = cdir / "user_status.aaa.bin", cdir / "user_status.bbb.bin"
+old.write_text(json.dumps(env))
+bad.write_text(json.dumps({"payload": "not-base64!!"}))
+os.utime(old, (TS, TS))
+os.utime(bad, (TS + 60, TS + 60))      # newer but undecodable -> skipped
+led = ledger.Ledger({})
+led.meta["devin"] = {"sessions_db": "present"}
+ledger.merge_devin_limits(led)
+m = led.meta["devin"]
+assert len(m["limits"]) == 1 and m["limits"][0]["label"] == "Weekly"
+assert m["limits"][0]["percent"] == 0.05        # 95 remaining -> 5% used
+assert m["limits"][0]["resetsAt"] == "2026-10-25T08:00:00+00:00"
+assert m["limits_as_of"] == datetime.fromtimestamp(
+    old.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
+assert m["sessions_db"] == "present"            # pre-existing keys survive
+# empty cache dir -> no "limits" key, no crash
+for f in cdir.iterdir():
+    f.unlink()
+led = ledger.Ledger({})
+ledger.merge_devin_limits(led)
+assert "limits" not in led.meta.get("devin", {})
+ledger.DEVIN_CACHE = _cache
 
 print("ok")
