@@ -1,0 +1,6 @@
+[Unit]
+Description=Pull MacBook Hermes token usage into HUD ledger
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nexuslink.hud/tokens/pull_remote.py

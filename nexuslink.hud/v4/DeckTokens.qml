@@ -53,20 +53,22 @@ Item {
         { "id": "devin",    "key": "dvn", "name": "Devin",
           "code": "PRV-DVN", "col": FuiTokens.dim,   "dash": [1.5, 2.5] }
     ]
-    // skyline stack order incl. opencode CLI lane + codex snapshot lane + haze
+    // skyline stack order incl. opencode CLI lane + codex snapshot lane +
+    // Mac lanes (ocgmac/dvnmac: same hue as their desktop sibling, own dash)
     // label: short readable name for legend / readout (key stays the stack id)
     readonly property var stackDef: [
         { "key": "ocg",    "label": "Go (Hermes)",    "col": FuiTokens.ice,   "dash": null },
         { "key": "ocgcli", "label": "OpenCode CLI",   "col": FuiTokens.ice,   "dash": [2, 2] },
+        { "key": "ocgmac", "label": "Go (Hermes)·MAC", "col": FuiTokens.ice,  "dash": [6, 3] },
         { "key": "cld",    "label": "Claude",         "col": FuiTokens.white, "dash": null },
         { "key": "cdx",    "label": "Codex",          "col": FuiTokens.azure, "dash": null },
         { "key": "cdxs",   "label": "Codex snapshot", "col": FuiTokens.azure, "dash": "double" },
         { "key": "dvn",    "label": "Devin",          "col": FuiTokens.dim,   "dash": [1.5, 2.5] },
-        { "key": "hze",    "label": "Haze",           "col": FuiTokens.ice,   "dash": [6, 2, 1, 2] }
+        { "key": "dvnmac", "label": "Devin·MAC",      "col": FuiTokens.dim,   "dash": [5, 3] }
     ]
-    readonly property var ledgerOrder: ["claude", "codex", "devin",
-                                         "opencode-go", "opencode", "haze",
-                                         "fireworks"]
+    readonly property var ledgerOrder: ["claude", "codex", "devin", "devin@mac",
+                                         "opencode-go", "opencode-go@mac",
+                                         "opencode"]
 
     function execArgv(argv) {
         Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "tk"].concat(argv));
@@ -410,8 +412,9 @@ Item {
         var today = new Date(nowMs || Date.now());
         today.setHours(0, 0, 0, 0);
         var keys = { "ocg": "opencode-go", "ocgcli": "opencode",
+                     "ocgmac": "opencode-go@mac",
                      "cld": "claude", "cdx": "codex",
-                     "dvn": "devin", "hze": "haze" };
+                     "dvn": "devin", "dvnmac": "devin@mac" };
         for (var i = 29; i >= 0; i--) {
             var d = new Date(today.getTime() - i * 86400e3);
             var iso = isoDay(d), parts = {}, total = 0;
@@ -480,8 +483,8 @@ Item {
         var todayIso = isoDay(today);
         var dow = (today.getDay() + 6) % 7;                    // Mon=0
         var start = new Date(today.getTime() - (dow + 25 * 7) * 86400e3);
-        var keys = ["claude", "codex", "devin", "opencode-go", "opencode",
-                    "haze", "fireworks"];
+        var keys = ["claude", "codex", "devin", "devin@mac", "opencode-go",
+                    "opencode-go@mac", "opencode"];
         var cells = [];
         for (var w = 0; w < 26; w++)
             for (var dd = 0; dd < 7; dd++) {
@@ -550,8 +553,9 @@ Item {
             return m.ledgerRows;
         // display aliases — readable provider names (keys/order untouched)
         var shortPrv = { "claude": "Claude", "codex": "Codex", "devin": "Devin",
-                         "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
-                         "haze": "Haze", "fireworks": "Fireworks" };
+                         "devin@mac": "Devin·MAC", "opencode-go": "Go (Hermes)",
+                         "opencode-go@mac": "Go (Hermes)·MAC",
+                         "opencode": "OpenCode CLI" };
         var rows = [];
         for (var i = 0; i < ledgerOrder.length; i++) {
             var pid = ledgerOrder[i], p = provs()[pid];
@@ -1336,7 +1340,8 @@ Item {
                         var lags = [];
                         var today = root.isoDay(new Date(root.nowMs || Date.now()));
                         var map = { "opencode-go": "Go (Hermes)", "opencode": "OpenCode CLI",
-                                    "devin": "Devin", "claude": "Claude", "codex": "Codex" };
+                                    "devin": "Devin", "claude": "Claude", "codex": "Codex",
+                                    "opencode-go@mac": "Go (Hermes)·MAC", "devin@mac": "Devin·MAC" };
                         for (var pid in map) {
                             var lh = root.lastHist(pid);
                             if (lh && lh < today) lags.push(map[pid] + " updated " + lh.slice(5));

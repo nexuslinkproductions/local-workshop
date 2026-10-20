@@ -1307,7 +1307,7 @@ Item {
 
     function tokBars() {
         var prov = (tokData && tokData.providers) ? tokData.providers : null;
-        var order = ["devin", "opencode", "haze", "fireworks"];
+        var order = ["devin", "opencode", "devin@mac", "opencode-go@mac"];
         var bars = [];
         for (var i = 0; i < order.length; i++) {
             var p = prov !== null ? prov[order[i]] : null;

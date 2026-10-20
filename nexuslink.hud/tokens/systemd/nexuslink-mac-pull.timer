@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull MacBook Hermes token usage into HUD ledger
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

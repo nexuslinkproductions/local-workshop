@@ -18,9 +18,18 @@ HUD renders `tokens.json` only — the cursor is internal.
 }
 ```
 
-Provider ids seen: `claude`, `codex`, `fireworks` (from omarchy records),
-`opencode`, `opencode-go`, `devin`, `haze`. Unknown/missing sources are
-simply omitted — an absent provider key means "no local feed".
+Provider ids: `build()` output is allow-listed. Local ids must be in
+`LIVE_PROVIDERS` — `claude`, `codex`, `devin`, `opencode`, `opencode-go`.
+Remote lanes `<id>@<host>` are emitted only when `<id>` is in
+`REMOTE_PROVIDERS` — `opencode-go@mac`, `devin@mac` — fed from
+`remote/<host>.jsonl` written by `pull_remote.py` (systemd timer every
+5 min, full snapshot per run; units in `systemd/`, not installed).
+Everything else (`fireworks`, `haze`, `codex@mac`, `claude@mac`, legacy
+ids) stays in the cursor but is not emitted. `<id>@<host>` kind = the base
+id's kind; label = base label + ` (<host>)`; rids read
+`hm:<host>:<profile>:…` (session_model_usage) or `dv:<host>:<session>:<row>`
+(devin). Unknown/missing sources are simply omitted — an absent provider
+key means "no local feed".
 
 ## Provider object
 
@@ -54,8 +63,7 @@ Bucket semantics:
   quantity: render them separately, never add `total` into `in`+out, and
   never treat one as a corrected version of the other. `build()`'s
   snapshot-only nulling (`in: null, out: null`) no longer applies to a
-  lane pair; it still applies to providers with no event feed at all
-  (`fireworks`).
+  lane pair; it still applies to providers with no event feed at all.
 - `day` = local today; `week` = ISO week (Mon-start) containing today;
   `month` = calendar month. Windows are computed from record timestamps.
 - Snapshot-only providers (no per-event feed) emit `"in": null, "out": null`
@@ -70,7 +78,6 @@ Bucket semantics:
 (free-text usage status e.g. "Waiting for auth"), `limits` (raw omarchy
 `limits[]` array), `today_tokens`, `today_prompts`, `today_sessions`,
 `today_by_model`, `models` (lifetime `{model: {in,out}}` from event feeds),
-`upstreams` (haze: underlying providers like `opencode-go`/`openai-codex`),
 `sessions_db` (devin: "present" when only enrichment table found).
 
 ## `history` rows (per provider, ≤90 days, date-sorted)
@@ -97,11 +104,12 @@ Additive top-level key from `collect_sessions` (reads the `sessions` table
 of `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db`, read-only —
 the same store list as `collect_hermes`). Rebuilt fresh every run, ranked
 by `in`+`out` desc, capped at `SESS_TOP = 10`. `provider` is the RAW
-`billing_provider` (`opencode-go`, `anthropic`, `openai-codex`, `haze`,
-`nous`, …) — session attribution, not the `HERMES_PROVIDER_MAP` fold used
-for day buckets. `bot` is the profile dir name (`default` for the shared
-store). `start`/`last` are epoch seconds; sessions with `archived`/`hidden`
-set or zero tokens are skipped.
+`billing_provider` (`opencode-go`, `anthropic`, `openai-codex`,
+`nous`, … — `haze` rows are skipped) — session attribution, not the
+`HERMES_PROVIDER_MAP` fold used for day buckets. `bot` is the profile
+dir name (`default` for the shared store). `start`/`last` are epoch
+seconds; sessions with `archived`/`hidden` set or zero tokens are
+skipped.
 
 ## Sources → provider mapping
 
@@ -112,17 +120,13 @@ set or zero tokens are skipped.
 | `devin` | `~/.local/share/devin/cli/sessions.db` — `message_nodes.chat_message` JSON `metadata.metrics{input_tokens,output_tokens,…}`, `metadata.committed_acu_cost`; plus `cli/transcripts/*.json` `steps[].metadata.committed_acu_cost` if present | `dv:` + session_id:row_id / `dvt:` + file:step | `created_at` (epoch s/ms) |
 | `claude` (merge) | `~/.claude/projects/**/*.jsonl`, `~/.local/share/claude/**/*.jsonl` — per-line `message.usage{input_tokens,output_tokens,cache_*}` | `cl:` + uuid/message.id/requestId | line `timestamp` (ISO) |
 | `claude`/`codex`/`opencode-go` (merge) | `~/.hermes/state.db` + `~/.hermes/profiles/*/state.db` — `session_model_usage` cumulative row per (session, model, provider, base_url, mode, task); `billing_provider anthropic`→claude, `openai-codex`→codex, `opencode-go`→`opencode-go` (own lane), other providers skipped; `in = input+cache_read+cache_write`, `out = output_tokens` (reasoning already inside) | `hm:` + profile:session_id:model:provider:base_url:mode:task, delta-folded via `seen` | `last_seen` (epoch s) |
-| `haze` | `~/.hermes/usage/*.json` rollups (`input_tokens`,`output_tokens`,`cache_*`,`reasoning_tokens`,`estimated_cost_usd`,`session_id`,`provider`) + `~/.hermes/cron/usage_audit.jsonl` (`prompt_tokens`,`completion_tokens`,`fire_id`,`ts`; error rows skipped) + `~/.local/share/haze/**/*.{json,jsonl}` same shapes | `hz:`/`hzf:`/`hzl:`/`hzs:` + session_id/fire_id/file | `session_id` `YYYYMMDD_HHMMSS` prefix → file mtime → `undated`; audit rows `ts` |
-
-Hermes/state.db overlap with `haze`: the 8 stale (Aug 10) `~/.hermes/usage/*.json`
-rollup sessions also exist in `session_model_usage`; the 4 `openai-codex` ones
-therefore appear under both `haze` and `codex` on 2026-08-10 — outside every
-rendered window. state.db is the superset; if those rollups ever go live again,
-retire `collect_haze`'s rollup branch rather than deduping across providers.
+| `<id>@<host>` | `$XDG_STATE_HOME/nexuslink/remote/<host>.jsonl` — full snapshot per pull, one JSON record per `session_model_usage` row (`profile` + the 13 columns), written by `pull_remote.py` over ssh; same provider map. Each store is read with `sqlite3 -readonly`; if that fails (WAL side files gone) the read falls back to `vfs=unix-none` when a `-wal` still holds uncheckpointed rows, else to `file:…?immutable=1` (exact only when no `-wal` exists — a WAL-blind read would undercount). A store unreadable every way aborts the pull (nonzero exit, previous file kept) | `hm:` + `<host>:` + profile:session_id:… (same tuple), delta-folded via `seen` | `last_seen` (epoch s) |
+| `devin@<host>` | same `remote/<host>.jsonl`, records tagged `"kind": "devin"`: one per Devin message row from the host's `~/.local/share/devin/cli/sessions.db` `message_nodes` (read-only, same ssh call). Fields: `row_id`, `session_id`, `created_at`, `metrics` (`metadata.metrics`, else `metadata.usage`), `acu` (`metadata.committed_acu_cost`), `model` (`metadata.generation_model`). Ledger reads them with `_metrics()` exactly as `collect_devin` does | `dv:<host>:` + session_id:row_id, dedupe via `seen` | `created_at` (epoch s/ms) |
 
 `kind` mapping: claude/codex/devin/opencode/opencode-go → `sub`,
-fireworks → `api`, haze → `team`. opencode is a harness — its upstream auth
-decides sub vs api; revisit `kind` if the HUD cares.
+fireworks → `api`; `<id>@<host>` inherits the base id's kind. opencode is
+a harness — its upstream auth decides sub vs api; revisit `kind` if the
+HUD cares.
 
 ## Cursor (`ledger-cursor.json`, internal)
 
@@ -163,8 +167,6 @@ per-provider) rather than being dropped.
   USD rate → `cost` stays `null`, ACU surfaces under `acu`.
 - **opencode `session_message` v2 table** — exists in some versions but
   empty vs legacy `message`/`part`; ledger uses `message`.
-- **`~/.local/share/haze/`** — absent; haze data comes from `~/.hermes/`
-  (`usage/*.json`, `cron/usage_audit.jsonl`) instead.
 - **Hermes sqlite stores** (`~/.hermes/{sessions,response_store}.db`)
   — no token-usage table; still not mined. `~/.hermes/state.db` (and
   `profiles/*/state.db`) ARE mined since WS-08a via `session_model_usage`
