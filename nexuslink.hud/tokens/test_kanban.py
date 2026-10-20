@@ -29,6 +29,15 @@ BOARD = OUT / "mac-kanban.json"
 NOW = 1792528000.0
 HOUR = 3600.0
 
+# The fixture clock IS the test clock. keep_card() drops `done` cards older
+# than the 24 h window, and run() -> parse_kanban() falls back to time.time()
+# when no `now=` is passed. An unpinned wall clock therefore ages the
+# `t_ccc` card (done 30 min before NOW) out of the window and this file goes
+# red by itself ~21 h after the fixture was written. Pin the module's clock
+# to NOW so the file can never expire.
+pr.time.time = lambda: NOW
+assert pr.time.time() == NOW, "the test clock must stay pinned to the fixture"
+
 
 def card(**kw):
     base = {
