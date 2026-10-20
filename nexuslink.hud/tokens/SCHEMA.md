@@ -6,6 +6,62 @@ written atomically (mkstemp + `os.replace`). Cursor state (incremental offsets,
 dedupe set, accrued per-day rows) lives beside it in `ledger-cursor.json`.
 HUD renders `tokens.json` only — the cursor is internal.
 
+## Board feed — `remote/<host>-kanban.json`
+
+Produced by `tokens/pull_remote.py` (stdlib only) →
+`$XDG_STATE_HOME/nexuslink/remote/<host>-kanban.json`, written atomically
+(mkstemp + `os.replace`). This is the **Mac Kanban board** relayed to the
+Linux HUD. It rides the SAME ssh call as the token feed: the remote command
+prints an extra `@@kanban` section (`hermes kanban list --json`) alongside
+the `@@<db-path>` / `@@devin` sections, so no second connection is opened.
+
+```json
+{
+  "updated": "2026-10-20T22:00:00+00:00",   // ISO-8601, run time
+  "host":    "mac",
+  "stale":   true,                            // present ONLY when the feed failed
+  "cards": [
+    {
+      "id":                "t_559f2aab",
+      "title":             "HUD 01: Kanban tasks on the Linux HUD",  // <= 60 chars
+      "status":            "running",
+      "assignee":          "zenitsu",
+      "model_override":    null,
+      "started_at":        1792526998,   // epoch seconds
+      "completed_at":      null,
+      "last_failure_error": null          // <= 80 chars
+    }
+  ]
+}
+```
+
+Rules:
+
+- **No `body`, no `result`.** Card bodies are untrusted free text and are
+  the bulk of the payload. They are dropped in `pull_remote.trim_card`, so
+  they never reach this file, let alone the HUD.
+- **Field caps:** `title` ≤ 60 chars, `last_failure_error` ≤ 80 chars,
+  `assignee` ≤ 40 chars. Hard truncation, never growth.
+- **Retention:** every card that is not `done`, plus every `done` card
+  whose `completed_at` is within the last 24 h (`DONE_WINDOW_S`). A `done`
+  card with no timestamp is kept — dropping it would hide a card that just
+  finished. Older `done` cards are noise on a status strip.
+- **Failure is not empty.** If the `@@kanban` section is absent, empty or
+  malformed, the PREVIOUS file is kept and `"stale": true` is set — the last
+  known cards stay visible and the HUD marks the feed stale. With no
+  previous file at all, a bare `{"stale": true, "cards": []}` is written.
+  A malformed section must never be mistaken for "the board is empty",
+  which would silently wipe the strip.
+- **Lane isolation:** the board file is written AFTER the token snapshot
+  and never touches it. `remote/<host>.jsonl` is byte-identical with and
+  without the board section (asserted in `tokens/test_kanban.py`).
+
+Status values are the Hermes Kanban workflow columns: `triage`, `todo`,
+`scheduled`, `ready`, `running`, `blocked`, `review`, `done` (plus
+`archived`, which the 24 h filter drops like any other done card). The HUD
+maps `running` → accent + slow pulse, `blocked`/`failed` → red, `ready` →
+muted, `done` → dim.
+
 ## Top level
 
 ```json
