@@ -458,6 +458,19 @@ Item {
                         font.letterSpacing: FuiTokens.ls.tag
                     }
 
+                    // failure reason (only when the card carries one) — the
+                    // red dot says something broke, this says what
+                    Text {
+                        visible: taskRow.card.error !== ""
+                        anchors { left: parent.left; leftMargin: strip.width * (620 / 1420); verticalCenter: parent.verticalCenter }
+                        width: strip.width * (300 / 1420)
+                        elide: Text.ElideRight
+                        text: taskRow.card.error
+                        color: FuiTokens.alert
+                        font.family: FuiTokens.mono
+                        font.pixelSize: FuiTokens.px.micro
+                    }
+
                     // elapsed since started_at
                     Text {
                         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
