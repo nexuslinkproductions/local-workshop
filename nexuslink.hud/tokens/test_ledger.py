@@ -81,4 +81,28 @@ before = json.dumps(led.days, sort_keys=True)
 ledger.collect_remote(led)
 assert json.dumps(led.days, sort_keys=True) == before
 
+# pull_remote.run(): an empty snapshot must NOT overwrite the previous file
+# (a silent empty mac.jsonl would wipe the Mac lanes in the HUD).
+import pull_remote as _pr
+_out = _pr.OUT_DIR
+_pr.OUT_DIR = rdir
+prev = (rdir / "mac.jsonl").read_text()
+
+
+class _FakeProc:
+    returncode = 0
+    stdout = "@@/x/state.db\n\n"
+    stderr = ""
+
+
+_pr.subprocess = type("S", (), {"run": staticmethod(
+    lambda *a, **k: _FakeProc())})
+try:
+    _pr.run()
+    raise SystemExit("FAIL: empty snapshot was accepted")
+except RuntimeError as e:
+    assert "empty snapshot" in str(e), e
+assert (rdir / "mac.jsonl").read_text() == prev   # previous file kept
+_pr.OUT_DIR = _out
+
 print("ok")

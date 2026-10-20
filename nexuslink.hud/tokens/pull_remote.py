@@ -45,13 +45,23 @@ DEVIN_SQL = (
     + _J % "json_extract(chat_message,'$.metadata.committed_acu_cost')" + " AS acu, "
     + _J % "json_extract(chat_message,'$.metadata.generation_model')" + " AS model "
     "FROM message_nodes) WHERE metrics IS NOT NULL OR acu IS NOT NULL")
-# One read per store: `-readonly` first; a WAL store whose -wal/-shm are
-# gone (gateway stopped) fails with "unable to open database file (14)", so
-# fall back to the `file:...?immutable=1` URI (db file only, no WAL). A store
-# that fails both ways is UNREADABLE -> exit nonzero -> the pull keeps the
-# previous snapshot instead of writing a partial one that drops Mac lanes.
+# One read per store. `-readonly` sees everything (it may create the WAL
+# side files, as any sqlite WAL reader does). It fails with "unable to open
+# database file (14)" when the db is WAL-mode and its side files are gone
+# (stopped gateway) -> fall back:
+#   * a non-empty `-wal` still holds uncheckpointed rows -> read it with
+#     vfs=unix-none (heap wal-index, no -shm needed). A WAL-blind read
+#     (immutable) would silently undercount, so it is NOT used here.
+#   * no `-wal` -> the db file is fully checkpointed -> immutable=1 is exact.
+# A store that fails every way is UNREADABLE -> exit nonzero -> the pull
+# keeps the previous snapshot instead of writing a partial one.
 _SQLITE = ('sq() { o=$(sqlite3 -readonly -json "$1" "$2" 2>/dev/null) &&'
            ' { printf "%s\\n" "$o"; return 0; };'
+           ' if [ -s "$1-wal" ]; then'
+           ' o=$(sqlite3 -json "file:$1?vfs=unix-none" "$2" 2>/dev/null) &&'
+           ' { printf "%s\\n" "$o"; return 0; };'
+           ' echo "pull_remote: $1 unreadable (WAL present)" >&2; return 1;'
+           ' fi;'
            ' sqlite3 -json "file:$1?immutable=1" "$2"; };')
 REMOTE_CMD = (_SQLITE +
               ' for f in %s/state.db %s/profiles/*/state.db; do'
