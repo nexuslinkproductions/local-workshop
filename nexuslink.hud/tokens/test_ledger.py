@@ -77,6 +77,8 @@ assert (day["in"], day["out"]) == (10, 5)
 dday = list(led.days["devin@mac"].values())[0]
 assert (dday["in"], dday["out"], round(dday["acu"], 2)) == (100, 20, 0.5)
 assert "dv:mac:sA:7" in led.seen["devin@mac"]
+assert all(r.startswith("hm:mac:default:") for r in led.seen["codex@mac"]), \
+    "remote smu rids must carry the host prefix or hosts collide"
 before = json.dumps(led.days, sort_keys=True)
 ledger.collect_remote(led)
 assert json.dumps(led.days, sort_keys=True) == before
