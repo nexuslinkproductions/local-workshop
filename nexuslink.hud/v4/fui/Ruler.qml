@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // Ruler.qml — graduated straight ruler strip (m_lib ruler()).
 // Ticks run `from` -> `to` across the item's width (or height when

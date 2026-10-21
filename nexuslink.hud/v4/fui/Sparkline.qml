@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // Sparkline.qml — hairline series + 8% area fill (m_lib spark()).
 // Repaints only when `values` or geometry changes.

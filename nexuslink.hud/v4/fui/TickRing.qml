@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // TickRing.qml — ring gauge with a graduated tick bezel, value arc and
 // optional min/max whiskers + redline (M1 instrument gauge).

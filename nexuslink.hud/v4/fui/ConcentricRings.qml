@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // ConcentricRings.qml — N concentric rings around a centre hole (F2-style
 // provider limit rings, M1 DP-2 hero). Per-ring model entries:

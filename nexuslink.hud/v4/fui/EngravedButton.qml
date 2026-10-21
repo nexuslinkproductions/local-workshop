@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // EngravedButton.qml — chamfered engraved control (M1 QA keys).
 // Octagon-cut plate, recessed fill, double hairline (outer edge + inner

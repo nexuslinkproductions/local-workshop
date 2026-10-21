@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // HairBar.qml — hairline bar with min/max whiskers (M1 ladder bars).
 // Banned: spreadsheet-style filled bars. This is a 1px track + a thin value
