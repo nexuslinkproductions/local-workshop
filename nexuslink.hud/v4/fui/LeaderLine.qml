@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // LeaderLine.qml — thin annotation leader with an endpoint label
 // (m_lib leader()): dot at the target (x1,y1) -> elbow (x2,y2) -> optional

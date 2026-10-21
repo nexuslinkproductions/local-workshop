@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 
 // SwimLane.qml — rows x time-axis swim lane (F1 crew table / M1 CRW-TL).
 // Row model: { label, sub, color, events, meta }

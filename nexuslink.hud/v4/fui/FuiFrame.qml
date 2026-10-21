@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import ".."
 import QtQuick.Controls as QQC
 
 // FuiFrame.qml — chamfered/bracketed instrument panel (M1 .frame).
