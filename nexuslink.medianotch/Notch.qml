@@ -178,11 +178,14 @@ Item {
   readonly property real pulse: 0.5 + 0.5 * Math.sin(animT * 2.4)
   // 1->0 decay after a track change; adds a short flare to the halo.
   readonly property real flash: Math.max(0, 1 - (animT - flashT) / 1.4)
+  // Clock only runs while something moves; idle bindings rest on their last values.
+  readonly property real progTgt: lenSec > 0 ? Util.clamp(posSec / lenSec, 0, 1) : 0
+  readonly property bool animating: playing || dragActive || flash > 0 || eqEnv > 0.002 || progDisp !== progTgt
 
   Timer {
     id: animClock
     interval: (root.playing || root.dragActive || root.flash > 0) ? 33 : 420
-    running: true
+    running: root.animating
     repeat: true
     triggeredOnStart: true
     onTriggered: root.tick()
