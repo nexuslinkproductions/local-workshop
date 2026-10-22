@@ -25,16 +25,27 @@ with ``--out DIR``), atomically:
     The same facts as five short plain lines for the deck to show and for chief
     to read aloud. No numbers that are not in ``brief.json``.
 
+When the board cannot be read at all (CLI failed and the database is missing or
+unreadable, or the board fixture is malformed), ``ok`` is false, the ``fleet``
+numbers and ``board.cards`` are null, ``reason`` says what failed, and
+``brief.txt`` leads with ``Board unreadable`` plus that reason. An empty board
+(``[]``) is not that case: it is an honest zero brief with ``ok`` true.
+
 Facts, and what is honest about each one
 ----------------------------------------
 * **Board.** ``hermes kanban list --json`` (the named input); when the CLI is
   unavailable, the same board is read read-only from ``$HERMES_KANBAN_DB`` (or
-  ``~/.hermes/kanban.db``) via the stdlib ``sqlite3`` module. ``board.source``
-  says which path answered and ``board.reason`` says why the CLI did not.
+  ``~/.hermes/kanban.db``) via the stdlib ``sqlite3`` module, opened
+  ``mode=ro`` only: ``immutable=1`` ignores the ``-wal`` file and silently
+  undercounts a committed row that has not been checkpointed. ``board.source``
+  says which path answered and ``board.reason`` says why the CLI did not. When
+  neither path answers, ``ok`` is false with that reason and no counts.
 * **Since.** ``max(kern.boottime, previous brief.json generated_at)``: the brief
   covers what happened since the machine was last up *or* since the last brief,
   whichever is later. ``--since`` overrides it (tests). ``since_source`` says
   which of the two won: ``boot``, ``brief``, ``both``, ``override`` or ``none``.
+  In fixture mode neither the host boot time nor a previous brief is read: only
+  ``--boot`` / ``--since`` supply the anchor, otherwise ``since`` is null.
 * **Buckets.** ``fleet.finished`` is *windowed*: cards ``done`` whose
   ``completed_at`` is at or after ``since``. A card marked ``done`` with no
   ``completed_at`` is never counted as finished. ``blocked``, ``failed`` and
@@ -47,27 +58,42 @@ Facts, and what is honest about each one
   (``~/.local/state/nexuslink/digest.json``, override ``--digest``); if neither
   the command nor the file exists, ``digest.available`` is false with that
   reason and the brief leaves the digest out. A digest is never invented and
-  a missing or malformed one never raises.
-* **Slack.** A read-only probe with the ``hermes-slack`` bot token: ``auth.test``
-  and ``conversations.info`` on the home channel. Slack only returns
-  ``unread_count`` for the calling user's own membership, and a bot token has
-  its own membership, so the field comes back ``null``; there is no read-only
-  API on this host that yields Marcel's unread count. Then ``slack.available``
-  is false, ``unread`` is null, ``reason`` names the call and what it answered,
-  and the brief omits the count. The probe only ever issues GET requests: it
-  never posts, reacts or marks anything read.
+  a missing or malformed one never raises. Fixture mode never reads the host
+  digest: only a ``digest.json`` fixture (or an explicit ``--digest``) counts.
+* **Slack.** No probe, no network call. The first build sent GETs to
+  ``auth.test``, ``conversations.list`` and ``conversations.info``, which the
+  feed contract forbids, and the answer was empty anyway: Slack returns
+  ``unread_count`` only for the calling user's own membership, and a bot token
+  has its own, so the field came back ``null`` (checked 2026-10-23). The live
+  path therefore reports ``available`` false with that fixed finding as its
+  reason and never touches the network; a live probe needs a contract change
+  from Marcel first. A ``slack.json`` fixture still supplies the block.
 
 Phrasing rule
 -------------
 ``phrasing`` is a template, never a rendered sentence and never a number the
 script did not measure. Placeholders are key paths into the same JSON
 (``{fleet.finished}``, ``{slack.reason}``, and ``{needs_me.#}`` for the length
-of a list). ``--self-check`` asserts every placeholder resolves against the
-JSON it is emitted with. No model is called from this script.
+of a list). Every brace pair is checked, including one with spaces inside, so a
+typo like ``{ fleet.finishd }`` fails instead of passing unseen. ``--self-check``
+asserts every placeholder resolves against the JSON it is emitted with. No model
+is called from this script.
 
-Exit codes follow the feed contract: ``0`` for data and for honest absence,
-``2`` for a programming error (bad arguments). ``--self-check`` exits ``1`` when
-a check fails, so drift is loud.
+Fixture mode
+------------
+``--fixture PATH`` reads from a fixture file or directory instead of the live
+host, with no host state: no board CLI, no database, no cache, no ``sysctl``
+boot time, no host digest, no Slack probe. A directory must hold ``board.json``;
+``digest.json`` and ``slack.json`` are optional, and the specific
+``--board-fixture`` / ``--digest-fixture`` / ``--slack-fixture`` flags win over
+what the directory supplies. ``--fixture`` on a missing path, or on a directory
+without ``board.json``, is a bad argument, not a data problem.
+
+Exit codes follow the feed contract: ``0`` for data and for honest absence
+(``ok:false`` plus a reason), ``2`` for a programming error such as a bad
+argument or a named file that does not exist (a missing fixture path, a fixture
+directory with no ``board.json``, a named ``--digest`` that is absent).
+``--self-check`` exits ``1`` when a check fails, so drift is loud.
 """
 
 from __future__ import annotations
@@ -117,9 +143,24 @@ PHRASING = (
     "Digest: available={digest.available} ({digest.reason})."
 )
 
-PLACEHOLDER_RE = re.compile(
-    r"\{([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_#]+|\[[0-9]+\])*)\}"
+# Fixed, not measured: the 2026-10-23 finding on this Mac. A live probe needs a
+# contract change from Marcel before it comes back.
+LIVE_SLACK_REASON = (
+    "no read-only Slack unread count on this host (checked 2026-10-23: Slack "
+    "returns unread_count only for the calling user's own membership and a bot "
+    "token has its own, so the field is null; the live probe was removed and a "
+    "contract change from Marcel is needed before one returns)"
 )
+
+# The phrasing an unreadable board gets: no counts to name, only the reason.
+UNREADABLE_PHRASING = (
+    "The board could not be read this run ({reason}), so nothing was counted. "
+    "Slack unread: available={slack.available} ({slack.reason}). "
+    "Digest: available={digest.available} ({digest.reason})."
+)
+
+# Every brace pair, spaces included: a typo like ``{ fleet.finishd }`` must fail.
+PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 NAME_RE = re.compile(r"^([A-Za-z0-9_]+)((?:\[[0-9]+\])*)$")
 
 
@@ -232,6 +273,14 @@ def read_json_file(path):
         return None, "unreadable: %s" % type(exc).__name__
 
 
+def display_path(path):
+    """A path fit for output: ``~`` under home, the leaf name anywhere else."""
+    resolved = os.path.abspath(os.path.expanduser(str(path)))
+    if resolved == HOME or resolved.startswith(HOME + os.sep):
+        return "~" + resolved[len(HOME):]
+    return os.path.basename(resolved) or resolved
+
+
 # ------------------------------------------------------- phrasing placeholders
 def lookup(obj, path):
     """Resolve ``a.b[0].c`` or ``a.#`` against ``obj``; (found, value)."""
@@ -298,9 +347,15 @@ def slack_call(token, method, timeout=6, **params):
 
 
 def probe_slack(env_path):
-    """Read-only unread probe. Never writes, never prints the token."""
+    """Read-only unread probe. Never writes, never prints the token.
+
+    The live path no longer calls this (see ``LIVE_SLACK_REASON``): F4 must make
+    no network calls. It stays here, correct and exercised by ``--self-check``
+    with a stubbed ``slack_call``, for the day Marcel changes the contract. Every
+    reason is built from what each call actually answered.
+    """
     env = read_env_file(env_path)
-    token = env.get("SLACK_BOT_TOKEN") or env.get("SLACK_USER_TOKEN") or ""
+    token = env.get("SLACK_BOT_TOKEN") or ""
     if not token:
         return {
             "available": False,
@@ -320,34 +375,50 @@ def probe_slack(env_path):
     listing = slack_call(token, "conversations.list",
                          types="public_channel,private_channel",
                          exclude_archived="true", limit="200")
-    channels = listing.get("channels") or [] if listing.get("ok") else []
+    if listing.get("ok"):
+        channels = listing.get("channels") or []
+        listing_note = "conversations.list ok (%d channels)" % len(channels)
+    else:
+        channels = []
+        listing_note = "conversations.list failed (%s)" % (
+            listing.get("error") or "unknown")
     if not home and channels:
         home = channels[0].get("id") or ""
     if not home:
         return {
             "available": False,
             "unread": None,
-            "reason": "auth.test ok, no home channel id to ask conversations.info about",
+            "reason": "auth.test ok, %s, no home channel id to ask "
+                      "conversations.info about" % listing_note,
         }
 
     info = slack_call(token, "conversations.info", channel=home)
-    channel = (info.get("channel") or {}) if info.get("ok") else {}
+    if not info.get("ok"):
+        return {
+            "available": False,
+            "unread": None,
+            "reason": "auth.test ok, %s, conversations.info failed (%s)"
+                      % (listing_note, info.get("error") or "unknown"),
+        }
+
+    channel = info.get("channel") or {}
     unread = integer(channel.get("unread_count"))
     if unread is None:
         return {
             "available": False,
             "unread": None,
             "reason": (
-                "auth.test ok, conversations.list ok (%d channels), "
-                "conversations.info unread_count null for a bot token: "
-                "Slack returns it only for the calling user's own membership, "
-                "so no read-only unread count is available on this host"
-            ) % len(channels),
+                "auth.test ok, %s, conversations.info ok but unread_count is "
+                "null for a bot token: Slack returns it only for the calling "
+                "user's own membership, so no read-only unread count is "
+                "available on this host" % listing_note
+            ),
         }
     return {
         "available": True,
         "unread": unread,
-        "reason": "conversations.info unread_count for the home channel",
+        "reason": "auth.test ok, %s, conversations.info unread_count for the "
+                  "home channel" % listing_note,
         "channel": text(channel.get("name")),
     }
 
@@ -436,26 +507,22 @@ def board_from_db(path=None):
     db_path = path or os.environ.get("HERMES_KANBAN_DB") or DEFAULT_BOARD_DB
     db_path = os.path.abspath(os.path.expanduser(db_path))
     if not os.path.exists(db_path):
-        return None, "board db %s missing" % db_path.replace(HOME, "~")
-    # ``mode=ro`` is refused on this host while the gateway holds the file, so
-    # try it first and fall back to ``immutable=1`` (a consistent snapshot read).
-    row = None
-    error = None
-    for uri in ("file:%s?mode=ro" % db_path, "file:%s?immutable=1" % db_path):
+        return None, "board db %s missing" % display_path(db_path)
+    # ``mode=ro`` only. ``immutable=1`` ignores the ``-wal`` file, so a committed
+    # row still in the WAL is invisible and the brief would undercount silently.
+    # If mode=ro is refused the board is unreadable and the caller reports
+    # ok:false with this reason.
+    try:
+        connection = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
         try:
-            connection = sqlite3.connect(uri, uri=True, timeout=5)
-            try:
-                cursor = connection.execute(
-                    "SELECT id, title, status, assignee, completed_at, created_at,"
-                    " last_failure_error FROM tasks WHERE status != 'archived'")
-                row = cursor.fetchall()
-                break
-            finally:
-                connection.close()
-        except sqlite3.Error as exc:
-            error = "%s: %s" % (type(exc).__name__, exc)
-    if row is None:
-        return None, "board db unreadable (%s)" % (error or "no rows")
+            cursor = connection.execute(
+                "SELECT id, title, status, assignee, completed_at, created_at,"
+                " last_failure_error FROM tasks WHERE status != 'archived'")
+            row = cursor.fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        return None, "board db unreadable (%s: %s)" % (type(exc).__name__, exc)
     cards = []
     for item in row:
         cards.append({
@@ -533,7 +600,7 @@ def build_digest_block(digest_path, fixture):
             return {"available": False, "reason": "bridge-digest not on this host"}, []
         return {"available": False,
                 "reason": "bridge-digest installed but no digest at %s"
-                          % (digest_path or DEFAULT_DIGEST).replace(HOME, "~")}, []
+                          % display_path(digest_path or DEFAULT_DIGEST)}, []
     return digest_payload(payload, source_note="file"), digest_entry(payload)
 
 
@@ -572,8 +639,35 @@ def digest_payload(payload, source_note):
 
 
 # ------------------------------------------------------------------- rendering
+def render_unreadable_lines(payload):
+    """brief.txt when the board could not be read: the reason, never zeros."""
+    reason = text(payload.get("reason")
+                  or (payload.get("board") or {}).get("reason")
+                  or "board not read", limit=160)
+    lines = [
+        "Board unreadable: %s" % reason,
+        "Mac fleet: not measured this run.",
+        "Needs you: unknown.",
+    ]
+    digest = payload.get("digest") or {}
+    if digest.get("available"):
+        lines.append("Digest: %d blocked, %d stalled, %d dead events."
+                     % (digest.get("blocked", 0), digest.get("stalled", 0),
+                        digest.get("dead_events", 0)))
+    else:
+        lines.append("Digest: not on this host.")
+    slack = payload.get("slack") or {}
+    if slack.get("available"):
+        lines.append("Slack: %d unread." % (slack.get("unread") or 0))
+    else:
+        lines.append("Slack: no unread count on this host.")
+    return lines
+
+
 def render_lines(payload):
     """Five short plain lines: the same numbers as brief.json, nothing new."""
+    if payload.get("ok") is False:
+        return render_unreadable_lines(payload)
     fleet = payload["fleet"]
     lines = [
         "Mac fleet since %s: %d finished, %d blocked, %d failed, %d running."
@@ -614,35 +708,61 @@ def render_lines(payload):
 
 
 # ------------------------------------------------------------------ generation
+def _resolve_named(path, label):
+    """Absolute path for a named file, or ArgError (exit 2) when it is absent."""
+    resolved = os.path.abspath(os.path.expanduser(path))
+    if not os.path.isfile(resolved):
+        raise ArgError("%s not found: %s" % (label, resolved))
+    return resolved
+
+
+def fixture_mode(args):
+    """True when the run must not touch the live host at all."""
+    return bool(getattr(args, "fixture", None) or getattr(args, "board_fixture", None))
+
+
 def apply_fixture(args):
     """``--fixture PATH``: the shared feed-contract switch.
 
-    A directory is expected to hold ``board.json``, ``digest.json`` and
-    ``slack.json`` (any of them optional); a file is taken as the board.
-    The specific ``--board-fixture``/``--digest-fixture``/``--slack-fixture``
-    flags win over whatever the directory supplies.
+    A directory must hold ``board.json`` (``digest.json`` and ``slack.json`` are
+    optional); a file is taken as the board. The specific
+    ``--board-fixture``/``--digest-fixture``/``--slack-fixture`` flags win over
+    whatever the directory supplies. Every named path is validated here, so a
+    missing one is exit 2 before any host state is touched. Idempotent.
     """
     path = getattr(args, "fixture", None)
-    if not path:
-        return args
-    path = os.path.abspath(os.path.expanduser(path))
-    if os.path.isdir(path):
-        for attribute, name in (("board_fixture", "board.json"),
-                                ("digest_fixture", "digest.json"),
-                                ("slack_fixture", "slack.json")):
-            candidate = os.path.join(path, name)
-            if not getattr(args, attribute, None) and os.path.isfile(candidate):
-                setattr(args, attribute, candidate)
-    elif os.path.isfile(path):
-        if not getattr(args, "board_fixture", None):
-            args.board_fixture = path
+    if path:
+        resolved = os.path.abspath(os.path.expanduser(path))
+        if os.path.isdir(resolved):
+            if not os.path.isfile(os.path.join(resolved, "board.json")):
+                raise ArgError("fixture directory has no board.json: %s" % resolved)
+            for attribute, name in (("board_fixture", "board.json"),
+                                    ("digest_fixture", "digest.json"),
+                                    ("slack_fixture", "slack.json")):
+                candidate = os.path.join(resolved, name)
+                if not getattr(args, attribute, None) and os.path.isfile(candidate):
+                    setattr(args, attribute, candidate)
+        elif os.path.isfile(resolved):
+            if not getattr(args, "board_fixture", None):
+                args.board_fixture = resolved
+        else:
+            raise ArgError("fixture path not found: %s" % resolved)
+    for attribute, label in (("board_fixture", "--board-fixture"),
+                             ("digest_fixture", "--digest-fixture"),
+                             ("slack_fixture", "--slack-fixture")):
+        value = getattr(args, attribute, None)
+        if value:
+            setattr(args, attribute, _resolve_named(value, label))
+    if getattr(args, "digest", None):
+        args.digest = _resolve_named(args.digest, "--digest")
     return args
 
 
 def generate(args):
     """Build the brief dict + text. Pure: no writes, no clock beyond ``now``."""
     args = apply_fixture(args)
-    source = "fixture" if args.board_fixture else "live"
+    fixtures_only = fixture_mode(args)
+    source = "fixture" if fixtures_only else "live"
     now = parse_epoch(args.now) if args.now is not None else utc_now()
     if now is None:
         raise ArgError("--now is not a timestamp")
@@ -659,19 +779,27 @@ def generate(args):
             board_source = "db"
             if raw_cards is None:
                 board_problem = "%s; %s" % (board_problem, db_problem)
-    cards = [card for card in (normalise_card(item) for item in (raw_cards or []))
-             if card is not None]
+    cards = None
+    if raw_cards is not None:
+        cards = [card for card in (normalise_card(item) for item in raw_cards)
+                 if card is not None]
 
-    # Since: boot time or the previous brief, whichever is later.
+    # Since: boot time or the previous brief, whichever is later. Fixture mode
+    # reads neither of them unless the caller supplied --boot / --since.
     if args.since is not None:
         since_epoch = parse_epoch(args.since)
         if since_epoch is None:
             raise ArgError("--since is not a timestamp")
         since_source = "override"
     else:
-        boot = parse_epoch(args.boot) if args.boot is not None else boot_epoch()
+        if args.boot is not None:
+            boot = parse_epoch(args.boot)
+        elif fixtures_only:
+            boot = None
+        else:
+            boot = boot_epoch()
         previous = None
-        if not args.board_fixture:
+        if not fixtures_only:
             previous_payload, _ = read_json_file(os.path.join(args.out, "brief.json"))
             if isinstance(previous_payload, dict):
                 previous = parse_epoch(previous_payload.get("generated_at"))
@@ -687,27 +815,55 @@ def generate(args):
         else:
             since_source = "none"
 
-    finished, blocked, failed, running, needs_me = bucket(cards, since_epoch)
-
-    # Digest.
+    # Digest: fixture mode never reads the host digest.
     if args.digest_fixture:
         digest, digest_needs_me = build_digest_block(args.digest_fixture, True)
-    else:
+    elif args.digest:
         digest, digest_needs_me = build_digest_block(args.digest, False)
-    for entry in digest_needs_me:
-        if not any(existing["id"] == entry["id"] for existing in needs_me):
-            needs_me.append(entry)
+    elif fixtures_only:
+        digest, digest_needs_me = ({"available": False,
+                                    "reason": "fixture mode: no digest.json fixture "
+                                              "supplied"}, [])
+    else:
+        digest, digest_needs_me = build_digest_block(None, False)
 
-    # Slack.
+    # Slack: the live path makes no network call (LIVE_SLACK_REASON).
     if args.slack_fixture:
         slack = slack_from_fixture(args.slack_fixture,
                                    "no slack fixture on this host")
-    elif args.no_slack or args.board_fixture:
+    elif fixtures_only:
         slack = {"available": False, "unread": None,
-                 "reason": "slack probe not requested in fixture mode" if args.board_fixture
-                           else "slack probe disabled with --no-slack"}
+                 "reason": "fixture mode: no slack.json fixture supplied"}
+    elif args.no_slack:
+        slack = {"available": False, "unread": None,
+                 "reason": "slack probe disabled with --no-slack"}
     else:
-        slack = probe_slack(args.slack_env)
+        slack = {"available": False, "unread": None, "reason": LIVE_SLACK_REASON}
+
+    # An unread board is not an empty board: no counts, just the reason.
+    if cards is None:
+        problem = text(board_problem, limit=240) or "board not read"
+        return {
+            "ok": False,
+            "generated_at": iso(now),
+            "source": source,
+            "reason": problem,
+            "since": iso(since_epoch),
+            "since_source": since_source,
+            "fleet": {"finished": None, "blocked": None, "failed": None,
+                      "still_running": None},
+            "highlights": [],
+            "needs_me": [],
+            "slack": slack,
+            "digest": digest,
+            "phrasing": UNREADABLE_PHRASING,
+            "board": {"source": board_source, "cards": None, "reason": problem},
+        }
+
+    finished, blocked, failed, running, needs_me = bucket(cards, since_epoch)
+    for entry in digest_needs_me:
+        if not any(existing["id"] == entry["id"] for existing in needs_me):
+            needs_me.append(entry)
 
     payload = {
         "ok": True,
@@ -865,18 +1021,30 @@ def self_check():
     check("empty board lists nothing to do",
           empty["needs_me"] == [] and empty["highlights"] == [], "", report)
 
-    # 6. Missing digest does not raise and is not invented.
+    # 6. Missing digest does not raise and is not invented. In fixture mode the
+    #    host digest is off limits, so the absence comes from fixture mode.
     missing_args = argparse.Namespace(
         board_fixture=FIXTURE_BOARD, digest_fixture=None, slack_fixture=FIXTURE_SLACK,
-        digest=os.path.join(scratch, "no-such-digest.json"), now=str(GOLDEN_NOW),
+        digest=None, now=str(GOLDEN_NOW),
         boot=str(GOLDEN_BOOT), since=None, out=os.path.join(scratch, "missing-out"),
         no_slack=False, slack_env=DEFAULT_SLACK_ENV)
     missing = generate(missing_args)
     check("missing digest is an honest absence",
-          missing["digest"]["available"] is False and bool(missing["digest"].get("reason")),
+          missing["digest"]["available"] is False
+          and "fixture mode" in (missing["digest"].get("reason") or ""),
           repr(missing["digest"]), report)
     check("missing digest does not change the board facts",
           missing["fleet"] == payload["fleet"], repr(missing["fleet"]), report)
+    named_digest_raised = False
+    try:
+        generate(argparse.Namespace(
+            board_fixture=FIXTURE_BOARD, digest_fixture=None, slack_fixture=None,
+            digest=os.path.join(scratch, "no-such-digest.json"), now=str(GOLDEN_NOW),
+            boot=str(GOLDEN_BOOT), since=None, out=os.path.join(scratch, "missing-out"),
+            no_slack=True, slack_env=DEFAULT_SLACK_ENV))
+    except ArgError:
+        named_digest_raised = True
+    check("a named missing --digest is a bad argument", named_digest_raised, "", report)
 
     # 7. A done card with no completed_at, alone: zero finished.
     null_path = os.path.join(scratch, "null-completed.json")
@@ -939,14 +1107,29 @@ def self_check():
     leftovers = [n for n in os.listdir(out_dir) if n.startswith(".brief.")]
     check("no temp files left behind", not leftovers, repr(leftovers), report)
 
-    # 11. The live path is exercised once: it must answer, not raise.
+    # 11. The live path is exercised once: it must answer, not raise, and an
+    #     ok:true answer must carry a board that was actually read (the old
+    #     check passed on a fabricated zero brief too).
     live = generate(argparse.Namespace(
         board_fixture=None, digest_fixture=None, slack_fixture=None, digest=None,
         now=None, boot=None, since=None, out=os.path.join(scratch, "live-out"),
         no_slack=True, slack_env=DEFAULT_SLACK_ENV))
-    check("live board answers", live["ok"] is True
-          and live["board"]["source"] in ("cli", "db"),
-          repr(live["board"]), report)
+    live_read = (live["ok"] is True
+                 and live["board"]["source"] in ("cli", "db")
+                 and isinstance(live["board"].get("cards"), int)
+                 and not isinstance(live["board"].get("cards"), bool)
+                 and all(isinstance(value, int) and not isinstance(value, bool)
+                         for value in live["fleet"].values())
+                 and sum(live["fleet"].values()) <= live["board"]["cards"]
+                 and ((live["board"]["source"] == "cli"
+                       and not live["board"].get("reason"))
+                      or (live["board"]["source"] == "db"
+                          and bool(live["board"].get("reason")))))
+    live_absent = (live["ok"] is False and bool(live.get("reason"))
+                   and live["board"]["cards"] is None
+                   and all(value is None for value in live["fleet"].values()))
+    check("live board answers", live_read or live_absent,
+          repr(live.get("board")), report)
     check("live brief.txt is 3 to 6 lines",
           3 <= len("\n".join(render_lines(live)).splitlines()) <= 6, "", report)
 
@@ -964,6 +1147,297 @@ def self_check():
         since=None, out=os.path.join(scratch, "dir-out"), no_slack=False,
         slack_env=DEFAULT_SLACK_ENV))
     check("--fixture directory matches the explicit flags", via_dir == payload, "", report)
+
+    # 13. Phrasing: a placeholder with spaces inside the braces is caught too.
+    spaced = unresolved_placeholders("x {fleet.finished} y { fleet.finishd }", payload)
+    check("phrasing catches a spaced placeholder typo",
+          spaced == [" fleet.finishd "], repr(spaced), report)
+
+    # 14. The live path makes no network calls, and Slack says why with the
+    #     2026-10-23 finding as a fixed reason.
+    import urllib.request
+    real_urlopen = urllib.request.urlopen
+    network_attempts = []
+
+    def recording_urlopen(request, *args, **kwargs):
+        network_attempts.append(request)
+        raise AssertionError("network call attempted")
+
+    urllib.request.urlopen = recording_urlopen
+    try:
+        offnet = generate(argparse.Namespace(
+            board_fixture=None, digest_fixture=None, slack_fixture=None, digest=None,
+            now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
+            out=os.path.join(scratch, "offnet-out"), no_slack=False,
+            slack_env=DEFAULT_SLACK_ENV))
+    finally:
+        urllib.request.urlopen = real_urlopen
+    check("live path makes no network calls", not network_attempts,
+          repr(network_attempts), report)
+    check("live slack reports the 2026-10-23 finding",
+          offnet["slack"]["available"] is False
+          and offnet["slack"]["reason"] == LIVE_SLACK_REASON,
+          repr(offnet["slack"]), report)
+
+    # 15. Fixture mode reads no host state: digest and boot time are off limits.
+    board_only_dir = os.path.join(scratch, "board-only-dir")
+    os.makedirs(board_only_dir, exist_ok=True)
+    with open(FIXTURE_BOARD, "r", encoding="utf-8") as handle:
+        write_atomic(os.path.join(board_only_dir, "board.json"), handle.read())
+
+    planted_digest = os.path.join(scratch, "planted-digest.json")
+    write_atomic(planted_digest, json.dumps({
+        "generated_at": "2026-10-23T00:00:00Z",
+        "blocked": [{"id": "t_planted", "title": "planted host digest"}],
+        "stalled": 1, "dead_events": 1}) + "\n")
+    saved_default_digest = globals()["DEFAULT_DIGEST"]
+    globals()["DEFAULT_DIGEST"] = planted_digest
+    try:
+        planted = generate(argparse.Namespace(
+            fixture=board_only_dir, board_fixture=None, digest_fixture=None,
+            slack_fixture=None, digest=None, now=str(GOLDEN_NOW),
+            boot=None, since=None, out=os.path.join(scratch, "planted-out"),
+            no_slack=False, slack_env=DEFAULT_SLACK_ENV))
+    finally:
+        globals()["DEFAULT_DIGEST"] = saved_default_digest
+    check("fixture mode never reads the host digest",
+          planted["digest"]["available"] is False
+          and all(n["id"] != "t_planted" for n in planted["needs_me"]),
+          repr(planted["digest"]), report)
+
+    saved_boot_epoch = globals()["boot_epoch"]
+    boot_calls = []
+
+    def recording_boot_epoch():
+        boot_calls.append(1)
+        return GOLDEN_BOOT
+
+    globals()["boot_epoch"] = recording_boot_epoch
+    try:
+        no_boot = generate(argparse.Namespace(
+            fixture=board_only_dir, board_fixture=None, digest_fixture=None,
+            slack_fixture=None, digest=None, now=str(GOLDEN_NOW),
+            boot=None, since=None, out=os.path.join(scratch, "noboot-out"),
+            no_slack=True, slack_env=DEFAULT_SLACK_ENV))
+    finally:
+        globals()["boot_epoch"] = saved_boot_epoch
+    check("fixture mode never asks sysctl for the boot time",
+          not boot_calls and no_boot["since"] is None
+          and no_boot["since_source"] == "none",
+          repr((boot_calls, no_boot["since"])), report)
+
+    # 16. Fixture mode never returns the host cache, even a fresh brief.json.
+    import contextlib
+    import io
+
+    def quiet_main(argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    cache_out = os.path.join(scratch, "cache-out")
+    os.makedirs(cache_out, exist_ok=True)
+    planted_brief = {
+        "ok": True, "generated_at": iso(utc_now() - 5), "source": "live",
+        "since": None, "since_source": "none",
+        "fleet": {"finished": 999, "blocked": 0, "failed": 0, "still_running": 0},
+        "highlights": [], "needs_me": [],
+        "slack": {"available": False, "unread": None, "reason": "planted"},
+        "digest": {"available": False, "reason": "planted"},
+        "phrasing": PHRASING, "board": {"source": "cli", "cards": 1},
+    }
+    write_atomic(os.path.join(cache_out, "brief.json"),
+                 json.dumps(planted_brief) + "\n")
+    cache_rc, cache_stdout, cache_stderr = quiet_main(
+        ["--fixture", board_only_dir, "--out", cache_out, "--json"])
+    check("fixture mode never returns the host cache",
+          cache_rc == EXIT_OK and "brief cached" not in cache_stderr
+          and '"finished": 999' not in cache_stdout
+          and '"source": "fixture"' in cache_stdout,
+          "rc=%r stderr=%r" % (cache_rc, cache_stderr.strip()[:120]), report)
+
+    # 17. Named missing paths and an empty fixture directory are exit 2, and
+    #     nothing is written to --out.
+    rc_out = os.path.join(scratch, "rc-out")
+    named_paths = [
+        ("--fixture", ["--fixture", os.path.join(scratch, "no-such-fixture.json")]),
+        ("--board-fixture", ["--board-fixture", os.path.join(scratch, "no-such-board.json")]),
+        ("--slack-fixture", ["--slack-fixture", os.path.join(scratch, "no-such-slack.json")]),
+        ("--digest-fixture", ["--digest-fixture", os.path.join(scratch, "no-such-digest.json")]),
+    ]
+    empty_fixture_dir = os.path.join(scratch, "empty-fixture-dir")
+    os.makedirs(empty_fixture_dir, exist_ok=True)
+    named_paths.append(("--fixture empty dir", ["--fixture", empty_fixture_dir]))
+    bad_codes = []
+    for label, argv in named_paths:
+        code, _, _ = quiet_main(argv + ["--out", rc_out])
+        if code != EXIT_PROGRAMMING:
+            bad_codes.append((label, code))
+    check("named missing paths exit 2", not bad_codes, repr(bad_codes), report)
+    check("a bad path writes nothing", not os.path.exists(rc_out), rc_out, report)
+
+    # 18. An unreadable board is ok:false with no counts, never fabricated zeros.
+    stub_dir = os.path.join(scratch, "stub-bin")
+    os.makedirs(stub_dir, exist_ok=True)
+    stub_hermes = os.path.join(stub_dir, "hermes")
+    write_atomic(stub_hermes, "#!/bin/sh\nexit 1\n")
+    os.chmod(stub_hermes, 0o755)
+    saved_path = os.environ.get("PATH", "")
+    saved_db_env = os.environ.get("HERMES_KANBAN_DB")
+    os.environ["PATH"] = stub_dir + os.pathsep + saved_path
+    os.environ["HERMES_KANBAN_DB"] = os.path.join(scratch, "no-such-board.db")
+    try:
+        unreadable_args = argparse.Namespace(
+            board_fixture=None, digest_fixture=None, slack_fixture=None, digest=None,
+            now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
+            out=os.path.join(scratch, "unreadable-out"), no_slack=True,
+            slack_env=DEFAULT_SLACK_ENV)
+        unreadable = generate(unreadable_args)
+        unreadable_rc, _, _ = quiet_main([
+            "--no-slack", "--json", "--now", str(GOLDEN_NOW),
+            "--boot", str(GOLDEN_BOOT),
+            "--out", os.path.join(scratch, "unreadable-out")])
+    finally:
+        os.environ["PATH"] = saved_path
+        if saved_db_env is None:
+            os.environ.pop("HERMES_KANBAN_DB", None)
+        else:
+            os.environ["HERMES_KANBAN_DB"] = saved_db_env
+    unreadable_lines = render_lines(unreadable)
+    unreadable_text = "\n".join(unreadable_lines)
+    check("unreadable board is ok:false with no counts",
+          unreadable["ok"] is False and bool(unreadable.get("reason"))
+          and all(value is None for value in unreadable["fleet"].values())
+          and unreadable["board"]["cards"] is None
+          and unreadable["highlights"] == [] and unreadable["needs_me"] == [],
+          repr(unreadable.get("fleet")), report)
+    check("unreadable board phrasing resolves",
+          not unresolved_placeholders(unreadable["phrasing"], unreadable),
+          repr(unreadable["phrasing"]), report)
+    check("unreadable board brief.txt leads with Board unreadable",
+          unreadable_lines[0].startswith("Board unreadable")
+          and "0 finished" not in unreadable_text
+          and "Needs you: nothing." not in unreadable_text,
+          repr(unreadable_lines[0][:140]), report)
+    check("unreadable board is still exit 0", unreadable_rc == EXIT_OK,
+          repr(unreadable_rc), report)
+
+    # 19. A malformed board fixture is ok:false too (a missing one is exit 2).
+    bad_fixture = os.path.join(scratch, "bad-board.json")
+    write_atomic(bad_fixture, "{not json\n")
+    bad = generate(argparse.Namespace(
+        board_fixture=bad_fixture, digest_fixture=None, slack_fixture=None,
+        digest=None, now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
+        out=os.path.join(scratch, "bad-out"), no_slack=True,
+        slack_env=DEFAULT_SLACK_ENV))
+    check("malformed board fixture is ok:false, not zeros",
+          bad["ok"] is False and bad["board"]["source"] == "fixture"
+          and bad["board"]["cards"] is None
+          and all(value is None for value in bad["fleet"].values()),
+          repr(bad.get("fleet")), report)
+
+    # 20. The Slack probe's reason says what each call answered, and it only
+    #     reads SLACK_BOT_TOKEN.
+    probe_env = os.path.join(scratch, "slack.env")
+    write_atomic(probe_env, "SLACK_BOT_TOKEN=xoxb-test\nSLACK_HOME_CHANNEL=C123\n")
+    user_env = os.path.join(scratch, "slack-user.env")
+    write_atomic(user_env, "SLACK_USER_TOKEN=xoxp-test\nSLACK_HOME_CHANNEL=C123\n")
+    real_slack_call = globals()["slack_call"]
+
+    def slack_stub_failed_info(token, method, timeout=6, **params):
+        if method == "auth.test":
+            return {"ok": True}
+        if method == "conversations.list":
+            return {"ok": True, "channels": [{"id": "C123"}]}
+        return {"ok": False, "error": "channel_not_found"}
+
+    def slack_stub_null_unread(token, method, timeout=6, **params):
+        if method == "auth.test":
+            return {"ok": True}
+        if method == "conversations.list":
+            return {"ok": True, "channels": [{"id": "C123"}]}
+        return {"ok": True, "channel": {"id": "C123", "unread_count": None}}
+
+    def slack_stub_ok(token, method, timeout=6, **params):
+        if method == "auth.test":
+            return {"ok": True}
+        if method == "conversations.list":
+            return {"ok": True, "channels": [{"id": "C123"}]}
+        return {"ok": True, "channel": {"id": "C123", "unread_count": 3,
+                                        "name": "hq"}}
+
+    try:
+        globals()["slack_call"] = slack_stub_failed_info
+        failed_info = probe_slack(probe_env)
+        globals()["slack_call"] = slack_stub_null_unread
+        null_unread = probe_slack(probe_env)
+        globals()["slack_call"] = slack_stub_ok
+        user_only = probe_slack(user_env)
+        good = probe_slack(probe_env)
+    finally:
+        globals()["slack_call"] = real_slack_call
+    check("slack reason names a failed conversations.info",
+          failed_info["available"] is False
+          and "channel_not_found" in failed_info["reason"]
+          and "unread_count is null" not in failed_info["reason"],
+          repr(failed_info["reason"]), report)
+    check("slack reason says unread_count null only when it was null",
+          null_unread["available"] is False
+          and "unread_count is null" in null_unread["reason"],
+          repr(null_unread["reason"]), report)
+    check("slack probe ignores SLACK_USER_TOKEN",
+          user_only["available"] is False
+          and "SLACK_BOT_TOKEN" in user_only["reason"],
+          repr(user_only["reason"]), report)
+    check("slack probe still answers when every call is ok",
+          good["available"] is True and good["unread"] == 3,
+          repr(good), report)
+
+    # 21. Board DB: mode=ro only, and a committed row still in the WAL is seen
+    #     (immutable=1 would miss it).
+    import sqlite3
+
+    wal_db = os.path.join(scratch, "wal-board.db")
+    writer = sqlite3.connect(wal_db)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute(
+            "CREATE TABLE tasks (id TEXT, title TEXT, status TEXT, assignee TEXT,"
+            " completed_at INTEGER, created_at INTEGER, last_failure_error TEXT)")
+        writer.execute("INSERT INTO tasks VALUES"
+                       " ('t_wal1','checkpointed','done','kakashi',1,1,NULL)")
+        writer.commit()
+        writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        writer.execute("INSERT INTO tasks VALUES"
+                       " ('t_wal2','still in wal','blocked','yamato',NULL,2,NULL)")
+        writer.commit()
+        wal_cards, wal_reason = board_from_db(wal_db)
+    finally:
+        writer.close()
+    wal_ids = sorted(card["id"] for card in (wal_cards or []))
+    check("board db sees a committed row still in the WAL",
+          wal_cards is not None and wal_ids == ["t_wal1", "t_wal2"],
+          repr((wal_ids, wal_reason)), report)
+
+    saved_connect = sqlite3.connect
+    opened_uris = []
+
+    def failing_readonly(target, *args, **kwargs):
+        opened_uris.append(str(target))
+        if "mode=ro" in str(target):
+            raise sqlite3.OperationalError("simulated refusal")
+        return saved_connect(target, *args, **kwargs)
+
+    sqlite3.connect = failing_readonly
+    try:
+        refused, refused_reason = board_from_db(wal_db)
+    finally:
+        sqlite3.connect = saved_connect
+    check("board db has no immutable fallback",
+          refused is None and "simulated refusal" in (refused_reason or "")
+          and len(opened_uris) == 1 and "mode=ro" in opened_uris[0],
+          repr((refused_reason, opened_uris)), report)
 
     shutil.rmtree(scratch, ignore_errors=True)
 
@@ -996,9 +1470,12 @@ def build_parser():
     parser.add_argument("--digest", metavar="PATH", default=None,
                         help="path to the bridge-digest output file")
     parser.add_argument("--slack-env", metavar="PATH", default=DEFAULT_SLACK_ENV,
-                        help="profile .env holding SLACK_BOT_TOKEN")
+                        help="profile .env holding SLACK_BOT_TOKEN (accepted for "
+                             "compatibility; the live Slack probe was removed "
+                             "2026-10-23 and no longer reads it)")
     parser.add_argument("--no-slack", action="store_true",
-                        help="skip the read-only Slack probe")
+                        help="say Slack was not probed (the live path sends no "
+                             "network request either way)")
     parser.add_argument("--now", metavar="STAMP", default=None,
                         help="freeze the clock (epoch or ISO) for tests")
     parser.add_argument("--boot", metavar="STAMP", default=None,
@@ -1024,8 +1501,11 @@ def main(argv=None):
         if args.self_check:
             return self_check()
 
+        # Settle fixture mode before the cache check: --fixture must never read
+        # the host brief, and a named missing path must exit 2 before any work.
+        args = apply_fixture(args)
         out_dir = os.path.abspath(os.path.expanduser(args.out))
-        if not args.force and not args.board_fixture:
+        if not args.force and not fixture_mode(args):
             cached, problem = read_json_file(os.path.join(out_dir, "brief.json"))
             if problem is None and isinstance(cached, dict):
                 cached_at = parse_epoch(cached.get("generated_at"))
