@@ -1,4 +1,4 @@
-# GREETING — chief's startup line (HUD v5, Phase 2 item 10)
+# GREETING: chief's startup line (HUD v5, Phase 2 item 10)
 
 Read by chief after the boot brief card appears, and only then. Facts come from
 `brief.json` (F4, `feeds/boot_brief.py`); this file only fixes the wording.
@@ -9,7 +9,8 @@ Read by chief after the boot brief card appears, and only then. Facts come from
 {fleet.finished} finished, {fleet.blocked} blocked, {needs_me.#} waiting on you.
 ```
 
-Eight words, one line, no greeting filler.
+Eight words when rendered with the fixture counts, one line, no greeting filler.
+The budget rule under "Rules for chief" can shorten it.
 
 ## Placeholders (resolve with F4's own resolver)
 
@@ -21,7 +22,7 @@ length. Every placeholder below resolves through that function unchanged.
 |---|---|---|
 | `{fleet.finished}` | `fleet.finished` | integer count of cards finished since last shutdown |
 | `{fleet.blocked}` | `fleet.blocked` | integer count of cards blocked |
-| `{needs_me.#}` | `needs_me.#` | length of the `needs_me` array — cards blocked or failed |
+| `{needs_me.#}` | `needs_me.#` | length of the `needs_me` array: blocked board cards plus blocked digest items; failed cards are not counted |
 
 Note the `.#` on the last one: `needs_me` is an array, so naming it without the
 length operator would render the whole list, not a count. `{needs_me.#}` is F4's
@@ -29,7 +30,7 @@ own length operator and is the form that must be used. The build card names thes
 shorthand as finished, blocked and needs_me; the dotted and `#` forms are the
 paths that actually resolve.
 
-## Variants (still one line, still under 20 words)
+## Variants (one line each; the budget rule below decides which one fits)
 
 | when | line |
 |---|---|
@@ -45,14 +46,22 @@ paths that actually resolve.
   substitute or round a number.
 - If `slack.available` is false, never mention Slack. F4 sets it false on this host.
 - No filler: no "welcome back", no "master", no "sir", no time-of-day greeting.
-- Keep it under six seconds spoken. If the rendered line would run longer, read
-  the default variant only.
+- Budget: the whole startup sequence is capped at 5 s (MAIN-SCREEN-BUILD.md
+  Phase 2 item 10). The wake animation and `startup.wav` (1.75 s) come out of
+  that first, so the spoken line has roughly 2 s, not 5. That is about 5 words
+  at 150 words per minute, and the 8-word default line measures about 3.2 s at
+  that rate, so it does not fit: measure the rendered file (`ffprobe
+  -show_entries format=duration`) and use the shortest variant that does, giving
+  up the needs-me clause first and the blocked clause second. Never raise the
+  speaking rate to make a longer line fit.
+- If no variant fits, speak only `{needs_me.#} waiting on you.`, or skip speech
+  for that boot. The brief is on screen either way.
 
 ## Speech options on Linux (what each needs)
 
 | option | what it is | needs on the HUD box (Linux) | tested from this Mac |
 |---|---|---|---|
-| Hermes `text_to_speech` tool | built into every Hermes session, including cron and headless runs; 11 built-in providers (`edge` default, `elevenlabs`, `openai`, `minimax`, `mistral`, `gemini`, `xai`, `deepinfra`, `neutts`, `kittentts`, `piper`) plus custom command providers | a `tts:` block in the profile `config.yaml`: `tts.provider`, then that provider's block (`tts.edge.voice`, `tts.edge.speed`, `tts.openai.model`, …). `edge` needs the `edge-tts` package and outbound wss to Microsoft's read-aloud endpoint (network); `openai` needs `VOICE_TOOLS_OPENAI_KEY`; `piper` needs the piper binary and a voice `.onnx` locally | **not tested.** No synthesis was run: no provider key and no outbound network were used. The tool hides itself from the tool list when its requirements fail, so a missing key looks like a missing tool |
+| Hermes `text_to_speech` tool | built into every Hermes session, including cron and headless runs; 11 built-in providers (`edge` default, `elevenlabs`, `openai`, `minimax`, `mistral`, `gemini`, `xai`, `deepinfra`, `neutts`, `kittentts`, `piper`) plus custom command providers | a `tts:` block in the profile `config.yaml`: `tts.provider`, then that provider's block (`tts.edge.voice`, `tts.edge.speed`, `tts.openai.model`, …). `edge` needs the `edge-tts` package and outbound wss to Microsoft's read-aloud endpoint (network). `openai` takes `tts.openai.api_key`, else `VOICE_TOOLS_OPENAI_KEY` or `OPENAI_API_KEY` (`tools/tts_tool_openai.py:56-62`). The built-in `piper` provider is the Python package `piper-tts`, which supplies `PiperVoice` (`tools/tts_tool.py:81,191-193`); it is not a binary. On first use it downloads its voice with `python -m piper.download_voices` into `<HERMES_HOME>/cache/piper-voices`, or into `tts.piper.voices_dir` when that is set (`tools/tts_tool_local.py:80,101,122`), so the first run needs network unless the voice is already cached or `tts.piper.voice` points at an existing `.onnx` (`tools/tts_tool_local.py:92-97`). The standalone `piper` binary is the separate row further down | **not tested.** No synthesis was run: no provider key and no outbound network were used. The tool hides itself from the tool list when its requirements fail, so a missing key looks like a missing tool |
 | Hermes command provider (`tts.providers.<name>`, `type: command`) | wraps any local binary, e.g. espeak-ng or piper | a `command` template with placeholders for the input text path, the output path and the format (`text_path`, `output_path`, `format` in Hermes' command-provider docs), plus `output_format`, `timeout`, `max_text_length`; the binary on `PATH` | **not tested.** No local TTS binary was probed on the HUD host |
 | chief voice | chief's own voice channel | **no documented command.** Only `chief-on` / `chief-off` (both accept `--dry-run`) are documented; `recon/05-local-ai.md:153-156` records that `chief-voice` is the state writer and that a Hermes voice hook never landed. One session-memory record mentions `say <text>` verbs in `chief/voice/chief-voice`, but no usage text or source is reachable on this Mac | **not tested and not documented.** Do not wire the HUD to it |
 | `espeak-ng` / `espeak` | offline formant synth, renders a wav with `-w out.wav "text"` | the package only; robotic voice | **not tested.** Install state on the HUD box unknown |
@@ -62,11 +71,14 @@ paths that actually resolve.
 | `spd-say` | speech-dispatcher client | a running `speech-dispatcher` daemon; cannot render to a file (`-w` waits, it does not write) | **not tested** |
 
 Recommended path for the real HUD: let Hermes `text_to_speech` render the
-greeting line to a file (`edge` when the box has network, the `piper` provider or
-a command provider when it must stay offline), then have Quickshell play that
-file with `pw-play` after `startup.wav` and the brief card are done. The spoken
-text should be `brief.txt` from F4 verbatim, so speech can never disagree with
-the numbers on screen.
+greeting line to a file (`edge` when the box has network; the `piper` provider
+once its voice is cached, or a command provider with a local binary, when it
+must stay offline), then have Quickshell play that file with `pw-play` after
+`startup.wav` and the brief card are done. Chief speaks the one-line greeting
+above and nothing else. `brief.txt` from F4 is five lines, so it goes on screen
+next to the card, never into the speaker: Phase 2 item 10 asks for a short
+spoken line plus a shown brief, and speaking the file would break the one-line
+rule.
 
 ### What could not be tested from this Mac
 

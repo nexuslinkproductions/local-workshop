@@ -4,7 +4,8 @@
 Design (MAIN-SCREEN-BUILD.md Phase 2 item 10: "soft sfx, generated locally,
 subtle, one file"):
 
-  * three sine partials (fundamental + 2nd + 3rd, exact 1:2:3) with a gentle
+  * three sine partials (fundamental + 2nd + 3rd, tuned 1:2:3 with a +5 cent
+    detune on the second partial and -4 cents on the third) with a gentle
     downward pitch settle (220 Hz -> 196 Hz) and a very slow 0.35 Hz tremolo at
     8 percent depth, so the file breathes instead of sitting on one static sine;
   * 180 ms raised-cosine attack (starts at exactly zero, no click);
@@ -56,7 +57,7 @@ except ImportError:  # pragma: no cover - numpy is a stated prerequisite for F5
     raise SystemExit(2)
 
 # --------------------------------------------------------------------------
-# Contract constants (every one of these is asserted by --self-check)
+# Contract constants (the self-check exercises every one of these)
 # --------------------------------------------------------------------------
 
 SAMPLE_RATE = 48000
@@ -76,6 +77,13 @@ STEP_BOUND_FS = 0.030  # max |step| anywhere in the file, 3.0 percent FS
 HF_LIMIT_HZ = 4000.0
 HF_LIMIT_FRAC = 0.001  # energy above 4 kHz under 0.1 percent: band-limited
 MAX_FILE_BYTES = 300 * 1024
+
+# Spectral analysis. A peak is a strict local maximum in this band, and it has
+# to be within PEAK_FLOOR_DB of the strongest one: the skirts of a strong
+# partial and the noise-floor ripple are monotone or tiny, so neither passes.
+PEAK_BAND_HZ = (100.0, 8000.0)
+PEAK_FLOOR_DB = -40.0
+BAND_TOLERANCE_HZ = 8.0  # margin around a partial's settle sweep
 
 # Envelope
 ATTACK_S = 0.180
@@ -340,23 +348,61 @@ def build(path: Path) -> dict:
 # --------------------------------------------------------------------------
 
 
-def spectrum_peaks(samples: "np.ndarray", count: int = 5):
+def spectrum_peaks(samples: "np.ndarray", count: int = 5, floor_db: float = PEAK_FLOOR_DB):
+    """Real spectral peaks: strict local maxima, refined, cut at ``floor_db``.
+
+    Taking the loudest bins reports skirt points as if they were separate tones.
+    The old scan excluded 20 Hz around each pick and still printed 422.9 and
+    620.6 Hz, which sit on the falling skirts of the 402 Hz and 600 Hz
+    partials (each settles, so its energy is spread over a band and its skirt is
+    long). A bin only counts here when it is higher than both of its neighbours,
+    which cannot be true on a monotone skirt. The frequency comes from a
+    parabolic fit across the three bins, so it is not quantised to the 0.571 Hz
+    bin grid, and anything more than ``floor_db`` below the strongest peak is
+    dropped so noise-floor ripple cannot pass either.
+    """
     window = np.hanning(samples.size)
     magnitude = np.abs(np.fft.rfft(samples * window))
     freqs = np.fft.rfftfreq(samples.size, 1.0 / SAMPLE_RATE)
-    # Local maxima only, so we do not report three bins of the same lobe.
-    order = np.argsort(magnitude)[::-1]
+    step = float(freqs[1] - freqs[0])
+    strongest = float(np.max(magnitude)) if magnitude.size else 0.0
+    if strongest <= 0.0:
+        return []
+    low = max(int(np.searchsorted(freqs, PEAK_BAND_HZ[0])), 1)
+    high = min(int(np.searchsorted(freqs, PEAK_BAND_HZ[1])), freqs.size - 1)
     picked = []
-    for index in order:
-        f = float(freqs[index])
-        if all(abs(f - other[0]) > 20.0 for other in picked):
-            picked.append((f, float(magnitude[index])))
-        if len(picked) >= count:
-            break
-    return picked
+    for index in range(low, high):
+        here = float(magnitude[index])
+        if not (here > float(magnitude[index - 1]) and here >= float(magnitude[index + 1])):
+            continue
+        if 20.0 * math.log10(here / strongest) < floor_db:
+            continue
+        left, right = float(magnitude[index - 1]), float(magnitude[index + 1])
+        curvature = left - 2.0 * here + right
+        offset = 0.5 * (left - right) / curvature if curvature != 0.0 else 0.0
+        picked.append((float(freqs[index] + offset * step), here))
+    picked.sort(key=lambda item: -item[1])
+    return picked[:count]
 
 
-def matched_peak(peaks, f_start: float, f_end: float, tolerance: float = 8.0):
+def settle_band(f_start: float, f_end: float, tolerance: float = BAND_TOLERANCE_HZ):
+    """The frequency band one settling partial sweeps through, plus a margin."""
+    return (min(f_start, f_end) - tolerance, max(f_start, f_end) + tolerance)
+
+
+def band_energies(samples: "np.ndarray", bands):
+    """Windowed power summed inside each band; ratios are what matter, not units."""
+    window = np.hanning(samples.size)
+    power = np.abs(np.fft.rfft(samples * window)) ** 2
+    freqs = np.fft.rfftfreq(samples.size, 1.0 / SAMPLE_RATE)
+    totals = []
+    for low_hz, high_hz in bands:
+        mask = (freqs >= low_hz) & (freqs <= high_hz)
+        totals.append(float(np.sum(power[mask])))
+    return totals
+
+
+def matched_peak(peaks, f_start: float, f_end: float, tolerance: float = BAND_TOLERANCE_HZ):
     """First spectral peak inside the band a settling partial sweeps through."""
     low = f_end - tolerance
     high = f_start + tolerance
@@ -518,7 +564,7 @@ def self_check() -> int:
         )
 
         # 9 - real partials, not silence and not one sine
-        peaks = spectrum_peaks(samples, count=5)
+        peaks = spectrum_peaks(samples)
         top = [f for f, _ in peaks]
         matched = []
         for _label, f_start, f_end, _level, _detune in PARTIALS:
@@ -526,9 +572,14 @@ def self_check() -> int:
             matched.append((f_start, f_end, freq, magnitude))
         check.check(
             "partials",
-            all(entry[2] is not None for entry in matched),
-            "top peaks {} Hz; each designed partial found inside its settle band: {}".format(
-                ["{:.1f}".format(f) for f in top],
+            len(top) == len(PARTIALS) and all(entry[2] is not None for entry in matched),
+            "spectral peaks {} Hz, and nothing else (strict local maxima in "
+            "{:.0f}-{:.0f} Hz within {:.0f} dB of the strongest); each designed "
+            "partial found inside its settle band: {}".format(
+                ", ".join("{:.1f}".format(f) for f in top) or "none",
+                PEAK_BAND_HZ[0],
+                PEAK_BAND_HZ[1],
+                PEAK_FLOOR_DB,
                 ", ".join(
                     "{:.0f}-{:.0f} Hz -> {}".format(
                         entry[0],
@@ -541,14 +592,30 @@ def self_check() -> int:
         )
         fundamental_mag = matched[0][3]
         second_mag = matched[1][3]
-        relative = (
+        peak_relative = (
             _db(second_mag) - _db(fundamental_mag) if fundamental_mag > 0 else -99.0
         )
+        # Every partial settles, so its energy is spread across a band and a
+        # single peak bin reads low (-12.05 dB for a designed -9.0 dB). Summed
+        # band energy is the measure that matches the designed level.
+        energies = band_energies(
+            samples,
+            [settle_band(f_start, f_end) for _label, f_start, f_end, _level, _detune in PARTIALS],
+        )
+        base = energies[0] if energies[0] > 0.0 else 0.0
+        band_db = [
+            10.0 * math.log10(value / base) if base > 0.0 and value > 0.0 else -99.0
+            for value in energies
+        ]
         check.check(
             "partial-balance",
-            -14.0 <= relative <= -5.0,
-            "second partial {:.2f} dB relative to the fundamental "
-            "(designed -9.0 dB)".format(relative),
+            -14.0 <= band_db[1] <= -5.0,
+            "second partial {:.2f} dB by band energy (designed -9.0 dB) and "
+            "{:.2f} dB by peak bin, which reads low because the partial settles "
+            "across its band; third partial {:.2f} dB by band energy (designed "
+            "-20.0 dB); bound on the second is -14.0..-5.0".format(
+                band_db[1], peak_relative, band_db[2]
+            ),
         )
 
         # 10 - determinism: two fresh renders are byte-identical
