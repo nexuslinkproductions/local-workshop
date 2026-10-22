@@ -495,13 +495,18 @@ Item {
         var cy = box * 0.52
         var radius = box * 0.32
         var out = []
-        var step = Math.max(0.16, 1.15 * cell / radius)
-        var a
-        for (a = Math.PI; a <= 2 * Math.PI + 0.0001; a += step)
+        // even sample along the rim and both legs so the glyph's bounds are exact
+        var domeCount = Math.max(6, Math.round(Math.PI * radius / (1.15 * cell)))
+        for (var i = 0; i <= domeCount; ++i) {
+            var a = Math.PI + Math.PI * i / domeCount
             out.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius, d: d })
-        for (var y = cy; y <= box * 0.82 + 0.0001; y += 1.15 * cell) {
-            out.push({ x: cx - radius, y: y, d: d })
-            out.push({ x: cx + radius, y: y, d: d })
+        }
+        var legBottom = box * 0.82
+        var legCount = Math.max(1, Math.round((legBottom - cy) / (1.15 * cell)))
+        for (var k = 0; k <= legCount; ++k) {
+            var yy = cy + (legBottom - cy) * k / legCount
+            out.push({ x: cx - radius, y: yy, d: d })
+            out.push({ x: cx + radius, y: yy, d: d })
         }
         return out
     }
