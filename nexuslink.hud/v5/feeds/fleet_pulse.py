@@ -22,7 +22,10 @@ module never runs a mutating kanban verb.
 Modes
   live      ``hermes kanban list --json`` (inherits the caller's environment)
   fixture   ``--fixture PATH``  a recorded list: a JSON array of tasks, or an
-            object {"tasks": [...], "boot_time": "<ISO>"} from the recorder
+            object {"tasks": [...], "boot_time": "<ISO>"} from the recorder.
+            Never reads host state: with no ``boot_time`` (and no
+            ``--boot-time``) ``boot_time`` and ``done_since_boot`` are null
+            with a reason, so the same file answers the same on any host.
   board     ``--board PATH``    a board file: the board's SQLite kanban.db
             (read-only; falls back to ``immutable=1`` when a WAL-marked copy
             has no ``-shm``), or a JSON list. Sniffed by the SQLite header.
@@ -113,7 +116,7 @@ def iso(epoch):
         return None
     try:
         value = float(epoch)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if value != value or value in (float("inf"), float("-inf")):
         return None
@@ -182,12 +185,17 @@ def text(value, limit=None):
 
 
 def integer(value):
-    """Finite int or None. Accepts numeric strings, rejects bools/NaN/inf."""
+    """Finite int or None. Accepts numeric strings, rejects bools/NaN/inf.
+
+    ``float()`` raises OverflowError for a Python int above about 1.8e308, which
+    is what a corrupt 400-digit timestamp looks like once ``json`` has parsed it.
+    Such a value is malformed data, not a reason to lose the whole pulse.
+    """
     if value is None or isinstance(value, bool):
         return None
     try:
         num = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if num != num or num in (float("inf"), float("-inf")):
         return None
@@ -283,7 +291,10 @@ def boot_from_override(value):
     if not raw:
         return None, "boot time override is empty"
     if re.match(r"^\d+(\.\d+)?$", raw):
-        return int(float(raw)), None
+        try:
+            return int(float(raw)), None
+        except (OverflowError, ValueError):
+            return None, "boot time %r is out of range" % (raw[:40],)
     stamp = epoch_from_iso(raw)
     if stamp is None:
         return None, "boot time %r is neither epoch nor ISO-8601" % (raw[:40],)
@@ -657,6 +668,12 @@ def pulse(mode="live", ref=None, cache_path=None, use_cache=True, boot_override=
                 boot_epoch = int(boot_epoch)
             else:
                 boot_reason = "fixture boot_time %r is not ISO-8601" % (boot_iso[:40],)
+        elif mode == "fixture":
+            # A fixture is a recording, not this host: the brief promises
+            # ``--fixture`` works with no host state at all, and the same file
+            # must answer the same way on Linux. sysctl belongs to live and
+            # board runs only.
+            boot_reason = "fixture has no boot_time"
         else:
             boot_epoch, boot_reason = boot_time_from_sysctl()
 
@@ -1059,6 +1076,9 @@ def self_check():  # noqa: C901 - one linear script is the point
         checker.equal("cache_expired_refetches", third.get("cached"), False)
         checker.equal("cache_command_total", len(calls), 2)
         checker.equal("cache_exit_zero", (first_code, second_code), (EXIT_OK, EXIT_OK))
+        # live is the one mode that must still read the host boot time
+        checker.equal("live_boot_time_from_sysctl", first.get("boot_time"),
+                      iso(SELF_CHECK_BOOT_EPOCH))
         checker.check("cache_file_is_payload",
                       (json.load(open(cache_path, encoding="utf-8")).get("counts")
                        == first["counts"]),
@@ -1107,7 +1127,73 @@ def self_check():  # noqa: C901 - one linear script is the point
         checker.equal("malformed_title_stringified",
                       bad_payload["needs_me"]["cards"][0]["title"], "12")
 
+        # ---- 6b. oversized integers are malformed, not a crash --------------
+        # A 400-digit timestamp parses as a Python int, and float() raises
+        # OverflowError above ~1.8e308: the whole pulse used to die at exit 2.
+        huge = int("1" + "0" * 400)
+        big_fixture = {
+            "boot_time": iso(SELF_CHECK_BOOT_EPOCH),
+            "tasks": [
+                {"id": "t_huge_done", "title": "huge completed_at", "assignee": "shino",
+                 "status": "done", "created_at": huge, "started_at": huge,
+                 "completed_at": huge},
+                {"id": "t_huge_blocked", "title": "huge started_at", "assignee": "kabuto",
+                 "status": "blocked", "created_at": huge, "started_at": huge,
+                 "completed_at": None},
+                {"id": "t_plain_run", "title": "plain running", "assignee": "yamato",
+                 "status": "running", "created_at": SELF_CHECK_BOOT_EPOCH,
+                 "started_at": SELF_CHECK_BOOT_EPOCH, "completed_at": None},
+                {"id": "t_plain_done", "title": "plain done", "assignee": "shino",
+                 "status": "done", "created_at": SELF_CHECK_BOOT_EPOCH,
+                 "started_at": SELF_CHECK_BOOT_EPOCH,
+                 "completed_at": SELF_CHECK_BOOT_EPOCH + 60},
+            ],
+        }
+        big_path = os.path.join(root, "big-int.json")
+        write_json(big_path, big_fixture)
+        big_payload, big_code = pulse(mode="fixture", ref=big_path, use_cache=False,
+                                      now_epoch=now)
+        big_counts = big_payload.get("counts") or {}
+        checker.equal("bigint_exit_zero", big_code, EXIT_OK)
+        checker.check("bigint_ok", big_payload.get("ok") is True,
+                      repr(big_payload.get("reason")))
+        checker.equal("bigint_cards_seen", big_counts.get("cards_seen"), 4)
+        checker.equal("bigint_running", big_counts.get("running"), 1)
+        checker.equal("bigint_blocked", big_counts.get("blocked"), 1)
+        checker.equal("bigint_done_total", big_counts.get("done_total"), 2)
+        checker.equal("bigint_done_undated", big_counts.get("done_undated"), 1)
+        checker.equal("bigint_done_since_boot", big_counts.get("done_since_boot"), 1)
+        checker.check("bigint_reason_names_undated",
+                      isinstance(big_payload.get("reason"), str)
+                      and "completed_at" in big_payload["reason"],
+                      repr(big_payload.get("reason")))
+        big_blocked = [card for card in big_payload["needs_me"]["cards"]
+                       if card.get("id") == "t_huge_blocked"]
+        checker.check("bigint_needs_age_none",
+                      len(big_blocked) == 1 and big_blocked[0].get("age_s") is None,
+                      repr(big_payload["needs_me"]["cards"]))
+        checker.equal("bigint_iso_huge_none", iso(huge), None)
+        rc, out, err = _run_cli(["--fixture", big_path, "--json", "--no-cache"])
+        big_cli = json.loads(out) if out.strip() else {}
+        checker.equal("bigint_cli_exit_zero", rc, EXIT_OK)
+        checker.check("bigint_cli_ok", big_cli.get("ok") is True, out.strip()[:160])
+        checker.equal("bigint_cli_cards_seen",
+                      (big_cli.get("counts") or {}).get("cards_seen"), 4)
+        checker.equal("bigint_cli_stderr", err.strip(), "")
+        rc, out, _err = _run_cli(["--fixture", big_path, "--json", "--no-cache",
+                                  "--boot-time", "1" + "0" * 400])
+        big_override = json.loads(out) if out.strip() else {}
+        checker.equal("bigint_boot_override_exit_zero", rc, EXIT_OK)
+        checker.equal("bigint_boot_override_boot_time",
+                      big_override.get("boot_time"), None)
+        checker.check("bigint_boot_override_reason",
+                      isinstance(big_override.get("reason"), str)
+                      and "boot time" in big_override["reason"],
+                      repr(big_override.get("reason")))
+
         # ---- 7. unreadable boot time --------------------------------------
+        # Fixture mode no longer asks the host at all (section 7b), so an
+        # unreadable sysctl only matters where it is still consulted: live.
         with open(sysctl_mode, "w", encoding="utf-8") as handle:
             handle.write("fail")
         no_boot = {"boot_time": None, "tasks": [
@@ -1126,8 +1212,79 @@ def self_check():  # noqa: C901 - one linear script is the point
                       repr(boot_payload["reason"]))
         checker.equal("boot_unreadable_done_total", boot_payload["counts"]["done_total"], 1)
         checker.equal("boot_unreadable_exit_zero", boot_code, EXIT_OK)
+        live_boot_bad, live_boot_bad_code = pulse(mode="live", cache_path=None,
+                                                 use_cache=False, now_epoch=now)
+        checker.equal("live_boot_fail_time", live_boot_bad.get("boot_time"), None)
+        checker.equal("live_boot_fail_since",
+                      live_boot_bad["counts"]["done_since_boot"], None)
+        checker.check("live_boot_fail_reason_names_sysctl",
+                      isinstance(live_boot_bad.get("reason"), str)
+                      and "sysctl" in live_boot_bad["reason"],
+                      repr(live_boot_bad.get("reason")))
+        checker.equal("live_boot_fail_exit_zero", live_boot_bad_code, EXIT_OK)
         with open(sysctl_mode, "w", encoding="utf-8") as handle:
             handle.write("ok")
+
+        # ---- 7b. a fixture never reads the host boot time -------------------
+        # Same rule as the brief: --fixture works with no host state. A probe
+        # sysctl on PATH logs every call and reports a boot time that must not
+        # appear, so a stray host read fails this section instead of passing by
+        # coincidence on a Mac.
+        probe_dir = os.path.join(root, "boot-probe")
+        os.makedirs(probe_dir)
+        probe_log = os.path.join(root, "sysctl-calls.log")
+        _write_executable(os.path.join(probe_dir, "sysctl"), (
+            "#!/bin/sh\n"
+            "echo \"$*\" >> __LOG__\n"
+            "echo \"{ sec = __SEC__, usec = 630071 } Fri Oct  9 20:30:18 2026\"\n"
+        ).replace("__LOG__", probe_log).replace("__SEC__", str(SELF_CHECK_BOOT_EPOCH + 555)))
+        path_before_probe = os.environ["PATH"]
+        os.environ["PATH"] = probe_dir + os.pathsep + path_before_probe
+        no_host = {"tasks": [
+            {"id": "t_done", "title": "done", "assignee": "shino", "status": "done",
+             "created_at": SELF_CHECK_BOOT_EPOCH, "started_at": SELF_CHECK_BOOT_EPOCH,
+             "completed_at": SELF_CHECK_BOOT_EPOCH + 60},
+            {"id": "t_run", "title": "running", "assignee": "yamato", "status": "running",
+             "created_at": SELF_CHECK_BOOT_EPOCH, "started_at": SELF_CHECK_BOOT_EPOCH,
+             "completed_at": None},
+        ]}
+        no_host_path = os.path.join(root, "fixture-no-boot.json")
+        write_json(no_host_path, no_host)
+        host_payload, host_code = pulse(mode="fixture", ref=no_host_path,
+                                        use_cache=False, now_epoch=now)
+        checker.equal("fixture_no_boot_time", host_payload.get("boot_time"), None)
+        checker.equal("fixture_no_boot_done_since",
+                      host_payload["counts"]["done_since_boot"], None)
+        checker.equal("fixture_no_boot_done_before",
+                      host_payload["counts"]["done_before_boot"], None)
+        checker.check("fixture_no_boot_reason",
+                      isinstance(host_payload.get("reason"), str)
+                      and "fixture" in host_payload["reason"].lower()
+                      and "boot_time" in host_payload["reason"],
+                      repr(host_payload.get("reason")))
+        checker.equal("fixture_no_boot_done_total",
+                      host_payload["counts"]["done_total"], 1)
+        checker.equal("fixture_no_boot_running", host_payload["counts"]["running"], 1)
+        checker.equal("fixture_no_boot_exit_zero", host_code, EXIT_OK)
+        checker.equal("fixture_never_ran_sysctl",
+                      open(probe_log, encoding="utf-8").read()
+                      if os.path.exists(probe_log) else "", "")
+        rc, out, _err = _run_cli(["--fixture", no_host_path, "--json", "--no-cache"])
+        no_host_cli = json.loads(out) if out.strip() else {}
+        checker.equal("fixture_no_boot_cli_exit_zero", rc, EXIT_OK)
+        checker.equal("fixture_no_boot_cli_time", no_host_cli.get("boot_time"), None)
+        checker.equal("fixture_no_boot_cli_done_since",
+                      (no_host_cli.get("counts") or {}).get("done_since_boot"), None)
+        override_payload, override_code = pulse(
+            mode="fixture", ref=no_host_path, use_cache=False, now_epoch=now,
+            boot_override=str(SELF_CHECK_BOOT_EPOCH),
+        )
+        checker.equal("fixture_boot_override_exit_zero", override_code, EXIT_OK)
+        checker.equal("fixture_boot_override_time", override_payload.get("boot_time"),
+                      iso(SELF_CHECK_BOOT_EPOCH))
+        checker.equal("fixture_boot_override_done_since",
+                      override_payload["counts"]["done_since_boot"], 1)
+        os.environ["PATH"] = path_before_probe
 
         # ---- 8. caller errors ---------------------------------------------
         rc, out, _err = _run_cli(["--fixture", os.path.join(root, "nope.json"), "--json"])
