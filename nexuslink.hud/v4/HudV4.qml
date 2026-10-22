@@ -358,6 +358,14 @@ Item {
         onLoaded: hud.loadCrew(text())
         onLoadFailed: hud.loadCrew("")
     }
+    // Self-heal: a missed inotify event must not leave the decks stale.
+    // Re-reads only, no Process, so the fork saving stays.
+    Timer {
+        interval: 60000
+        repeat: true
+        running: true
+        onTriggered: { tokFile.reload(); crewFile.reload() }
+    }
     function loadTokens(raw) {
         var data = null
         try { data = JSON.parse(String(raw || "")) } catch (e) { data = null }
