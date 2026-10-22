@@ -1,0 +1,1108 @@
+#!/usr/bin/env python3
+"""recent.py - F6 RECENT AND PINNED feed for the v5 HUD deck.
+
+Emits the latest downloads, screenshots and recent files, the pinned folders,
+and a type census, from a paths config. Stdlib only, no network, no daemon:
+the HUD polls this script and the result is cached for 10 s.
+
+    recent.py --json
+    recent.py --config ./hud_paths.json --limit 4 --json
+    recent.py --fixture nexuslink.hud/v5/fixtures/recent.json --json
+    recent.py --fixture ./snapshot-dir --json     # a dir holding hud_paths.json
+    recent.py --self-check
+
+Exit codes: 0 for data and honest absence ({"ok": false, "reason": ...}),
+2 only for a caller error (bad arguments, a named file that does not exist)
+or an unexpected bug. Missing or malformed *content* is an answer, not a crash.
+
+Contract: cards/feeds-brief.md. Docs, example config and the extension table:
+nexuslink.hud/v5/feeds/README-recent.md.
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+
+EXIT_OK = 0
+EXIT_CALLER = 2
+
+SCHEMA = "nexuslink.hud/v5/feeds/recent"
+DEFAULT_CONFIG = "~/.config/nexuslink/hud_paths.json"
+DEFAULT_LIMIT = 8
+MAX_LIMIT = 1000
+CACHE_TTL_S = 10.0
+LISTS = ("downloads", "screenshots", "recent_files")
+BUCKETS = ("image", "document", "archive", "code", "audio", "video", "other")
+
+# Extension -> bucket. The one place the mapping lives; README-recent.md keeps
+# a copy for humans and --self-check asserts every bucket is reachable.
+EXTENSIONS = {
+    "image": "png jpg jpeg jpe gif webp avif heic heif bmp tif tiff svg ico icns",
+    "document": "pdf doc docx xls xlsx ppt pptx odt ods odp rtf txt md markdown csv tsv epub pages numbers key log tex",
+    "archive": "zip tar gz tgz bz2 tbz xz txz 7z rar dmg iso pkg deb rpm zst lz4",
+    "code": "py js mjs cjs ts tsx jsx qml sh bash zsh fish rb go rs c h cc cpp hpp java kt swift php lua sql json yaml yml toml ini cfg conf xml html htm css scss sass vue svelte",
+    "audio": "mp3 wav flac m4a aac ogg oga opus aiff aif alac wma",
+    "video": "mp4 mov mkv avi webm m4v mpg mpeg wmv flv",
+}
+# Two-part extensions win over the last part alone (a .tar.gz is an archive,
+# not a gz; a .d.ts is code, not a TypeScript text).
+COMPOUND = {
+    "tar.gz": "archive",
+    "tar.bz2": "archive",
+    "tar.xz": "archive",
+    "tar.zst": "archive",
+    "tar.lz4": "archive",
+    "d.ts": "code",
+}
+
+EXT = {}
+for _bucket, _words in EXTENSIONS.items():
+    for _word in _words.split():
+        EXT[_word] = _bucket
+
+ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+class Problem(Exception):
+    """Absence or malformed data. Always an answer, never a crash. Exit 0."""
+
+    kind = "data"
+
+    def __init__(self, reason):
+        Exception.__init__(self, reason)
+        self.reason = str(reason)
+
+
+class Missing(Problem):
+    kind = "missing"
+
+
+class Malformed(Problem):
+    kind = "malformed"
+
+
+class CallerError(Exception):
+    """The caller asked for something impossible. Exit 2."""
+
+    def __init__(self, reason):
+        Exception.__init__(self, reason)
+        self.reason = str(reason)
+
+
+# --------------------------------------------------------------------------
+# small helpers
+
+
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def iso(epoch):
+    """Epoch seconds -> 2026-10-22T21:07:02Z. Unusable input -> None."""
+    if epoch is None or isinstance(epoch, bool):
+        return None
+    try:
+        value = float(epoch)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    try:
+        stamp = datetime.datetime.fromtimestamp(value, datetime.timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_now():
+    return iso(time.time())
+
+
+def parse_iso(text):
+    """2026-10-22T21:07:02Z -> epoch. Anything else -> None."""
+    if not isinstance(text, str):
+        return None
+    try:
+        stamp = datetime.datetime.strptime(text.strip(), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def home():
+    return os.path.expanduser("~")
+
+
+def abs_path(value, base=None):
+    """Config path -> absolute path. Relative values resolve against `base`."""
+    text = os.path.expanduser(str(value).strip())
+    if not os.path.isabs(text):
+        text = os.path.join(base or os.getcwd(), text)
+    return os.path.abspath(text)
+
+
+def tilde(path):
+    """Display form. Home is shortened; nothing else is."""
+    if not path:
+        return ""
+    root = home().rstrip(os.sep)
+    if path == root:
+        return "~"
+    if root and path.startswith(root + os.sep):
+        return "~" + path[len(root):]
+    return path
+
+
+def within(path, roots):
+    """True when `path` is one of `roots` or sits under one of them."""
+    for root in roots:
+        if path == root:
+            return True
+        if path.startswith(root.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
+def classify(name):
+    """Extension -> one of BUCKETS, case-insensitive. Unknown -> 'other'."""
+    base = os.path.basename(str(name)).lower()
+    if "." not in base.strip("."):
+        return "other"
+    parts = base.split(".")
+    if len(parts) >= 3:
+        tail2 = ".".join(parts[-2:])
+        if tail2 in COMPOUND:
+            return COMPOUND[tail2]
+    return EXT.get(parts[-1], "other")
+
+
+def state_dir():
+    """Cache directory. NEXUSLINK_STATE_DIR exists for tests only."""
+    override = os.environ.get("NEXUSLINK_STATE_DIR")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.join(home(), ".local", "state", "nexuslink")
+
+
+def cache_file(mode):
+    name = "recent.json" if mode == "live" else "recent-fixture.json"
+    return os.path.join(state_dir(), name)
+
+
+# --------------------------------------------------------------------------
+# config
+
+
+def _int_or(value, default, low, high):
+    if isinstance(value, bool):
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    if number < low or number > high:
+        return default
+    return number
+
+
+def _root_entry(item):
+    """Config list item -> {"path": str, "depth": int} or None."""
+    if isinstance(item, str):
+        text = item.strip()
+        return {"path": text, "depth": 1} if text else None
+    if isinstance(item, dict):
+        for key in ("path", "root", "dir"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return {
+                    "path": value.strip(),
+                    "depth": _int_or(item.get("depth"), 1, 0, 32),
+                }
+    return None
+
+
+def _pin_entry(item):
+    """Config pinned item -> {"name": str|None, "path": str} or None."""
+    if isinstance(item, str):
+        text = item.strip()
+        if not text:
+            return None
+        return {"name": None, "path": text}
+    if isinstance(item, dict):
+        value = item.get("path") or item.get("root") or item.get("dir")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = None
+        return {"name": name, "path": value.strip()}
+    return None
+
+
+def parse_config(raw, shown, base):
+    """JSON object -> normalised config. Tolerates partial and odd shapes."""
+    if not isinstance(raw, dict):
+        raise Malformed("config at %s is not a JSON object" % shown)
+    config = {"limit": DEFAULT_LIMIT, "roots": {}, "pinned": []}
+    config["limit"] = _int_or(raw.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
+    for key in LISTS:
+        value = raw.get(key)
+        if value is None:
+            config["roots"][key] = []
+            continue
+        if isinstance(value, (str, dict)):
+            value = [value]
+        if not isinstance(value, list):
+            config["roots"][key] = []
+            continue
+        roots = []
+        for item in value:
+            entry = _root_entry(item)
+            if entry is None:
+                continue
+            entry["path"] = abs_path(entry["path"], base)
+            roots.append(entry)
+        config["roots"][key] = roots
+    value = raw.get("pinned")
+    if isinstance(value, (str, dict)):
+        value = [value]
+    if isinstance(value, list):
+        for item in value:
+            entry = _pin_entry(item)
+            if entry is None:
+                continue
+            entry["path"] = abs_path(entry["path"], base)
+            config["pinned"].append(entry)
+    if not any(config["roots"][key] for key in LISTS) and not config["pinned"]:
+        raise Malformed("config at %s names no usable roots" % shown)
+    return config
+
+
+def read_json_file(path, what):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        raise Missing("cannot read %s at %s: %s" % (what, tilde(path), exc.strerror or exc))
+    if not raw.strip():
+        raise Missing("%s at %s is empty" % (what, tilde(path)))
+    try:
+        return json.loads(raw)
+    except ValueError as exc:
+        raise Malformed("%s at %s is not valid JSON: %s" % (what, tilde(path), exc))
+
+
+# --------------------------------------------------------------------------
+# live scan
+
+
+def scan_root(root, depth, allowed_roots):
+    """Walk one root. Returns (entries, stats). Raises Problem when unreadable.
+
+    Each entry carries its display name, absolute path, size, mtime and type,
+    plus a private identity key. Symlinks are resolved before stat, broken
+    ones are counted and skipped, and a link whose target leaves every
+    configured root is counted and skipped, never followed out.
+    """
+    entries = []
+    stats = {"broken": 0, "outside": 0}
+    root = os.path.abspath(root)
+    if not os.path.exists(root):
+        raise Missing("no such directory: %s" % tilde(root))
+    if not os.path.isdir(root):
+        raise Missing("not a directory: %s" % tilde(root))
+    single_level = depth == 1
+
+    def consider(path):
+        name = os.path.basename(path)
+        is_link = os.path.islink(path)
+        if is_link:
+            if not os.path.exists(path):
+                stats["broken"] += 1
+                return
+            real = os.path.realpath(path)
+            if not within(real, allowed_roots):
+                stats["outside"] += 1
+                return
+        try:
+            info = os.stat(path)
+        except OSError:
+            stats["broken"] += 1 if is_link else 0
+            return
+        if not stat.S_ISREG(info.st_mode):
+            return
+        entries.append(
+            {
+                "name": name,
+                "path": os.path.abspath(path),
+                "size": info.st_size,
+                "mtime": info.st_mtime,
+                "type": classify(name),
+                "_key": ("inode", info.st_dev, info.st_ino),
+            }
+        )
+
+    try:
+        if single_level:
+            for name in sorted(os.listdir(root)):
+                if name.startswith("."):
+                    continue
+                consider(os.path.join(root, name))
+        else:
+            base_depth = root.rstrip(os.sep).count(os.sep)
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                here = dirpath.rstrip(os.sep).count(os.sep) - base_depth + 1
+                dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+                kept = []
+                for name in dirnames:
+                    child = os.path.join(dirpath, name)
+                    if os.path.islink(child):
+                        # A linked directory is never followed; count it the
+                        # same way a linked file is counted.
+                        if not os.path.exists(child):
+                            stats["broken"] += 1
+                        elif not within(os.path.realpath(child), allowed_roots):
+                            stats["outside"] += 1
+                        continue
+                    kept.append(name)
+                dirnames[:] = kept
+                if depth > 0 and here >= depth:
+                    dirnames[:] = []
+                for name in sorted(filenames):
+                    if name.startswith("."):
+                        continue
+                    consider(os.path.join(dirpath, name))
+    except PermissionError:
+        raise Missing("permission denied: %s" % tilde(root))
+    except OSError as exc:
+        raise Missing("cannot read %s: %s" % (tilde(root), exc.strerror or exc))
+    return entries, stats
+
+
+def pin_rows(pins):
+    rows = []
+    for pin in pins:
+        path = pin["path"]
+        name = pin["name"] or os.path.basename(path.rstrip(os.sep)) or tilde(path)
+        exists = os.path.isdir(path)
+        kind = "dir" if exists else None
+        if not exists:
+            exists = os.path.isfile(path)
+            kind = "file" if exists else None
+        rows.append({"name": name, "path": path, "exists": exists, "kind": kind})
+    return rows
+
+
+# --------------------------------------------------------------------------
+# fixture scan
+
+
+def _fixture_entry(raw, root, allowed_roots, stats):
+    """One fixture file row -> entry or None (mirrors the live rules)."""
+    if not isinstance(raw, dict):
+        return None
+    name = raw.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    name = name.strip()
+    path = os.path.join(root, name)
+    link = raw.get("link")
+    if isinstance(link, str) and link.strip():
+        target = abs_path(link, root)
+        if raw.get("broken"):
+            stats["broken"] += 1
+            return None
+        if not within(target, allowed_roots):
+            stats["outside"] += 1
+            return None
+        key = ("path", target)
+    elif raw.get("broken"):
+        stats["broken"] += 1
+        return None
+    else:
+        key = ("path", os.path.normpath(path))
+    mtime = raw.get("mtime")
+    if mtime is None:
+        mtime = parse_iso(raw.get("mtime_iso"))
+    size = raw.get("size")
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
+        size = None
+    return {
+        "name": name,
+        "path": path,
+        "size": int(size) if size is not None else None,
+        "mtime": float(mtime) if isinstance(mtime, (int, float)) else None,
+        "type": classify(name),
+        "_key": key,
+    }
+
+
+def fixture_config(raw, shown, fixture_dir):
+    """A fixture file carries its own config; a fixture dir points at one."""
+    if "config" in raw:
+        return parse_config(raw["config"], shown, fixture_dir)
+    if "roots" in raw or "pinned" in raw:
+        return parse_config(raw, shown, fixture_dir)
+    raise Malformed("fixture at %s has neither a config block nor roots" % shown)
+
+
+# --------------------------------------------------------------------------
+# payload
+
+
+def public_entry(entry):
+    return {
+        "name": entry["name"],
+        "path": entry["path"],
+        "size": entry["size"],
+        "mtime": iso(entry["mtime"]),
+        "type": entry["type"],
+    }
+
+
+def select(entries, limit, claimed):
+    """Newest first, name as the tiebreak, one appearance per real file."""
+    if limit <= 0:
+        return []
+    ordered = sorted(
+        entries,
+        key=lambda item: (
+            -(item["mtime"] if item["mtime"] is not None else 0.0),
+            item["name"].lower(),
+            item["name"],
+        ),
+    )
+    rows = []
+    for entry in ordered:
+        if entry["_key"] in claimed:
+            continue
+        claimed.add(entry["_key"])
+        rows.append(public_entry(entry))
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def type_census(lists):
+    counts = dict((bucket, 0) for bucket in BUCKETS)
+    for key in LISTS:
+        for item in lists[key]:
+            bucket = item["type"]
+            counts[bucket] = counts.get(bucket, 0) + 1
+    return counts
+
+
+def envelope(mode, limit, lists, pinned, roots, broken, outside):
+    return {
+        "ok": True,
+        "generated_at": iso_now(),
+        "source": mode,
+        "schema": SCHEMA,
+        "limit": limit,
+        "downloads": lists["downloads"],
+        "screenshots": lists["screenshots"],
+        "recent_files": lists["recent_files"],
+        "pinned": pinned,
+        "types": type_census(lists),
+        "broken": broken,
+        "outside": outside,
+        "roots": roots,
+        "cached": False,
+        "age_s": 0,
+    }
+
+
+def build_live(config, limit, mode="live"):
+    lists = dict((key, []) for key in LISTS)
+    roots = []
+    broken = 0
+    outside = 0
+    allowed = []
+    for key in LISTS:
+        for root in config["roots"][key]:
+            allowed.append(os.path.realpath(root["path"]))
+    for pin in config["pinned"]:
+        allowed.append(os.path.realpath(pin["path"]))
+
+    for key in LISTS:
+        for root in config["roots"][key]:
+            row = {
+                "list": key,
+                "path": tilde(root["path"]),
+                "depth": root["depth"],
+                "exists": os.path.isdir(root["path"]),
+                "files": 0,
+                "broken": 0,
+                "outside": 0,
+                "reason": None,
+            }
+            try:
+                entries, stats = scan_root(root["path"], root["depth"], allowed)
+            except Problem as problem:
+                row["reason"] = problem.reason
+                roots.append(row)
+                continue
+            row["files"] = len(entries)
+            row["broken"] = stats["broken"]
+            row["outside"] = stats["outside"]
+            broken += stats["broken"]
+            outside += stats["outside"]
+            lists[key].extend(entries)
+            roots.append(row)
+
+    pinned = pin_rows(config["pinned"])
+    claimed = set()
+    selected = {}
+    for key in LISTS:
+        selected[key] = select(lists[key], limit, claimed)
+    return envelope(mode, limit, selected, pinned, roots, broken, outside)
+
+
+def build_fixture(raw, shown, fixture_dir, limit):
+    config = fixture_config(raw, shown, fixture_dir)
+    tree = raw.get("roots")
+    if not isinstance(tree, dict):
+        raise Malformed("fixture at %s has no roots object" % shown)
+
+    allowed = []
+    for key in LISTS:
+        for root in config["roots"][key]:
+            allowed.append(os.path.normpath(root["path"]))
+    for pin in config["pinned"]:
+        allowed.append(os.path.normpath(pin["path"]))
+
+    lists = dict((key, []) for key in LISTS)
+    roots = []
+    broken = 0
+    outside = 0
+    for key in LISTS:
+        for root in config["roots"][key]:
+            display = tilde(root["path"])
+            node = tree.get(display)
+            row = {
+                "list": key,
+                "path": display,
+                "depth": root["depth"],
+                "exists": bool(isinstance(node, dict) and node.get("exists", True)),
+                "files": 0,
+                "broken": 0,
+                "outside": 0,
+                "reason": None,
+            }
+            if not isinstance(node, dict):
+                row["reason"] = "root not present in fixture"
+                roots.append(row)
+                continue
+            if not row["exists"]:
+                reason = node.get("reason")
+                row["reason"] = reason if isinstance(reason, str) and reason.strip() else "no such directory"
+                roots.append(row)
+                continue
+            stats = {"broken": 0, "outside": 0}
+            rows = node.get("files")
+            claimed_here = 0
+            if isinstance(rows, list):
+                for item in rows:
+                    entry = _fixture_entry(item, root["path"], allowed, stats)
+                    if entry is not None:
+                        lists[key].append(entry)
+                        claimed_here += 1
+            row["files"] = claimed_here
+            row["broken"] = stats["broken"]
+            row["outside"] = stats["outside"]
+            broken += stats["broken"]
+            outside += stats["outside"]
+            roots.append(row)
+
+    pinned = []
+    for pin in config["pinned"]:
+        display = tilde(pin["path"])
+        node = tree.get(display)
+        name = pin["name"] or os.path.basename(pin["path"].rstrip(os.sep)) or display
+        exists = bool(isinstance(node, dict) and node.get("exists", False))
+        kind = node.get("kind") if isinstance(node, dict) else None
+        if not isinstance(kind, str) or kind not in ("dir", "file"):
+            kind = None
+        if exists and kind is None:
+            kind = "dir"
+        pinned.append({"name": name, "path": pin["path"], "exists": exists, "kind": kind if exists else None})
+
+    claimed = set()
+    selected = {}
+    for key in LISTS:
+        selected[key] = select(lists[key], limit, claimed)
+    return envelope("fixture", limit, selected, pinned, roots, broken, outside)
+
+
+# --------------------------------------------------------------------------
+# cache
+
+
+def cache_key(mode, identity, limit):
+    digest = hashlib.sha1()
+    digest.update(mode.encode("utf-8"))
+    digest.update(b"\0%d" % limit)
+    digest.update(b"\0" + SCHEMA.encode("utf-8"))
+    for path in identity:
+        digest.update(b"\0")
+        if not path:
+            digest.update(b"-")
+            continue
+        try:
+            info = os.stat(path)
+            digest.update(
+                ("%s|%d|%d|%d" % (os.path.abspath(path), info.st_mtime_ns, info.st_size, info.st_ino)).encode("utf-8")
+            )
+        except OSError:
+            digest.update(("%s|missing" % os.path.abspath(path)).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def cache_read(mode, key):
+    """Cached payload inside the TTL, else None. Never raises."""
+    if os.environ.get("NEXUSLINK_NO_CACHE"):
+        return None
+    try:
+        with open(cache_file(mode), "r", encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("key") != key:
+        return None
+    built_at = record.get("built_at")
+    payload = record.get("payload")
+    if not isinstance(built_at, (int, float)) or not isinstance(payload, dict):
+        return None
+    if not payload.get("ok"):
+        return None
+    age = time.time() - float(built_at)
+    if age < 0 or age >= CACHE_TTL_S:
+        return None
+    served = json.loads(json.dumps(payload))
+    served["cached"] = True
+    served["age_s"] = int(round(age))
+    return served
+
+
+def cache_write(mode, key, payload, built_at):
+    """Atomic write: temp file in the same directory, then os.replace."""
+    if os.environ.get("NEXUSLINK_NO_CACHE"):
+        return
+    target = cache_file(mode)
+    parent = os.path.dirname(target)
+    try:
+        os.makedirs(parent, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=parent, prefix=".tmp-", suffix=".json", delete=False
+        )
+        try:
+            with handle:
+                json.dump({"key": key, "built_at": built_at, "payload": payload}, handle, ensure_ascii=False, indent=1)
+                handle.write("\n")
+            os.replace(handle.name, target)
+        except BaseException:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        # A cache we cannot write is a slower HUD, never a broken feed.
+        return
+
+
+# --------------------------------------------------------------------------
+# entry points
+
+
+def run(args):
+    mode = "fixture" if args.fixture else "live"
+    if args.fixture:
+        target = abs_path(args.fixture)
+        if not os.path.exists(target):
+            raise CallerError("no fixture at %s" % tilde(target))
+        if os.path.isdir(target):
+            config_path = os.path.join(target, "hud_paths.json")
+            if not os.path.isfile(config_path):
+                raise CallerError("fixture dir %s has no hud_paths.json" % tilde(target))
+            raw = read_json_file(config_path, "fixture config")
+            shown = tilde(config_path)
+            limit = args.limit
+            if limit is None:
+                limit = DEFAULT_LIMIT
+                if isinstance(raw, dict):
+                    limit = _int_or(raw.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
+            key = cache_key(mode, [config_path], limit)
+            cached = cache_read(mode, key)
+            if cached is not None:
+                return cached
+            config = parse_config(raw, shown, target)
+            payload = build_live(config, limit, mode="fixture")
+        else:
+            raw = read_json_file(target, "fixture")
+            shown = tilde(target)
+            limit = args.limit
+            if limit is None:
+                limit = DEFAULT_LIMIT
+                if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
+                    limit = _int_or(raw["config"].get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
+            key = cache_key(mode, [target], limit)
+            cached = cache_read(mode, key)
+            if cached is not None:
+                return cached
+            payload = build_fixture(raw, shown, os.path.dirname(target), limit)
+    else:
+        explicit = bool(args.config)
+        config_path = abs_path(args.config) if explicit else abs_path(DEFAULT_CONFIG)
+        if explicit:
+            if not os.path.exists(config_path):
+                raise CallerError("no config at %s" % tilde(config_path))
+            if not os.path.isfile(config_path):
+                raise CallerError("config is not a file: %s" % tilde(config_path))
+        elif not os.path.isfile(config_path):
+            raise Missing("no config at %s" % tilde(config_path))
+        raw = read_json_file(config_path, "config")
+        base = os.path.dirname(config_path)
+        config = parse_config(raw, tilde(config_path), base)
+        limit = args.limit if args.limit is not None else config["limit"]
+        key = cache_key(mode, [config_path], limit)
+        cached = cache_read(mode, key)
+        if cached is not None:
+            return cached
+        payload = build_live(config, limit)
+
+    cache_write(mode, key, payload, time.time())
+    return payload
+
+
+def emit(payload, compact):
+    if compact:
+        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    else:
+        line = json.dumps(payload, ensure_ascii=False, indent=2)
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
+def failure(mode, exc, kind):
+    return {
+        "ok": False,
+        "generated_at": iso_now(),
+        "source": mode,
+        "schema": SCHEMA,
+        "reason": str(exc).strip(),
+        "kind": kind,
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="recent.py",
+        description="F6 recent and pinned feed: downloads, screenshots, recent files, pins and a type census.",
+    )
+    parser.add_argument("--config", metavar="PATH", help="paths config (default %s)" % DEFAULT_CONFIG)
+    parser.add_argument("--fixture", metavar="PATH", help="read a fixture file, or a dir holding hud_paths.json")
+    parser.add_argument("--limit", type=int, metavar="N", help="items per list (default %d)" % DEFAULT_LIMIT)
+    parser.add_argument("--json", action="store_true", help="one compact JSON line instead of pretty output")
+    parser.add_argument("--self-check", action="store_true", help="run the built-in checks against a temp tree")
+    args = parser.parse_args(argv)
+
+    if args.self_check:
+        return self_check()
+    if args.limit is not None and not (0 <= args.limit <= MAX_LIMIT):
+        parser.error("--limit must be between 0 and %d" % MAX_LIMIT)
+
+    mode = "fixture" if args.fixture else "live"
+    try:
+        payload = run(args)
+    except CallerError as exc:
+        emit(failure(mode, exc, "caller"), args.json)
+        return EXIT_CALLER
+    except Problem as exc:
+        emit(failure(mode, exc, exc.kind), args.json)
+        return EXIT_OK
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as exc:  # noqa: BLE001 - a bug is a bug
+        emit(failure(mode, "programming error: %s: %s" % (type(exc).__name__, exc), "programming"), args.json)
+        return EXIT_CALLER
+    emit(payload, args.json)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# self-check
+
+SELF_CHECK_MT0 = 1792700000
+
+
+def _touch(path, offset, payload=b"x"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(payload)
+    os.utime(path, (SELF_CHECK_MT0 + offset, SELF_CHECK_MT0 + offset))
+
+
+def _write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _names(payload, key):
+    return [item["name"] for item in payload.get(key, [])]
+
+
+def self_check():
+    failures = []
+
+    def check(label, condition, detail=""):
+        if not condition:
+            failures.append("%s%s" % (label, (": " + str(detail)) if detail != "" else ""))
+
+    tmp = tempfile.mkdtemp(prefix="f6-recent-selfcheck-")
+    state = os.path.join(tmp, "state")
+    tree = os.path.join(tmp, "roots")
+    config_path = os.path.join(tmp, "hud_paths.json")
+    script = os.path.abspath(__file__)
+
+    downloads = os.path.join(tree, "downloads")
+    shots = os.path.join(tree, "shots")
+    recent = os.path.join(tree, "recent")
+    pinned = os.path.join(tree, "pinned-hud")
+
+    try:
+        # --- a small tree with known names, sizes, mtimes and extensions ---
+        _touch(os.path.join(downloads, "i-latest.txt"), 300)
+        _touch(os.path.join(downloads, "b-photo.JPG"), 200)
+        _touch(os.path.join(downloads, "a-report.pdf"), 100)
+        _touch(os.path.join(downloads, "c-archive.zip"), 95)
+        _touch(os.path.join(downloads, "d-script.py"), 90)
+        _touch(os.path.join(downloads, "e-track.flac"), 85)
+        _touch(os.path.join(downloads, "f-clip.mp4"), 80)
+        _touch(os.path.join(downloads, "g-blob.xyz"), 75)
+        _touch(os.path.join(downloads, "h-notes.md"), 70)
+        _touch(os.path.join(downloads, "z-late.TAR.GZ"), 10)
+        _touch(os.path.join(downloads, ".DS_Store"), 400)
+        _touch(os.path.join(shots, "shot-1.png"), 150)
+        _touch(os.path.join(shots, "shot-2.png"), 150)
+        os.symlink(os.path.join(downloads, "a-report.pdf"), os.path.join(shots, "copy.pdf"))
+        os.symlink(os.path.join(tree, "nope.png"), os.path.join(shots, "broken.png"))
+        os.symlink("/etc/hosts", os.path.join(shots, "escape.png"))
+        _touch(os.path.join(recent, "sub", "deep.log"), 250)
+        _touch(os.path.join(recent, "chain", "one", "two", "three.md"), 220)
+        os.makedirs(os.path.join(pinned, "inner"), exist_ok=True)
+
+        config = {
+            "limit": 8,
+            "downloads": ["roots/downloads"],
+            "screenshots": ["roots/shots", "roots/absent-shots"],
+            "recent_files": [{"path": "roots/recent", "depth": 2}, {"path": "roots/recent/chain", "depth": 0}],
+            "pinned": [
+                {"name": "HUD", "path": "roots/pinned-hud"},
+                {"name": "Report", "path": "roots/downloads/a-report.pdf"},
+                {"name": "Gone", "path": "roots/absent-pin"},
+            ],
+        }
+        _write(config_path, json.dumps(config, indent=2))
+
+        def run_cli(argv, home=None):
+            env = os.environ.copy()
+            env["NEXUSLINK_STATE_DIR"] = state
+            env.pop("NEXUSLINK_NO_CACHE", None)
+            if home:
+                env["HOME"] = home
+            proc = subprocess.run(
+                [sys.executable, script] + list(argv),
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=tmp,
+            )
+            return proc
+
+        def as_json(proc):
+            try:
+                return json.loads(proc.stdout)
+            except ValueError:
+                return None
+
+        # --- live run over the temp tree ---
+        first = run_cli(["--config", config_path, "--json"])
+        payload = as_json(first)
+        check("live exit 0", first.returncode == 0, first.returncode)
+        check("live one json line", first.stdout.strip().count("\n") == 0, repr(first.stdout[:120]))
+        check("live stderr empty", first.stderr == "", repr(first.stderr[:200]))
+        check("live ok", isinstance(payload, dict) and payload.get("ok") is True, payload and payload.get("reason"))
+        if not isinstance(payload, dict):
+            raise SystemExit("self-check cannot continue without a payload")
+        check("source live", payload.get("source") == "live", payload.get("source"))
+        check("schema", payload.get("schema") == SCHEMA, payload.get("schema"))
+        check("generated_at utc iso", bool(ISO_RE.match(payload.get("generated_at") or "")), payload.get("generated_at"))
+        check("limit echoed", payload.get("limit") == 8, payload.get("limit"))
+
+        # ordering by mtime desc, name asc on the tie, hidden and over-limit out
+        check(
+            "downloads order",
+            _names(payload, "downloads")
+            == ["i-latest.txt", "b-photo.JPG", "a-report.pdf", "c-archive.zip", "d-script.py", "e-track.flac", "f-clip.mp4", "g-blob.xyz"],
+            _names(payload, "downloads"),
+        )
+        check("limit cuts the tail", "h-notes.md" not in _names(payload, "downloads"), _names(payload, "downloads"))
+        check("hidden skipped", ".DS_Store" not in _names(payload, "downloads"), _names(payload, "downloads"))
+        check("tie broken by name", _names(payload, "screenshots") == ["shot-1.png", "shot-2.png"], _names(payload, "screenshots"))
+        check("recent depth 2", "deep.log" in _names(payload, "recent_files"), _names(payload, "recent_files"))
+        check("recent depth 0 unlimited", _names(payload, "recent_files") == ["deep.log", "three.md"], _names(payload, "recent_files"))
+        check("no duplicate across lists", "copy.pdf" not in _names(payload, "screenshots"), _names(payload, "screenshots"))
+        all_names = _names(payload, "downloads") + _names(payload, "screenshots") + _names(payload, "recent_files")
+        check("a-report once", all_names.count("a-report.pdf") == 1, all_names)
+
+        # every bucket, and the exact census
+        types = payload.get("types") or {}
+        check("types keys", tuple(types.keys()) == BUCKETS, list(types.keys()))
+        check(
+            "types census",
+            types
+            == {"image": 3, "document": 4, "archive": 1, "code": 1, "audio": 1, "video": 1, "other": 1},
+            types,
+        )
+        check("every bucket used", all(types.get(bucket, 0) > 0 for bucket in BUCKETS), types)
+        item = payload["downloads"][0]
+        check("item shape", set(item.keys()) == {"name", "path", "size", "mtime", "type"}, sorted(item.keys()))
+        check("item mtime iso", bool(ISO_RE.match(item.get("mtime") or "")), item.get("mtime"))
+        check(
+            "compound extension",
+            payload["downloads"][0]["type"] == "document"
+            and classify("z-late.TAR.GZ") == "archive"
+            and classify("types.d.ts") == "code"
+            and classify("noext") == "other"
+            and classify("UPPER.PNG") == "image",
+            [classify(x) for x in ("z-late.TAR.GZ", "types.d.ts", "noext", "UPPER.PNG")],
+        )
+
+        # broken symlinks and links that leave the configured roots
+        check("broken counted", payload.get("broken") == 1, payload.get("broken"))
+        check("outside counted", payload.get("outside") == 1, payload.get("outside"))
+
+        # missing root: honest reason, list still populated, ok stays true
+        roots = payload.get("roots") or []
+        missing = [row for row in roots if row.get("exists") is False]
+        check("missing root row", len(missing) == 1 and missing[0]["path"].endswith("absent-shots"), missing)
+        check("missing root reason", bool(missing and missing[0].get("reason")), missing)
+        check("ok with a missing root", payload.get("ok") is True)
+
+        # pins
+        pins = payload.get("pinned") or []
+        check("pin count", len(pins) == 3, len(pins))
+        check("pin dir", pins[0] == {"name": "HUD", "path": pins[0]["path"], "exists": True, "kind": "dir"}, pins[0])
+        check("pin file", pins[1]["exists"] is True and pins[1]["kind"] == "file", pins[1])
+        check("pin missing", pins[2]["exists"] is False and pins[2]["kind"] is None, pins[2])
+
+        # --- the same tree read through a fixture dir ---
+        fixture_dir = run_cli(["--fixture", tmp, "--json"])
+        fixture_payload = as_json(fixture_dir)
+        check("fixture dir exit 0", fixture_dir.returncode == 0, fixture_dir.returncode)
+        check("fixture dir same lists", isinstance(fixture_payload, dict) and _names(fixture_payload, "downloads") == _names(payload, "downloads"), _names(fixture_payload or {}, "downloads"))
+        check("fixture dir same pins", isinstance(fixture_payload, dict) and [p["exists"] for p in fixture_payload.get("pinned", [])] == [True, True, False], fixture_payload and fixture_payload.get("pinned"))
+        check("fixture source", isinstance(fixture_payload, dict) and fixture_payload.get("source") == "fixture", fixture_payload and fixture_payload.get("source"))
+
+        # --- the shipped fixture file ---
+        shipped = os.path.join(os.path.dirname(os.path.dirname(script)), "fixtures", "recent.json")
+        fixture_run = run_cli(["--fixture", shipped, "--json"])
+        shipped_payload = as_json(fixture_run)
+        check("shipped fixture exit 0", fixture_run.returncode == 0, fixture_run.stderr or fixture_run.stdout[:200])
+        check("shipped fixture ok", isinstance(shipped_payload, dict) and shipped_payload.get("ok") is True, shipped_payload and shipped_payload.get("reason"))
+        if isinstance(shipped_payload, dict) and shipped_payload.get("ok"):
+            check("shipped four lists", all(len(shipped_payload.get(k) or []) > 0 for k in LISTS), {k: len(shipped_payload.get(k) or []) for k in LISTS})
+            check(
+                "shipped every bucket",
+                all((shipped_payload.get("types") or {}).get(b) for b in BUCKETS),
+                shipped_payload.get("types"),
+            )
+            check("shipped broken", shipped_payload.get("broken") == 1, shipped_payload.get("broken"))
+            check("shipped outside", shipped_payload.get("outside") == 1, shipped_payload.get("outside"))
+            shipped_names = _names(shipped_payload, "downloads") + _names(shipped_payload, "screenshots") + _names(shipped_payload, "recent_files")
+            check("shipped dedupe", "hud-review.mp4" not in _names(shipped_payload, "recent_files"), _names(shipped_payload, "recent_files"))
+            check("shipped pin missing", any(p["exists"] is False for p in shipped_payload.get("pinned") or []), shipped_payload.get("pinned"))
+            check("shipped newest first", shipped_payload["downloads"][0]["name"] == "Satoshi_Complete.zip", _names(shipped_payload, "downloads")[:3])
+
+        # --- cache: a second call inside 10 s must not need the tree ---
+        cache_path = os.path.join(state, "recent.json")
+        check("cache written", os.path.isfile(cache_path), cache_path)
+        check("cache atomic leftovers", not [n for n in os.listdir(state) if n.startswith(".tmp-")], os.listdir(state))
+        shutil.rmtree(tree)
+        second = run_cli(["--config", config_path, "--json"])
+        cached_payload = as_json(second)
+        check("cached exit 0", second.returncode == 0, second.returncode)
+        check("cached flag", isinstance(cached_payload, dict) and cached_payload.get("cached") is True, cached_payload and cached_payload.get("cached"))
+        check("cached lists survive a deleted tree", isinstance(cached_payload, dict) and _names(cached_payload, "downloads") == _names(payload, "downloads"), cached_payload and _names(cached_payload, "downloads"))
+        check("cached payload identical", isinstance(cached_payload, dict) and cached_payload.get("types") == payload.get("types"), cached_payload and cached_payload.get("types"))
+        check("cached generated_at kept", isinstance(cached_payload, dict) and cached_payload.get("generated_at") == payload.get("generated_at"), cached_payload and cached_payload.get("generated_at"))
+        shutil.rmtree(state)
+        third = run_cli(["--config", config_path, "--json"])
+        fresh_payload = as_json(third)
+        check("rebuild after cache removed", isinstance(fresh_payload, dict) and fresh_payload.get("cached") is False, fresh_payload and fresh_payload.get("cached"))
+        check("rebuild sees the missing tree", isinstance(fresh_payload, dict) and fresh_payload.get("downloads") == [] and fresh_payload.get("ok") is True, fresh_payload and fresh_payload.get("downloads"))
+        check("rebuild roots report missing", isinstance(fresh_payload, dict) and all(row.get("exists") is False for row in fresh_payload.get("roots") or []), fresh_payload and fresh_payload.get("roots"))
+
+        # --- error paths ---
+        absent = run_cli(["--config", os.path.join(tmp, "nope.json"), "--json"])
+        absent_payload = as_json(absent)
+        check("named missing config exits 2", absent.returncode == 2, absent.returncode)
+        check("named missing config json", isinstance(absent_payload, dict) and absent_payload.get("ok") is False and absent_payload.get("kind") == "caller", absent_payload)
+
+        bad_config = os.path.join(tmp, "bad.json")
+        _write(bad_config, "{not json")
+        bad = run_cli(["--config", bad_config, "--json"])
+        bad_payload = as_json(bad)
+        check("malformed config exits 0", bad.returncode == 0, bad.returncode)
+        check("malformed config ok false", isinstance(bad_payload, dict) and bad_payload.get("ok") is False and bad_payload.get("kind") == "malformed", bad_payload)
+
+        no_roots = os.path.join(tmp, "empty.json")
+        _write(no_roots, "{}")
+        empty = run_cli(["--config", no_roots, "--json"])
+        empty_payload = as_json(empty)
+        check("config without roots exits 0", empty.returncode == 0, empty.returncode)
+        check("config without roots ok false", isinstance(empty_payload, dict) and empty_payload.get("ok") is False, empty_payload)
+
+        no_fixture = run_cli(["--fixture", os.path.join(tmp, "absent-fixture.json"), "--json"])
+        check("named missing fixture exits 2", no_fixture.returncode == 2, no_fixture.returncode)
+
+        bad_limit = run_cli(["--limit", "nope", "--json"])
+        check("bad limit exits 2", bad_limit.returncode == 2, bad_limit.returncode)
+
+        fake_home = os.path.join(tmp, "home")
+        os.makedirs(fake_home, exist_ok=True)
+        default_config = run_cli(["--json"], home=fake_home)
+        default_payload = as_json(default_config)
+        check("default config absence exits 0", default_config.returncode == 0, default_config.returncode)
+        check(
+            "default config absence reason",
+            isinstance(default_payload, dict)
+            and default_payload.get("ok") is False
+            and "hud_paths.json" in (default_payload.get("reason") or ""),
+            default_payload,
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if failures:
+        sys.stderr.write("self-check FAILED (%d)\n" % len(failures))
+        for line in failures:
+            sys.stderr.write("  - %s\n" % line)
+        return 1
+    sys.stdout.write("recent.py self-check OK\n")
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())
