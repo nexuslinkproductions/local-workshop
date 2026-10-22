@@ -153,10 +153,21 @@ def screens_block(value, warnings):
         if ident is None:
             warnings.append("screens[%d] has no id, dropped" % index)
             continue
+        raw_workspaces = item.get("workspaces")
+        workspaces = []
+        if isinstance(raw_workspaces, list):
+            for raw in raw_workspaces:
+                number = common.integer(raw)
+                if number is not None:
+                    workspaces.append(number)
+        elif raw_workspaces is not None:
+            warnings.append(
+                "screens[%d].workspaces is not an array, dropped" % index
+            )
         screens.append(
             {
                 "id": ident,
-                "workspaces": [common.integer(ws) for ws in item.get("workspaces") or [] if common.integer(ws) is not None],
+                "workspaces": workspaces,
                 "windows": common.integer(item.get("windows")),
             }
         )
@@ -252,11 +263,10 @@ def collect(args):
         )
 
     ts = common.number(root.get("ts"))
-    ts_iso = common.text(root.get("ts_iso")) or common.iso(ts)
-    if ts is None and ts_iso:
-        ts = common.epoch_from_iso(ts_iso)
+    if ts is None:
+        ts = common.epoch_from_iso(root.get("ts_iso"))
     metrics["ts"] = int(ts) if ts is not None else None
-    metrics["ts_iso"] = ts_iso
+    metrics["ts_iso"] = common.iso(ts)
     metrics["snapshot_age_s"] = (
         max(0, common.utc_now_epoch() - int(ts)) if ts is not None else None
     )
@@ -381,6 +391,37 @@ def self_check(args):
     check("windows-drop-junk", metrics.get("windows") == ["a"], str(metrics.get("windows")))
     check("junk-warns", len(payload.get("warnings") or []) >= 2, str(payload.get("warnings")))
 
+    # --- a non-list workspaces value warns, it does not crash (R1) ----------
+    for label, bad_ws in (
+        ("int", 4),
+        ("bool", True),
+        ("negative", -5),
+        ("float", 3.5),
+        ("string", "4"),
+        ("object", {"a": 1}),
+    ):
+        code, parsed, _, _ = run(
+            {"screens": [{"id": "DP-2", "workspaces": bad_ws, "windows": 2}]},
+            name="ws-%s.json" % label,
+        )
+        payload = parsed or {}
+        screens = (payload.get("metrics") or {}).get("screens") or []
+        check(
+            "workspaces-%s-exit-0" % label,
+            code == 0 and payload.get("ok") is True,
+            "exit=%s %s" % (code, str(payload)[:200]),
+        )
+        check(
+            "workspaces-%s-warns" % label,
+            any("workspaces" in str(w) for w in payload.get("warnings") or []),
+            str(payload.get("warnings")),
+        )
+        check(
+            "workspaces-%s-screen-kept" % label,
+            len(screens) == 1 and screens[0].get("workspaces") == [] and screens[0].get("windows") == 2,
+            str(screens),
+        )
+
     code, parsed, _, _ = run({"tokens_today": {"a": 10, "b": "many", "c": 5}})
     payload = parsed or {}
     tokens = (payload.get("metrics") or {}).get("tokens_today") or {}
@@ -392,6 +433,23 @@ def self_check(args):
     metrics = payload.get("metrics") or {}
     check("iso-only-ts", isinstance(metrics.get("ts"), int), str(metrics.get("ts")))
     check("iso-only-age", isinstance(metrics.get("snapshot_age_s"), int), str(metrics.get("snapshot_age_s")))
+
+    # --- every emitted stamp is UTC Z, never the raw input string (R3) ------
+    code, parsed, _, _ = run({"ts_iso": "2026-10-22T23:07:02+02:00", "host": {"name": "box"}}, name="tz.json")
+    payload = parsed or {}
+    metrics = payload.get("metrics") or {}
+    check("ts-iso-normalised-z", metrics.get("ts_iso") == "2026-10-22T21:07:02Z", str(metrics.get("ts_iso")))
+    check("ts-iso-normalised-epoch", metrics.get("ts") == 1792703222, str(metrics.get("ts")))
+    check("ts-iso-not-raw-input", metrics.get("ts_iso") != "2026-10-22T23:07:02+02:00", str(metrics.get("ts_iso")))
+
+    code, parsed, _, _ = run({"ts_iso": "not a timestamp", "host": {"name": "box"}}, name="bad-ts.json")
+    payload = parsed or {}
+    metrics = payload.get("metrics") or {}
+    check(
+        "ts-iso-unusable-is-null",
+        payload.get("ok") is True and metrics.get("ts") is None and metrics.get("ts_iso") is None,
+        str(metrics),
+    )
 
     # --- dead inputs -------------------------------------------------------
     empty = os.path.join(root, "empty.json")

@@ -68,6 +68,11 @@ SSH_PROBES = (
     "sysctl -n hw.ncpu",
 )
 
+# `vm.loadavg` is one brace group of three numbers on its own line. Anything
+# else in that position (a version string like `1.2.3`, bare dots) is data we
+# cannot read: it is dropped with a note, never floated.
+LOAD_LINE = re.compile(r"^[ \t]*\{[ \t]*([^}\n]*?)[ \t]*\}[ \t]*$", re.MULTILINE)
+
 
 # ------------------------------------------------------------------------ shell
 
@@ -172,8 +177,13 @@ def parse_ping(text):
     return rtt, route, None
 
 
-def parse_ssh_facts(text):
-    """Parse the one combined ssh answer. Missing pieces stay None."""
+def parse_ssh_facts(text, notes=None):
+    """Parse the one combined ssh answer. Missing pieces stay None.
+
+    ``notes`` (a list, optional) collects what looked like a fact but could not
+    be read, so the caller can surface it as a ``degraded`` entry instead of
+    guessing a value or raising.
+    """
     body = text or ""
     facts: dict = {
         "load": None,
@@ -185,10 +195,14 @@ def parse_ssh_facts(text):
         "cores": None,
     }  # type: dict
 
-    load = re.search(r"\{\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}", body)
+    load = LOAD_LINE.search(body)
     if load:
-        facts["load"] = [float(value) for value in load.groups()]
-        facts["load1"] = facts["load"][0]
+        values = [common.number(token) for token in load.group(1).split()]
+        if len(values) == 3 and all(value is not None for value in values):
+            facts["load"] = values
+            facts["load1"] = values[0]
+        elif notes is not None:
+            notes.append("load line unreadable")
 
     batt = re.search(r"(\d{1,3})%;\s*([A-Za-z ]+?);\s*([0-9:]+)", body)
     if batt:
@@ -222,19 +236,27 @@ def parse_ssh_facts(text):
 
 
 def collect_ssh_facts(host, timeout, runner=run_command):
-    """Exactly one ssh call. Returns (facts, error)."""
+    """Exactly one ssh call. Returns (facts, error_or_note).
+
+    The second slot is a fatal error when ``facts`` is None, and a note about a
+    piece that could not be read when ``facts`` is a dict. Both end up in the
+    payload's ``degraded`` list; neither raises.
+    """
     out, err, code = runner(ssh_command(host), timeout)
     if code != 0 and not out.strip():
         return None, common.text(err) or ("ssh exit %d" % code)
-    facts = parse_ssh_facts(out)
+    notes = []
+    facts = parse_ssh_facts(out, notes)
     if facts["batt"] is None and facts["load"] is None:
-        return None, common.text(err) or "ssh answered without battery or load"
+        notes.insert(0, common.text(err) or "ssh answered without battery or load")
+        return None, "; ".join(notes)
     if facts["load1"] is not None and facts["cores"]:
         facts["load1_frac"] = round(facts["load1"] / float(facts["cores"]), 4)
     facts.pop("load1", None)
     if facts["load"] is not None:
         facts["load"] = [round(value, 2) for value in facts["load"]]
-    return facts, None
+    note = "; ".join(notes) if notes else None
+    return facts, note
 
 
 def tunnel_state(timeout, status, runner=run_command):
@@ -327,6 +349,50 @@ def pulse_period(stats):
     return round(min(max(period, PULSE_MIN), PULSE_MAX), 3)
 
 
+def finite_floats(value, limit=None):
+    """Coerce a list or a whitespace-separated string into finite floats."""
+    if isinstance(value, str):
+        value = value.replace(",", " ").split()
+    if not isinstance(value, (list, tuple)):
+        return None
+    out = []
+    for item in value:
+        number = common.number(item)
+        if number is None:
+            continue
+        out.append(round(number, 3))
+        if limit is not None and len(out) >= limit:
+            break
+    return out or None
+
+
+def mac_block(value):
+    """The mac block with every value finite and typed, or None.
+
+    Same discipline as metrics.py: numbers through ``number``/``integer``,
+    strings through ``text``, so a fixture carrying ``NaN``, ``Infinity`` or a
+    string where a number belongs cannot reach the output (QML's JSON.parse
+    rejects those tokens). ``load1_frac`` is derived only from finite values
+    with a positive core count.
+    """
+    if not isinstance(value, dict):
+        return None
+    load = finite_floats(value.get("load"), limit=3)
+    cores = common.integer(value.get("cores"))
+    block = {
+        "load": load,
+        "load1_frac": common.number(value.get("load1_frac")),
+        "cores": cores,
+        "batt": common.integer(value.get("batt")),
+        "state": common.text(value.get("state")),
+        "rem": common.text(value.get("rem")),
+        "up_min": common.integer(value.get("up_min")),
+    }
+    if block["load1_frac"] is None and load and cores and cores > 0:
+        block["load1_frac"] = round(load[0] / float(cores), 4)
+    return block if any(item is not None for item in block.values()) else None
+
+
 # ------------------------------------------------------------------------ shape
 
 
@@ -349,8 +415,12 @@ def payload(args, link, degraded):
         "fixture" if args.fixture else "live",
         link=link,
     )
-    if degraded:
-        out["degraded"] = degraded
+    # Every degraded entry is display text that reaches the HUD: shorten home
+    # paths here, at the single choke point, so the success envelope is covered
+    # exactly like the failure one (common.failure also applies tilde_text).
+    clean = [common.tilde_text(str(item)) for item in degraded if item]
+    if clean:
+        out["degraded"] = clean
     return out
 
 
@@ -463,20 +533,9 @@ def normalise_link_entry(args, root):
 
     mac = None
     raw_mac = root.get("mac")
-    if isinstance(raw_mac, dict):
-        mac = {
-            key: raw_mac[key]
-            for key in ("load", "batt", "state", "rem", "up_min", "cores", "load1_frac")
-            if key in raw_mac
-        }
-        if "load1_frac" not in mac and isinstance(mac.get("load"), list) and mac.get("cores"):
-            try:
-                mac["load1_frac"] = round(float(mac["load"][0]) / float(mac["cores"]), 4)
-            except (TypeError, ValueError, IndexError):
-                pass
-        mac = mac or None
-    elif raw_mac is not None:
+    if raw_mac is not None and not isinstance(raw_mac, dict):
         raise common.Malformed("link fixture mac must be an object")
+    mac = mac_block(raw_mac)
 
     peers = []
     raw_peers = root.get("peers")
@@ -519,17 +578,20 @@ def fixture(args):
 # ------------------------------------------------------------------- self-check
 
 
-def _cli(argv):
+def _cli(argv, env=None):
     import subprocess
 
     proc = subprocess.run(
-        [sys.executable, os.path.abspath(__file__)] + argv, capture_output=True, text=True
+        [sys.executable, os.path.abspath(__file__)] + argv,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     try:
         parsed = json.loads(proc.stdout) if proc.stdout.strip() else None
     except ValueError:
         parsed = None
-    return proc.returncode, parsed, proc.stderr
+    return proc.returncode, parsed, proc.stdout, proc.stderr
 
 
 def self_check(args):
@@ -620,6 +682,26 @@ def self_check(args):
     check("ssh-failure-is-data", broken_facts is None and "Permission" in (broken_error or ""), str(broken_error))
     check("ssh-failure-single-call", len(broken_calls) == 1, "%d calls" % len(broken_calls))
 
+    # --- a malformed load line is dropped with a note, never a crash (R2) ---
+    bad_load = (
+        "{ 1.2.3 1.1 1.2 }\n"
+        "-InternalBattery-0 (id=1) 72%; charging; 0:43 remaining present: true\n"
+        " 10:00  up 2 days, 1:00, 1 user\n8\n"
+    )
+    bad_facts, bad_note = collect_ssh_facts(
+        "mac", 4, runner=lambda argv, timeout: (bad_load, "", 0)
+    )
+    check("ssh-bad-load-is-data", isinstance(bad_facts, dict), str(bad_facts))
+    check("ssh-bad-load-dropped", (bad_facts or {}).get("load") is None, str(bad_facts))
+    check("ssh-bad-load-note", "load" in (bad_note or "").lower(), str(bad_note))
+    check("ssh-bad-load-keeps-batt", (bad_facts or {}).get("batt") == 72, str(bad_facts))
+    check("ssh-bad-load-no-frac", (bad_facts or {}).get("load1_frac") is None, str(bad_facts))
+
+    dots_facts, dots_note = collect_ssh_facts(
+        "mac", 4, runner=lambda argv, timeout: ("{ . . . }\n12\n", "", 0)
+    )
+    check("ssh-dots-load-is-data", dots_facts is None and "load" in (dots_note or "").lower(), str(dots_note))
+
     # --- peer selection ----------------------------------------------------
     peers = [
         {"name": "vm-small-AMS-1", "on": False, "exit_node": False, "dns": None},
@@ -668,7 +750,7 @@ def self_check(args):
     # --- the shipped fixture, and fixture mode touching nothing ------------
     shipped = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures", "link.json"))
     state_before = os.path.exists(args.state)
-    code, parsed, stderr = _cli(["--fixture", shipped, "--json"])
+    code, parsed, stdout, stderr = _cli(["--fixture", shipped, "--json"])
     check("fixture-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
     check("fixture-ok-true", (parsed or {}).get("ok") is True, str(parsed)[:300])
     link = (parsed or {}).get("link") or {}
@@ -692,7 +774,7 @@ def self_check(args):
     iso_only = os.path.join(root, "iso-only.json")
     with open(iso_only, "w", encoding="utf-8") as handle:
         json.dump({"ts_iso": "2026-10-22T21:07:02Z", "rtt_ms": {"samples": [4, 6]}, "route": "direct"}, handle)
-    code, parsed, _ = _cli(["--fixture", iso_only, "--json"])
+    code, parsed, _, _ = _cli(["--fixture", iso_only, "--json"])
     link = (parsed or {}).get("link") or {}
     check("iso-only-ts", link.get("ts") == 1792703222, str(link.get("ts")))
     check("iso-only-stats", (link.get("rtt_ms") or {}).get("median") == 5.0, str(link.get("rtt_ms")))
@@ -700,7 +782,7 @@ def self_check(args):
     broken = os.path.join(root, "broken.json")
     with open(broken, "w", encoding="utf-8") as handle:
         handle.write("[")
-    code, parsed, _ = _cli(["--fixture", broken, "--json"])
+    code, parsed, _, _ = _cli(["--fixture", broken, "--json"])
     check("bad-json-exit-0", code == 0, "exit=%s" % code)
     check("bad-json-ok-false", (parsed or {}).get("ok") is False, str(parsed))
     check("bad-json-kind", (parsed or {}).get("kind") == "malformed", str((parsed or {}).get("kind")))
@@ -708,19 +790,112 @@ def self_check(args):
     wrong = os.path.join(root, "wrong.json")
     with open(wrong, "w", encoding="utf-8") as handle:
         json.dump(["not", "an", "object"], handle)
-    code, parsed, _ = _cli(["--fixture", wrong, "--json"])
+    code, parsed, _, _ = _cli(["--fixture", wrong, "--json"])
     check("wrong-shape-ok-false", (parsed or {}).get("ok") is False, str(parsed))
 
     empty = os.path.join(root, "empty.json")
     with open(empty, "w", encoding="utf-8") as handle:
         json.dump({}, handle)
-    code, parsed, _ = _cli(["--fixture", empty, "--json"])
+    code, parsed, _, _ = _cli(["--fixture", empty, "--json"])
     check("empty-ok-false", (parsed or {}).get("ok") is False, str(parsed))
     check("empty-reason", bool((parsed or {}).get("reason")), str(parsed))
 
-    code, parsed, _ = _cli(["--fixture", os.path.join(root, "nope.json"), "--json"])
+    code, parsed, _, _ = _cli(["--fixture", os.path.join(root, "nope.json"), "--json"])
     check("missing-exit-0", code == 0, "exit=%s" % code)
     check("missing-kind", (parsed or {}).get("kind") == "missing", str(parsed))
+
+    # --- NaN and Infinity never reach the output (R5) ----------------------
+    def reject_constant(token):
+        raise ValueError("non-JSON constant %s" % token)
+
+    def strict(text):
+        try:
+            json.loads(text, parse_constant=reject_constant)
+            return True
+        except ValueError:
+            return False
+
+    nan_fixture = os.path.join(root, "nan.json")
+    with open(nan_fixture, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "ts": 1792703222,
+                "route": "direct",
+                "mac": {"load": [3.94, 4.45, 4.81], "cores": "NaN", "batt": 100},
+            },
+            handle,
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", nan_fixture, "--json"])
+    mac = ((parsed or {}).get("link") or {}).get("mac") or {}
+    check("nan-fixture-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("nan-fixture-strict-json", strict(stdout), stdout.strip()[:200])
+    check("nan-fixture-no-tokens", "NaN" not in stdout and "Infinity" not in stdout, stdout.strip()[:200])
+    check("nan-fixture-cores-dropped", mac.get("cores") is None, str(mac))
+    check("nan-fixture-no-frac", mac.get("load1_frac") is None, str(mac))
+    check("nan-fixture-keeps-batt", mac.get("batt") == 100 and mac.get("load") == [3.94, 4.45, 4.81], str(mac))
+
+    dirty_fixture = os.path.join(root, "dirty.json")
+    with open(dirty_fixture, "w", encoding="utf-8") as handle:
+        handle.write(
+            '{"ts": 1792703222, "mac": {"load": [NaN, 3.94, Infinity], "batt": "Infinity",'
+            ' "state": 5, "rem": "0:43", "up_min": "nan", "cores": 0, "load1_frac": "NaN"},'
+            ' "peers": [{"name": "mac", "on": true}]}'
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", dirty_fixture, "--json"])
+    mac = ((parsed or {}).get("link") or {}).get("mac") or {}
+    check("dirty-fixture-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("dirty-fixture-strict-json", strict(stdout), stdout.strip()[:200])
+    check(
+        "dirty-fixture-sanitised",
+        mac.get("load") == [3.94] and mac.get("batt") is None and mac.get("up_min") is None,
+        str(mac),
+    )
+    check(
+        "dirty-fixture-typed",
+        mac.get("state") == "5" and mac.get("rem") == "0:43" and mac.get("cores") == 0,
+        str(mac),
+    )
+    check("dirty-fixture-zero-cores-no-frac", mac.get("load1_frac") is None, str(mac))
+
+    # --- the live success envelope carries no absolute home path (R4) ------
+    shims = os.path.join(root, "bin")
+    os.makedirs(shims)
+    status_json = (
+        '{"BackendState": "Running", "Peer": {"k1": {"HostName": "mac",'
+        ' "DNSName": "mac.example.ts.net.", "Online": true, "ExitNode": false}}}'
+    )
+    shim_body = (
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  status) printf '%%s' '%s' ;;\n"
+        "  ping) echo \"pong from mac (100.64.0.2) via 192.168.1.5:41641 in 7ms\" ;;\n"
+        "esac\n"
+        "exit 0\n" % status_json
+    )
+    ssh_body = (
+        "#!/bin/sh\n"
+        "echo \"$HOME/.ssh/config: line 3: Bad configuration option: frobnicate\" >&2\n"
+        "exit 255\n"
+    )
+    for name, body in (("tailscale", shim_body), ("ssh", ssh_body)):
+        path = os.path.join(shims, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.chmod(path, 0o755)
+
+    live_env = dict(os.environ, PATH="%s:/usr/bin:/bin" % shims)
+    live_state = os.path.join(root, "live-rtt.json")
+    code, parsed, stdout, stderr = _cli(
+        ["--state", live_state, "--json"], env=live_env
+    )
+    payload = parsed or {}
+    degraded = payload.get("degraded") or []
+    check("live-ssh-fail-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("live-ssh-fail-ok-true", payload.get("ok") is True and payload.get("mode") == "live", str(payload)[:200])
+    check("live-ssh-fail-degraded-tilde", any("~/.ssh/config" in str(item) for item in degraded), str(degraded))
+    check("live-ssh-fail-no-home-path", common.HOME not in stdout, "absolute home path in output")
+    ring_check, ring_warning = read_ring(live_state)
+    check("live-ssh-fail-rtt-ring", len(ring_check) == 1 and ring_warning is None, str(ring_check))
 
     print("\nself-check %s: %d passed, %d failed" % ("ok" if not bad else "FAILED", len(ok), len(bad)))
     if bad:
