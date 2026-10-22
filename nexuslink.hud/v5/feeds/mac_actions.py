@@ -11,9 +11,10 @@ Rules this file enforces:
   * ``--list`` prints the typed table as one JSON object (name, class, usage,
     exact command, what it needs, whether it needs a confirm).
   * ``--dry-run`` prints the exact command and exits 0.
-  * Every unsafe action is dry by default. Running it needs
+  * An unsafe action given neither ``--confirm`` nor ``--dry-run`` refuses with
+    exit 2 and one line on stderr, and runs nothing. Running it needs
     ``--confirm <action-name>`` with the name equal to the action; a mismatched
-    name refuses with exit 2 and a one-line reason on stderr.
+    name refuses the same way.
   * ``stop-bot`` never signals a pattern. It reads the recorded PID from
     ``~/.local/state/nexuslink/bots/<profile>.pid``, asks ``ps`` for that PID's
     command line, and refuses unless the line carries that profile's
@@ -24,7 +25,8 @@ Rules this file enforces:
   * ``--self-check`` never executes an unsafe action. It plans, refuses and
     parses only, with a recording runtime that fails loudly if it is asked to
     run anything destructive, and asserts afterwards that no action command
-    was run.
+    was run. Every subprocess it calls runs with a stub PATH, so even a
+    regression cannot reach the real ``pmset``, ``kill`` or ``hermes``.
 
 Exit codes: 0 success or dry run, 1 the action ran and failed, 2 refused or a
 caller error.
@@ -291,7 +293,7 @@ ACTIONS = (
     Action("open-app", "safe", "open-app <name>", "open -a <name>", "an installed app name"),
     Action("screenshot", "safe", "screenshot [--path FILE]", "screencapture -x -t jpg <path>", "Screen Recording permission for the calling process; default path ~/Desktop"),
     Action("list-dir", "safe", "list-dir <path>", "ls -la -- <path>", "a path readable by the Mac user"),
-    Action("status", "safe", "status", "sw_vers -productVersion; uptime; pmset -g batt; pgrep -fl '[c]affeinate'", "nothing"),
+    Action("status", "safe", "status", "sw_vers -productVersion; uptime; pmset -g batt; pgrep -fl '[c]affeinate' || true", "nothing"),
     Action("lock", "unsafe", "lock", "pmset displaysleepnow", "nothing; the screen locks when the Mac requires a password after display sleep", confirm=True),
     Action("sleep", "unsafe", "sleep", "pmset sleepnow", "nothing", confirm=True),
     Action("wake", "unsafe", "wake", "caffeinate -dims", "nothing; records the PID at ~/.local/state/nexuslink/caffeinate.pid", confirm=True),
@@ -310,7 +312,10 @@ STATUS_SCRIPT = "\n".join(
         "echo '@@BATT'",
         "pmset -g batt 2>&1",
         "echo '@@CAFFEINATE'",
-        "pgrep -fl '[c]affeinate' 2>&1",
+        # pgrep exits 1 when nothing matches, which is the normal state here.
+        # Without the "|| true" the whole script exits non-zero, execute()
+        # parses no status object, and status reports a failure when it worked.
+        "pgrep -fl '[c]affeinate' 2>&1 || true",
     ]
 ) + "\n"
 
@@ -464,8 +469,31 @@ def bot_pid_files(state_dir):
     return found
 
 
+def ensure_allowed(action, args):
+    """Refuse an unsafe action that was not explicitly confirmed.
+
+    ``--dry-run`` is the one safe way to see the command; it never reaches a
+    runtime. A bare unsafe call is a refusal (exit 2, one line on stderr), not
+    a silent dry run, so a caller that forgot the flag learns about it.
+    """
+    if action.klass != "unsafe":
+        return
+    if args.confirm is not None and args.confirm != action.name:
+        raise Refusal(
+            "%s needs --confirm %s, got --confirm %s" % (action.name, action.name, args.confirm)
+        )
+    if args.dry_run:
+        return
+    if args.confirm is None:
+        raise Refusal(
+            "%s is unsafe: pass --confirm %s to run it, or --dry-run to print the command"
+            % (action.name, action.name)
+        )
+
+
 def execute(args, runtime):
     action = ACTION_MAP[args.action]
+    ensure_allowed(action, args)
     plan = build_plan(args, runtime)
     unsafe = action.klass == "unsafe"
 
@@ -480,17 +508,10 @@ def execute(args, runtime):
         "ran": False,
     }
 
-    if unsafe and args.confirm is not None and args.confirm != action.name:
-        raise Refusal(
-            "%s needs --confirm %s, got --confirm %s" % (action.name, action.name, args.confirm)
-        )
-
-    wants_run = (not unsafe) or (args.confirm == action.name)
-    if args.dry_run or not wants_run:
+    if args.dry_run:
         result["dry_run"] = True
-        result["reason"] = "dry run; pass --confirm %s to run" % action.name if unsafe else None
-        if result["reason"] is None:
-            del result["reason"]
+        if unsafe:
+            result["reason"] = "dry run; pass --confirm %s to run" % action.name
         return result
 
     if plan["background"]:
@@ -522,11 +543,51 @@ def execute(args, runtime):
 # ----------------------------------------------------------------- self-check
 
 
-def _cli(argv):
+def _cli(argv, env=None):
     proc = subprocess.run(
-        [sys.executable, os.path.abspath(__file__)] + argv, capture_output=True, text=True
+        [sys.executable, os.path.abspath(__file__)] + argv,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def make_shim_dir(root, log_path, names, bodies=None):
+    """A PATH holding one logging stub per command this tool could call.
+
+    Each stub records its argv and then exits 1, so an accidental real
+    invocation is caught by an assertion instead of touching the Mac. The
+    self-check runs every CLI subprocess with this as its whole PATH.
+    ``bodies`` overrides a stub with recorded output (used to feed the status
+    script a caffeinate-off machine without running a probe for real).
+    """
+    os.makedirs(root, exist_ok=True)
+    bodies = bodies or {}
+    for name in names:
+        path = os.path.join(root, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            if name in bodies:
+                handle.write(
+                    "#!/bin/sh\n"
+                    "printf '%%s\\n' \"${0##*/} $*\" >> %s\n" % shlex.quote(log_path)
+                    + bodies[name]
+                )
+            else:
+                handle.write(
+                    "#!/bin/sh\n"
+                    "printf '%%s\\n' \"${0##*/} $*\" >> %s\n" % shlex.quote(log_path)
+                    + "exit 1\n"
+                )
+        os.chmod(path, 0o755)
+    return root
+
+
+def shim_calls(log_path):
+    if not os.path.exists(log_path):
+        return []
+    with open(log_path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
 
 
 class RecordingRuntime(Runtime):
@@ -569,8 +630,22 @@ def self_check(args):
             bad.append(name)
             print("FAIL %s %s" % (name, detail))
 
+    # --- a PATH the self-check cannot escape --------------------------------
+    shim_root = tempfile.mkdtemp(prefix="f1-mac-actions-shim-", dir=os.environ.get("TMPDIR"))
+    shim_log = os.path.join(shim_root, "commands.log")
+    shim_dir = make_shim_dir(
+        os.path.join(shim_root, "bin"),
+        shim_log,
+        (
+            "pmset", "kill", "caffeinate", "open", "screencapture", "ls",
+            "sw_vers", "uptime", "pgrep", "hermes", "ps", "devin", "tailscale",
+        ),
+    )
+    cli_env = dict(os.environ)
+    cli_env["PATH"] = shim_dir
+
     # --- the typed table ----------------------------------------------------
-    code, stdout, stderr = _cli(["--list", "--json"])
+    code, stdout, stderr = _cli(["--list", "--json"], env=cli_env)
     check("list-exit-0", code == 0, "exit=%s %s" % (code, stderr[:200]))
     try:
         listed = json.loads(stdout)
@@ -595,23 +670,34 @@ def self_check(args):
     )
 
     # --- dry run through the CLI -------------------------------------------
-    code, stdout, stderr = _cli(["sleep", "--dry-run"])
+    code, stdout, stderr = _cli(["sleep", "--dry-run"], env=cli_env)
     check("dry-sleep-exit-0", code == 0, "exit=%s %s" % (code, stderr[:200]))
     check("dry-sleep-line", stdout.strip() == "pmset sleepnow", repr(stdout))
 
-    code, stdout, _err = _cli(["sleep"])
-    check("unsafe-default-dry-exit-0", code == 0, "exit=%s" % code)
-    check("unsafe-default-dry-line", stdout.strip() == "pmset sleepnow", repr(stdout))
+    # --- a bare unsafe call refuses instead of running ----------------------
+    # The stub PATH above means even a regression cannot reach the real pmset.
+    # These calls carry no --dry-run on purpose: the refusal is what is under
+    # test, and a dry run would not exercise it.
+    for name, extra in (("sleep", []), ("lock", []), ("wake", []), ("start-bot", ["kakashi"])):
+        code, stdout, stderr = _cli([name] + extra, env=cli_env)
+        check("unsafe-bare-exit-2:%s" % name, code == 2, "exit=%s %s" % (code, stderr.strip()[:160]))
+        check("unsafe-bare-one-line:%s" % name, len(stderr.strip().splitlines()) == 1, repr(stderr[:200]))
+        check("unsafe-bare-no-stdout:%s" % name, stdout.strip() == "", repr(stdout[:120]))
 
     # --- refusal: --confirm with a name that is not the action -------------
-    code, stdout, stderr = _cli(["sleep", "--confirm", "lock"])
+    # --dry-run is added so the call is safe even if the name check regressed;
+    # a mismatched confirm still refuses with it.
+    code, stdout, stderr = _cli(["sleep", "--confirm", "lock", "--dry-run"], env=cli_env)
     check("wrong-confirm-exit-2", code == 2, "exit=%s" % code)
     check("wrong-confirm-one-line", len(stderr.strip().splitlines()) == 1, repr(stderr))
     check("wrong-confirm-nothing-on-stdout", stdout.strip() == "", repr(stdout[:120]))
 
     # --- no PID file: stop-bot refuses before any command -------------------
     tmp = tempfile.mkdtemp(prefix="f1-mac-actions-", dir=os.environ.get("TMPDIR"))
-    code, stdout, stderr = _cli(["stop-bot", "kakashi", "--confirm", "stop-bot", "--state-dir", tmp])
+    code, stdout, stderr = _cli(
+        ["stop-bot", "kakashi", "--confirm", "stop-bot", "--state-dir", tmp, "--dry-run"],
+        env=cli_env,
+    )
     check("stop-bot-no-pid-exit-2", code == 2, "exit=%s" % code)
     check("stop-bot-no-pid-one-line", len(stderr.strip().splitlines()) == 1, repr(stderr))
     check("stop-bot-no-pid-nothing-run", stdout.strip() == "", repr(stdout[:120]))
@@ -739,13 +825,78 @@ def self_check(args):
         local.value = value
         local.dry_run = False
         local.confirm = None
-        outcome = execute(local, destructive)
-        check("unsafe-not-run:%s" % name, outcome["dry_run"] is True, str(outcome))
+        try:
+            execute(local, destructive)
+            refused = False
+        except Refusal:
+            refused = True
+        check("unsafe-bare-refused-in-process:%s" % name, refused, "a bare unsafe call was not refused")
     check(
         "self-check-no-destructive-exec",
         destructive.runs == [] and destructive.spawns == [],
         "a runner was called: %s %s" % (destructive.runs, destructive.spawns),
     )
+
+    # --- status with caffeinate off exits 0 and returns the object ----------
+    # The real STATUS_SCRIPT runs against a stub PATH: pmset, uptime and
+    # sw_vers answer from the recorded values, and pgrep exits 1 exactly as it
+    # does when no caffeinate is running. Nothing here touches the Mac.
+    status_log = os.path.join(shim_root, "status.log")
+    status_dir = make_shim_dir(
+        os.path.join(shim_root, "status-bin"),
+        status_log,
+        ("sw_vers", "uptime", "pmset", "pgrep"),
+        {
+            "sw_vers": "printf '%s\\n' '26.4.1'\nexit 0\n",
+            "uptime": "printf '%s\\n' ' 1:20  up 13 days,  4:50, 1 user, load averages: 12.0 9.0 7.0'\nexit 0\n",
+            "pmset": (
+                "printf '%s\\n' \"Now drawing from 'AC Power'\"\n"
+                "printf ' -InternalBattery-0 (id=1)\\t72%%; charging; 2:14 remaining present: true\\n'\n"
+                "exit 0\n"
+            ),
+        },
+    )
+    status_env = dict(os.environ)
+    status_env["PATH"] = status_dir
+    proc = subprocess.run(
+        ["/bin/sh", "-c", STATUS_SCRIPT], capture_output=True, text=True, timeout=10.0, env=status_env
+    )
+    check("status-script-exit-0-caffeinate-off", proc.returncode == 0, "exit=%s" % proc.returncode)
+    check("status-script-caffeinate-not-on", proc.stdout.strip().split("@@CAFFEINATE")[-1].strip() == "", repr(proc.stdout[-80:]))
+
+    class StatusRuntime(Runtime):
+        def run(self, argv, timeout=20.0):
+            self.argv = argv
+            return proc.stdout, proc.stderr, proc.returncode
+
+    status_args = types.SimpleNamespace(**vars(base))
+    status_args.action = "status"
+    status_args.value = None
+    status_args.dry_run = False
+    status_args.confirm = None
+    status_runtime = StatusRuntime()
+    status_result = execute(status_args, status_runtime)
+    check("status-action-ok-true", status_result["ok"] is True, str(status_result.get("reason")))
+    check("status-action-ran", status_result["ran"] is True and status_result["exit"] == 0, str(status_result))
+    parsed_status = status_result.get("status") or {}
+    check("status-action-object", parsed_status.get("os_version") == "26.4.1", str(parsed_status))
+    check(
+        "status-action-caffeinate-off",
+        parsed_status.get("caffeinate") == {"on": False, "pids": []},
+        str(parsed_status.get("caffeinate")),
+    )
+    check(
+        "status-action-battery",
+        parsed_status.get("battery") == {"percent": 72, "state": "charging"},
+        str(parsed_status.get("battery")),
+    )
+
+    # --- the whole run: no state-changing command reached a stub -----------
+    banned = ("pmset sleepnow", "pmset displaysleepnow", "kill ", "caffeinate -", "open -a", "screencapture", "hermes -p")
+    all_calls = shim_calls(shim_log) + shim_calls(status_log)
+    caught = [line for line in all_calls if any(token in line for token in banned)]
+    check("self-check-no-state-changing-command", caught == [], str(caught)[:300])
+    check("self-check-no-command-via-cli-path", shim_calls(shim_log) == [], str(shim_calls(shim_log))[:200])
 
     print("\nself-check %s: %d passed, %d failed" % ("ok" if not bad else "FAILED", len(ok), len(bad)))
     if bad:

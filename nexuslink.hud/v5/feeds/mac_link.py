@@ -15,11 +15,15 @@ the only place that knows the command output shapes, so a fixture exercises
 exactly the live path minus the subprocess.
 
 Absence is an answer, never an exception: a value that could not be read is
-``null`` and carries a reason in the ``reasons`` map (keyed by its dotted path).
-When the collector produced no readable section at all the payload becomes
-``{"ok": false, "reason": "..."}`` and the process still exits 0, so a HUD tick
-never sees a broken process. Exit 2 is reserved for a caller error (bad
-arguments, a fixture file the caller named that does not exist).
+``null`` and carries a reason in the ``reasons`` map, one key per null path
+(``mac.load.cores``, ``mac.thermal.speed_limit``, ``tunnel.route``, ...). When
+the collector produced no readable section at all the payload becomes
+``{"ok": false, "reason": "...", "kind": "..."}`` and the process still exits 0,
+so a HUD tick never sees a broken process. Exit 2 is reserved for a caller
+error (bad arguments, a fixture file the caller named that does not exist).
+A file that is not UTF-8 is malformed input on both read paths: a fixture
+answers ``ok: false`` with exit 0, and a cache file counts as a miss and gets
+rewritten instead of wedging the feed.
 
 Reads are cached in ``~/.local/state/nexuslink/mac_link.json`` (atomic write)
 for 10 s and never faster: a second call inside the window runs zero collectors
@@ -159,6 +163,17 @@ def first_line(block, limit=200):
     return None
 
 
+def reason_nulls(values, prefix, reasons, message):
+    """Every still-null leaf gets its own dotted key in ``reasons``.
+
+    A block-level key is context; the contract is one reason per null path, so
+    the HUD can point at the exact value that is missing.
+    """
+    for key, value in values.items():
+        if value is None:
+            reasons.setdefault("%s.%s" % (prefix, key), message)
+
+
 def envelope(source, mode, **fields):
     payload = {
         "ok": True,
@@ -198,6 +213,10 @@ def read_json(path, what):
     try:
         with open(target, "r", encoding="utf-8") as handle:
             raw = handle.read()
+    except UnicodeDecodeError as exc:
+        # Not UTF-8 is malformed input, not a crash: the cache and the fixture
+        # path both have to survive a half-written or binary file.
+        raise Malformed("%s at %s is not UTF-8 text: %s" % (what, shown, exc.reason))
     except OSError as exc:
         raise Missing("cannot read %s at %s: %s" % (what, shown, exc.strerror or exc))
     if not raw.strip():
@@ -346,11 +365,16 @@ def parse_battery(block, reasons):
     out: dict = {"percent": None, "state": None, "remaining": None, "present": None, "power_source": None}
     if not block:
         reasons["mac.battery"] = "pmset -g batt printed nothing"
+        reason_nulls(out, "mac.battery", reasons, "pmset -g batt printed nothing")
         return out
 
     source = re.search(r"drawing from '([^']+)'", block)
     if source:
         out["power_source"] = text(source.group(1))
+    else:
+        reasons["mac.battery.power_source"] = (
+            first_line(block, 160) or "pmset -g batt printed no 'drawing from' line"
+        )
 
     line = re.search(
         r"(\d{1,3})%;\s*([^;]+);\s*([0-9:]+)\s+remaining\s+present:\s*(true|false)", block
@@ -361,29 +385,37 @@ def parse_battery(block, reasons):
             reason = "pmset reports no battery on this Mac"
         reasons["mac.battery.percent"] = reason
         reasons["mac.battery.state"] = reason
+        reason_nulls(out, "mac.battery", reasons, reason)
         return out
 
     out["percent"] = max(0, min(100, int(line.group(1))))
     out["state"] = text(line.group(2).lower())
     out["remaining"] = text(line.group(3))
     out["present"] = (line.group(4) == "true") if line.lastindex and line.lastindex >= 4 else None
+    reason_nulls(out, "mac.battery", reasons, "pmset -g batt did not report this value")
     return out
 
 
 def parse_load(block, cores, reasons):
     out: dict = {"avg": None, "load1_frac": None, "cores": cores}
+    message = None
     if not block:
-        reasons["mac.load"] = "sysctl vm.loadavg printed nothing"
-        return out
-    match = re.search(r"\{\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}", block)
-    if not match:
-        reasons["mac.load"] = first_line(block, 160) or "vm.loadavg is not a triple"
-        return out
-    out["avg"] = [round(float(value), 2) for value in match.groups()]
-    if cores:
-        out["load1_frac"] = round(out["avg"][0] / float(cores), 3)
+        message = "sysctl -n vm.loadavg printed nothing"
     else:
+        match = re.search(r"\{\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}", block)
+        if match:
+            out["avg"] = [round(float(value), 2) for value in match.groups()]
+        else:
+            message = first_line(block, 160) or "vm.loadavg is not a triple"
+    if message:
+        reasons["mac.load"] = message
+    if out["avg"] is not None and cores:
+        out["load1_frac"] = round(out["avg"][0] / float(cores), 3)
+    elif out["avg"] is not None:
         reasons["mac.load.load1_frac"] = "cpu core count unavailable"
+    if cores is None:
+        reasons["mac.load.cores"] = "sysctl -n hw.ncpu printed nothing"
+    reason_nulls(out, "mac.load", reasons, message or "vm.loadavg unreadable")
     return out
 
 
@@ -417,6 +449,7 @@ def parse_memory(pressure_block, status_block, reasons):
         reasons["mac.memory.free_pct"] = (
             first_line(pressure_block, 160) or "memory_pressure -Q printed nothing"
         )
+    reason_nulls(out, "mac.memory", reasons, "memory pressure unreadable")
     return out
 
 
@@ -424,6 +457,8 @@ def parse_thermal(block, reasons):
     out: dict = {"temp_c": None, "scheduler_limit": None, "speed_limit": None}
     if not block:
         reasons["mac.soc_temp_c"] = "pmset -g therm printed nothing"
+        reasons["mac.thermal.scheduler_limit"] = "pmset -g therm printed nothing"
+        reasons["mac.thermal.speed_limit"] = "pmset -g therm printed nothing"
         return out
 
     temp = re.search(r"(?:cpu|soc|die|package)\s*temp[a-z]*\s*[:=]\s*([0-9.]+)", block, re.I)
@@ -441,9 +476,17 @@ def parse_thermal(block, reasons):
     limit = re.search(r"CPU_Scheduler_Limit\s*=\s*(\d+)", block)
     if limit:
         out["scheduler_limit"] = int(limit.group(1))
+    else:
+        reasons["mac.thermal.scheduler_limit"] = (
+            "pmset -g therm recorded no CPU_Scheduler_Limit on this Mac"
+        )
     speed = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", block)
     if speed:
         out["speed_limit"] = int(speed.group(1))
+    else:
+        reasons["mac.thermal.speed_limit"] = (
+            "pmset -g therm recorded no CPU_Speed_Limit on this Mac"
+        )
     return out
 
 
@@ -484,7 +527,8 @@ def parse_ping(block, peer, reasons):
     out: dict = {"peer": peer, "up": None, "rtt_ms": None, "route": None}
     body = block or ""
     if not body:
-        reasons["tunnel.rtt_ms"] = "tailscale ping printed nothing"
+        for key in ("up", "rtt_ms", "route"):
+            reasons["tunnel.%s" % key] = "tailscale ping printed nothing"
         return out
 
     pongs = [line for line in body.splitlines() if re.search(r"in\s+[0-9.]+\s*ms", line)]
@@ -504,6 +548,7 @@ def parse_ping(block, peer, reasons):
             reason = first_line(body, 160) or "no pong"
         out["up"] = False
         reasons["tunnel.rtt_ms"] = reason
+        reason_nulls(out, "tunnel", reasons, reason)
         return out
 
     out["up"] = True
@@ -515,6 +560,8 @@ def parse_ping(block, peer, reasons):
         out["route"] = "relay"
     elif "via" in lowered:
         out["route"] = "direct"
+    if out["route"] is None:
+        reasons["tunnel.route"] = "pong carried no route word: %s" % (text(line, 140) or "bare pong")
     return out
 
 
@@ -523,17 +570,23 @@ def parse_kanban(block, now_epoch, reasons):
     body = block or ""
     if not body:
         reasons["kanban"] = "hermes kanban list printed nothing"
+        reasons["kanban.running"] = reasons["kanban"]
         return out
     if not body.lstrip().startswith("["):
-        reasons["kanban"] = "hermes kanban list: %s" % (first_line(body, 180) or "no JSON")
+        reasons["kanban"] = tilde_text(
+            "hermes kanban list: %s" % (first_line(body, 180) or "no JSON")
+        )
+        reasons["kanban.running"] = reasons["kanban"]
         return out
     try:
         data = json.loads(body)
     except ValueError as exc:
         reasons["kanban"] = "hermes kanban list is not JSON: %s" % exc
+        reasons["kanban.running"] = reasons["kanban"]
         return out
     if not isinstance(data, list):
         reasons["kanban"] = "hermes kanban list is not an array"
+        reasons["kanban.running"] = reasons["kanban"]
         return out
 
     items = []
@@ -617,6 +670,7 @@ def parse_collector(raw, peer):
         uptime_source = "uptime" if uptime_s is not None else None
     if uptime_s is None:
         reasons["mac.uptime_s"] = "neither kern.boottime nor uptime could be read"
+        reasons["mac.uptime_human"] = reasons["mac.uptime_s"]
     elif uptime_source == "uptime":
         reasons["mac.uptime_s"] = "kern.boottime unreadable; uptime text used"
 
@@ -660,7 +714,8 @@ def payload_for(raw, mode, host, peer, collector_exit=None, collector_error=None
     parsed = parse_collector(raw, peer)
     reasons = parsed["reasons"]
     if collector_error:
-        reasons["collector_stderr"] = text(collector_error, 240)
+        # ssh and the shell echo absolute paths; the payload never does.
+        reasons["collector_stderr"] = text(tilde_text(collector_error), 240)
 
     payload = envelope(
         SOURCE,
@@ -685,11 +740,12 @@ def payload_for(raw, mode, host, peer, collector_exit=None, collector_error=None
 
 
 def cache_read(path):
+    """(parsed cache root, problem). A malformed cache is a miss, not a crash."""
     try:
         root = read_json(path, "mac link cache")
-    except DataProblem:
-        return None
-    return root if isinstance(root, dict) else None
+    except DataProblem as exc:
+        return None, exc
+    return (root if isinstance(root, dict) else None), None
 
 
 def cache_lookup(root, host, peer, now_epoch, ttl):
@@ -728,13 +784,20 @@ def build(args, runner=None):
         try:
             with open(target, "r", encoding="utf-8") as handle:
                 raw = handle.read()
+        except UnicodeDecodeError as exc:
+            # A binary or half-written file is malformed input: the payload says
+            # so and the process still exits 0.
+            raise Malformed(
+                "fixture %s is not UTF-8 text: %s" % (tilde(target), exc.reason)
+            )
         except OSError as exc:
             raise Missing("cannot read fixture %s: %s" % (tilde(target), exc.strerror or exc))
         payload, _epoch = payload_for(raw, "fixture", args.host, args.peer)
         return payload
 
     now_epoch = time.time()
-    cached = cache_lookup(cache_read(args.state), args.host, args.peer, now_epoch, CACHE_TTL_S)
+    cache_root, cache_problem = cache_read(args.state)
+    cached = cache_lookup(cache_root, args.host, args.peer, now_epoch, CACHE_TTL_S)
     if cached:
         payload, age = cached
         out = dict(payload)
@@ -752,6 +815,11 @@ def build(args, runner=None):
     payload, _collected_epoch = payload_for(raw, "live", args.host, args.peer, code, err)
     payload["cached"] = False
     payload["cache_age_s"] = 0.0
+    if cache_problem is not None and getattr(cache_problem, "kind", "") == "malformed":
+        # Say it out loud: the previous cache was unreadable and was replaced.
+        payload.setdefault("reasons", {})["cache"] = "cache unreadable (%s); recollected" % (
+            tilde_text(cache_problem.reason)
+        )
     try:
         # Cache age is measured on the reader's clock, not the Mac's: the two
         # hosts keep their own time and a skewed Mac must not freeze the cache.
@@ -764,15 +832,61 @@ def build(args, runner=None):
 # ----------------------------------------------------------------- self-check
 
 
-def _cli(argv):
+def _cli(argv, env=None):
     proc = subprocess.run(
-        [sys.executable, os.path.abspath(__file__)] + argv, capture_output=True, text=True
+        [sys.executable, os.path.abspath(__file__)] + argv,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     try:
         parsed = json.loads(proc.stdout) if proc.stdout.strip() else None
     except ValueError:
         parsed = None
     return proc.returncode, parsed, proc.stdout, proc.stderr
+
+
+def make_shim_dir(root, log_path, names):
+    """A PATH holding one logging stub per command this tool could call.
+
+    Each stub records its argv and exits 1, so an accidental real invocation is
+    caught by an assertion instead of touching the Mac. Self-check subprocesses
+    get this as their whole PATH: nothing they run can reach the real system.
+    """
+    os.makedirs(root, exist_ok=True)
+    body = (
+        "#!/bin/sh\n"
+        "printf '%%s\\n' \"${0##*/} $*\" >> %s\n"
+        "exit 1\n" % shlex.quote(log_path)
+    )
+    for name in names:
+        path = os.path.join(root, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.chmod(path, 0o755)
+    return root
+
+
+def shim_calls(log_path):
+    if not os.path.exists(log_path):
+        return []
+    with open(log_path, "r", encoding="utf-8") as handle:
+        return [line.strip() for line in handle if line.strip()]
+
+
+def null_paths(value, prefix=""):
+    """Dotted paths of every null scalar. List items are per-item facts."""
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            path = "%s.%s" % (prefix, key) if prefix else key
+            if isinstance(item, dict):
+                found.extend(null_paths(item, path))
+            elif isinstance(item, list):
+                continue
+            elif item is None:
+                found.append(path)
+    return found
 
 
 def self_check(args):
@@ -787,6 +901,24 @@ def self_check(args):
         else:
             bad.append(name)
             print("FAIL %s %s" % (name, detail))
+
+    # --- a PATH the self-check cannot escape --------------------------------
+    # Every CLI subprocess runs with this as its whole PATH: one logging stub
+    # per command either tool could call. An accidental real invocation is
+    # recorded and exits 1, so a regression shows up as a failed check instead
+    # of a sleeping Mac. Nothing in this run may leave a line in the log.
+    shim_root = tempfile.mkdtemp(prefix="f1-mac-link-shim-", dir=os.environ.get("TMPDIR"))
+    shim_log = os.path.join(shim_root, "commands.log")
+    shim_dir = make_shim_dir(
+        os.path.join(shim_root, "bin"),
+        shim_log,
+        (
+            "ssh", "tailscale", "hermes", "pgrep", "pmset", "sysctl", "scutil",
+            "hostname", "date", "uptime", "memory_pressure", "kill", "ps",
+        ),
+    )
+    cli_env = dict(os.environ)
+    cli_env["PATH"] = shim_dir
 
     fixture = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "fixtures", "mac_link.txt")
@@ -850,6 +982,73 @@ def self_check(args):
     check("devin-count", devin["running"] == len(devin["items"]), str(devin["running"]))
     check("canvas-none", "canvas" not in json.dumps(parsed).lower(), "unexpected key")
 
+    # --- every null carries its own reason ----------------------------------
+    def unreasoned(payload):
+        data = {
+            key: payload.get(key)
+            for key in ("mac", "tunnel", "kanban", "devin")
+            if key in payload
+        }
+        known = payload.get("reasons") or {}
+        return [path for path in null_paths(data) if path not in known]
+
+    fixture_payload, _fixture_epoch = payload_for(recorded, "fixture", "local", "omarchylink")
+    check("fixture-nulls-reasoned", unreasoned(fixture_payload) == [], str(unreasoned(fixture_payload)))
+    check(
+        "thermal-nulls-reasoned",
+        "mac.thermal.scheduler_limit" in reasons and "mac.thermal.speed_limit" in reasons,
+        str(sorted(reasons)),
+    )
+
+    variants = {
+        # each one breaks exactly one collector line
+        "no-cores": recorded.replace("@@CORES\n12\n", "@@CORES\n\n"),
+        "no-power-source": recorded.replace("Now drawing from 'AC Power'\n", ""),
+        "pong-no-route": recorded.replace("via 192.168.0.112:41641 ", ""),
+        "no-therm": recorded.replace(
+            "Note: No thermal warning level has been recorded\n"
+            "Note: No performance warning level has been recorded\n"
+            "Note: No CPU power status has been recorded\n",
+            "",
+        ),
+    }
+    variant_payloads = {}
+    for label, variant in variants.items():
+        variant_payloads[label] = payload_for(variant, "fixture", "local", "omarchylink")[0]
+        check(
+            "variant-nulls-reasoned:%s" % label,
+            unreasoned(variant_payloads[label]) == [],
+            str(unreasoned(variant_payloads[label])),
+        )
+    no_cores = variant_payloads["no-cores"]
+    check(
+        "no-cores-has-reason",
+        (no_cores.get("mac") or {}).get("load", {}).get("cores") is None
+        and "mac.load.cores" in (no_cores.get("reasons") or {}),
+        str((no_cores.get("mac") or {}).get("load")),
+    )
+    no_source = variant_payloads["no-power-source"]
+    check(
+        "no-power-source-has-reason",
+        (no_source.get("mac") or {}).get("battery", {}).get("power_source") is None
+        and "mac.battery.power_source" in (no_source.get("reasons") or {}),
+        str((no_source.get("mac") or {}).get("battery")),
+    )
+    no_route = variant_payloads["pong-no-route"]
+    check(
+        "pong-no-route-has-reason",
+        (no_route.get("tunnel") or {}).get("route") is None
+        and "tunnel.route" in (no_route.get("reasons") or {}),
+        str(no_route.get("tunnel")),
+    )
+    no_therm = variant_payloads["no-therm"]
+    check(
+        "no-therm-has-reason",
+        (no_therm.get("mac") or {}).get("thermal", {}).get("speed_limit") is None
+        and "mac.thermal.speed_limit" in (no_therm.get("reasons") or {}),
+        str((no_therm.get("mac") or {}).get("thermal")),
+    )
+
     # --- ping shapes --------------------------------------------------------
     direct_ipv6 = parse_ping(
         "pong from omarchylink (100.104.64.3) via [fd7a:115c:a1e0::1]:41641 in 7ms",
@@ -882,7 +1081,7 @@ def self_check(args):
     )
 
     # --- fixture mode through the CLI ---------------------------------------
-    code, payload, stdout, stderr = _cli(["--fixture", fixture, "--json"])
+    code, payload, stdout, stderr = _cli(["--fixture", fixture, "--json"], env=cli_env)
     check("fixture-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
     check("fixture-one-line", stdout.strip().count("\n") == 0, "stdout is not one line")
     check("fixture-ok", (payload or {}).get("ok") is True, str(payload)[:200])
@@ -959,7 +1158,7 @@ def self_check(args):
     empty = os.path.join(root, "empty.txt")
     with open(empty, "w", encoding="utf-8") as handle:
         handle.write("")
-    code, payload, _out, _err = _cli(["--fixture", empty, "--json"])
+    code, payload, _out, _err = _cli(["--fixture", empty, "--json"], env=cli_env)
     check("empty-exit-0", code == 0, "exit=%s" % code)
     check("empty-ok-false", (payload or {}).get("ok") is False, str(payload))
     check("empty-kind", (payload or {}).get("kind") == "missing", str((payload or {}).get("kind")))
@@ -968,7 +1167,7 @@ def self_check(args):
     markers_only = os.path.join(root, "markers.txt")
     with open(markers_only, "w", encoding="utf-8") as handle:
         handle.write("@@BATT\n@@LOAD\n@@END\n")
-    code, payload, _out, _err = _cli(["--fixture", markers_only, "--json"])
+    code, payload, _out, _err = _cli(["--fixture", markers_only, "--json"], env=cli_env)
     check("markers-only-ok-false", (payload or {}).get("ok") is False, str(payload))
 
     partial = os.path.join(root, "partial.txt")
@@ -977,7 +1176,7 @@ def self_check(args):
             "@@NOW\n1792710500\n@@BATT\nNow drawing from 'AC Power'\n"
             " -InternalBattery-0 (id=1)\t72%; charging; 2:14 remaining present: true\n@@END\n"
             )
-    code, payload, _out, _err = _cli(["--fixture", partial, "--json"])
+    code, payload, _out, _err = _cli(["--fixture", partial, "--json"], env=cli_env)
     check("partial-exit-0", code == 0, "exit=%s" % code)
     check("partial-ok-true", (payload or {}).get("ok") is True, str(payload)[:200])
     partial_mac = (payload or {}).get("mac") or {}
@@ -986,21 +1185,107 @@ def self_check(args):
     check("partial-load-reason", "mac.load" in ((payload or {}).get("reasons") or {}), str((payload or {}).get("reasons")))
     check("partial-uptime-null", partial_mac.get("uptime_s") is None, str(partial_mac.get("uptime_s")))
     check("partial-tunnel-null", ((payload or {}).get("tunnel") or {}).get("rtt_ms") is None, str((payload or {}).get("tunnel")))
+    check(
+        "partial-nulls-reasoned",
+        unreasoned(payload or {}) == [],
+        str(unreasoned(payload or {})),
+    )
+
+    # --- a file that is not UTF-8 is malformed, not a crash -----------------
+    binary = os.path.join(root, "binary.txt")
+    with open(binary, "wb") as handle:
+        handle.write(b"@@BATT\n\xff\xfe\x00 not text\n@@END\n")
+    code, payload, _out, _err = _cli(["--fixture", binary, "--json"], env=cli_env)
+    check("non-utf8-exit-0", code == 0, "exit=%s" % code)
+    check("non-utf8-ok-false", (payload or {}).get("ok") is False, str(payload)[:200])
+    check("non-utf8-kind", (payload or {}).get("kind") == "malformed", str((payload or {}).get("kind")))
+    check("non-utf8-no-traceback", (payload or {}).get("kind") != "programming", str(payload)[:200])
+
+    # A non-UTF-8 cache file must not wedge the live path: it is a miss, the
+    # collector runs, and the file is rewritten.
+    wedged_state = os.path.join(root, "wedged.json")
+    with open(wedged_state, "wb") as handle:
+        handle.write(b"\xff\xfe not utf-8\n")
+    wedged_args = types.SimpleNamespace(
+        host="local", host_name=None, peer="omarchylink", timeout=5.0, state=wedged_state, fixture=None
+    )
+    calls_before = len(calls)
+    repaired = build(wedged_args, runner=fake_runner)
+    check(
+        "corrupt-cache-recollects",
+        len(calls) == calls_before + 1 and repaired.get("cached") is False and repaired.get("ok") is True,
+        "%d collectors, cached=%s" % (len(calls) - calls_before, repaired.get("cached")),
+    )
+    check(
+        "corrupt-cache-reason",
+        "cache" in (repaired.get("reasons") or {}),
+        str((repaired.get("reasons") or {}).get("cache")),
+    )
+    with open(wedged_state, "r", encoding="utf-8") as handle:
+        rewritten = json.load(handle)
+    check(
+        "corrupt-cache-rewritten",
+        isinstance(rewritten.get("payload"), dict) and rewritten.get("collected_epoch") is not None,
+        "cache file still corrupt",
+    )
 
     # --- caller errors exit 2 ----------------------------------------------
-    code, _payload, _out, err = _cli(["--fixture", os.path.join(root, "nope.txt"), "--json"])
+    code, _payload, _out, err = _cli(["--fixture", os.path.join(root, "nope.txt"), "--json"], env=cli_env)
     check("missing-fixture-exit-2", code == 2, "exit=%s" % code)
     check("missing-fixture-one-line", len(err.strip().splitlines()) == 1, err.strip()[:200])
-    code, _payload, _out, _err = _cli(["--host", "elsewhere", "--json"])
+    code, _payload, _out, _err = _cli(["--host", "elsewhere", "--json"], env=cli_env)
     check("bad-host-exit-2", code == 2, "exit=%s" % code)
 
-    # --- ssh runner shape (never invoked here) ------------------------------
-    argv = [
-        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=4",
-        "-o", "StrictHostKeyChecking=accept-new", "mac", "SCRIPT",
-    ]
-    check("ssh-argv-single-round-trip", argv[-1] == "SCRIPT" and argv.count("mac") == 1, str(argv))
-    check("self-check-no-ssh-run", not os.path.exists(os.path.join(root, "ssh")), "")
+    # --- runners: one subprocess call, exact argv, stubbed -------------------
+    runner_calls = []
+
+    class _Completed(object):
+        stdout = "pong from omarchylink via 192.168.0.112:41641 in 10ms\n"
+        stderr = ""
+        returncode = 0
+
+    real_run = subprocess.run
+
+    def stub_run(argv, **kwargs):
+        runner_calls.append((list(argv), kwargs))
+        return _Completed()
+
+    subprocess.run = stub_run
+    try:
+        ssh_out, ssh_err, ssh_code = ssh_runner("mac", "SCRIPT", 7)
+        local_argv_count = len(runner_calls)
+        local_runner(script, 7)
+    finally:
+        subprocess.run = real_run
+
+    check("ssh-one-round-trip", local_argv_count == 1, "%d calls" % local_argv_count)
+    ssh_argv, ssh_kwargs = runner_calls[0] if runner_calls else ([], {})
+    check(
+        "ssh-argv",
+        ssh_argv[:1] == ["ssh"]
+        and "BatchMode=yes" in ssh_argv
+        and "StrictHostKeyChecking=accept-new" in ssh_argv
+        and "ConnectTimeout=5" in ssh_argv
+        and ssh_argv[-2:] == ["mac", "SCRIPT"],
+        str(ssh_argv),
+    )
+    check(
+        "ssh-kwargs",
+        ssh_kwargs.get("timeout") == 7 and ssh_kwargs.get("capture_output") is True and ssh_kwargs.get("text") is True,
+        str(ssh_kwargs),
+    )
+    check(
+        "ssh-passes-collector-text",
+        (ssh_out, ssh_err, ssh_code) == (_Completed.stdout, "", 0),
+        "%r %r %r" % (ssh_out, ssh_err, ssh_code),
+    )
+    local_argv, _local_kwargs = runner_calls[1] if len(runner_calls) > 1 else ([], {})
+    check(
+        "local-runner-one-sh-call",
+        local_argv[:2] == ["/bin/sh", "-c"] and local_argv[2].count("@@END") == 1,
+        str(local_argv[:2]),
+    )
+    check("self-check-no-ssh-run", shim_calls(shim_log) == [], str(shim_calls(shim_log))[:200])
 
     print("\nself-check %s: %d passed, %d failed" % ("ok" if not bad else "FAILED", len(ok), len(bad)))
     if bad:

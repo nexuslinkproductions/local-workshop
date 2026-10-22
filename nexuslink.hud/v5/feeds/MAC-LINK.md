@@ -5,7 +5,7 @@ Two stdlib-only Python 3 tools behind the Mac Link Explorer on the v5 deck.
 | File | Role |
 |---|---|
 | `mac_link.py` | one JSON status sample of the Mac, collected in ONE shell round trip and cached 10 s |
-| `mac_actions.py` | typed actions with a safe/unsafe class, dry run by default, confirm to run |
+| `mac_actions.py` | typed actions with a safe/unsafe class; refuses unless `--confirm` or `--dry-run` |
 | `../fixtures/mac_link.txt` | a recorded collector output, used by `mac_link.py --self-check` |
 
 Both run on this Mac with no arguments and no third-party packages. Neither
@@ -37,11 +37,13 @@ Payload, one object on stdout:
 | `tunnel` | `peer`, `up`, `rtt_ms`, `route` (`direct` or `relay`) |
 | `kanban` | `running` count and `items` (`id`, `title`, `assignee`, `started_at`, `age_s`) |
 | `devin` | `running` count and `items` (`pid`, `model`, `command`) |
-| `reasons` | dotted key -> one short reason, for every null value |
+| `reasons` | dotted key -> one short reason, for every null value (one key per null path) |
 
 Exit codes: `0` for data and for honest absence (`{"ok": false, "reason": ...}`,
 `kind` says missing or malformed), `2` only for a caller error (bad `--host`, a
-fixture path that does not exist, a programming error).
+fixture path that does not exist, a programming error). A fixture or cache file
+that is not UTF-8 is malformed input, not a crash: the fixture answers
+`ok: false` with exit 0, and the cache is treated as a miss and rewritten.
 
 ### One collector
 
@@ -84,8 +86,10 @@ reports the board unreadable when the feed is run inside a Hermes worker.
 `pmset -g therm` prints only `Note: No thermal warning level has been recorded`
 here; it records no temperature on Apple Silicon, and the real sensor needs
 root (`powermetrics`). The key is `null` and `reasons["mac.soc_temp_c"]` says
-exactly that. A plausible number would be a lie. `cpu_scheduler_limit` and
-`speed_limit` are still parsed when the machine throttles.
+exactly that. A plausible number would be a lie. `scheduler_limit` and
+`speed_limit` are parsed when the machine throttles and carry their own
+`reasons["mac.thermal.scheduler_limit"]` / `["mac.thermal.speed_limit"]` entry
+when it does not, so the two nulls there are explained too.
 
 ### Cache
 
@@ -113,7 +117,7 @@ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 | `open-app <name>` | safe | `open -a <name>` | an installed app name |
 | `screenshot` | safe | `screencapture -x -t jpg <path>` | Screen Recording permission for the calling process; default `~/Desktop/nexus-<timestamp>.jpg`, override with `--path` |
 | `list-dir <path>` | safe | `ls -la -- <path>` | a path the Mac user can read |
-| `status` | safe | `sw_vers -productVersion; uptime; pmset -g batt; pgrep -fl '[c]affeinate'` | nothing |
+| `status` | safe | `sw_vers -productVersion; uptime; pmset -g batt; pgrep -fl '[c]affeinate' || true` | nothing |
 | `lock` | unsafe | `pmset displaysleepnow` | nothing; the screen locks when the Mac requires a password after display sleep |
 | `sleep` | unsafe | `pmset sleepnow` | nothing |
 | `wake` | unsafe | `caffeinate -dims` (background) | nothing; records `~/.local/state/nexuslink/caffeinate.pid` |
@@ -124,9 +128,15 @@ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 Rules the code enforces:
 
 - `--dry-run` prints the exact command and exits 0.
-- Every unsafe action is dry by default. Running one needs
-  `--confirm <action-name>` with the name equal to the action. A mismatched
-  name refuses with exit 2 and one line on stderr, and nothing runs.
+- An unsafe action with neither `--confirm` nor `--dry-run` refuses with exit 2
+  and one line on stderr, and runs nothing. It is not silently dry: a caller
+  that forgot the flag learns it.
+- Running one needs `--confirm <action-name>` with the name equal to the
+  action. A mismatched name refuses with exit 2 and one line on stderr, and
+  nothing runs, with or without `--dry-run`.
+- `status` reports `ok: true` with caffeinate off, which is its usual state:
+  the `pgrep` probe ends with `|| true`, so a no-match does not fail the whole
+  script, and `caffeinate` comes back `{"on": false, "pids": []}`.
 - `stop-bot` never signals a pattern and never uses `pkill -f`. It reads the
   recorded PID, asks `ps -o command=` for that PID, and refuses unless the
   command line is a `hermes`/`devin` runtime carrying that profile's
@@ -153,21 +163,30 @@ line in `build_plan` plus this table.
 ```
 $ python3 nexuslink.hud/v5/feeds/mac_link.py --self-check
 ...
-self-check ok: 75 passed, 0 failed
+self-check ok: 97 passed, 0 failed
 $ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 ...
-self-check ok: 53 passed, 0 failed
+self-check ok: 72 passed, 0 failed
 ```
 
 `mac_link.py --self-check` parses the recorded fixture and asserts every key,
-runs the same fixture through the CLI, proves two calls inside 10 s run one
-collector (and an aged cache collects again), proves an empty and a partial
-fixture take the `ok: false` and per-key-null paths with exit 0, proves a
-missing fixture exits 2, and never opens an ssh connection.
+proves each null carries its own reason (fixture, a four-line broken variant set
+and the partial fixture), runs the same fixture through the CLI, proves two
+calls inside 10 s run one collector (and an aged cache collects again), proves
+an empty, a partial and a non-UTF-8 fixture take the `ok: false` paths with exit
+0, proves a non-UTF-8 cache is a miss that gets rewritten, proves a missing
+fixture exits 2, and proves `ssh_runner` makes exactly one `ssh` call with the
+expected argv by stubbing `subprocess.run` (no connection is opened). Every CLI
+subprocess runs with a stub PATH whose commands log and exit 1, so an accidental
+real invocation fails the run.
 
 `mac_actions.py --self-check` checks the typed table, the dry-run line for
-`sleep`, the default-dry and wrong-confirm paths, the profile matching and PID
-rules, and the `status` parser. It executes no unsafe action: every unsafe path
-goes through `RecordingRuntime`, and the run asserts that no action command and
-no spawn reached it. The one real execution is `list-dir` on a temporary
-directory.
+`sleep`, the bare-refusal path for `sleep`, `lock`, `wake` and `start-bot`, the
+wrong-confirm path, the profile matching and PID rules, and the `status` parser.
+It runs the real `STATUS_SCRIPT` against a stub PATH where `pgrep` exits 1, and
+asserts the script exits 0 and the action returns `ok: true` with
+`caffeinate.on` false. It executes no unsafe action: every unsafe path is
+refused before a plan is built, everything else goes through
+`RecordingRuntime`, the run asserts no runner was touched, and the stub logs are
+asserted free of any state-changing command. The one real execution is
+`list-dir` on a temporary directory, in-process.
