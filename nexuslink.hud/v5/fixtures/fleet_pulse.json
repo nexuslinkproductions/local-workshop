@@ -1,0 +1,1178 @@
+{
+  "board": "default",
+  "recorded_at": "2026-10-22T23:09:07Z",
+  "boot_time": "2026-10-09T18:30:18Z",
+  "note": "Recorded from `hermes kanban list --json` on the Mac at 2026-10-22T23:09:07Z, trimmed to the fields this feed reads (no bodies). boot_time is the Mac's kern.boottime at recording time, in UTC (kern.boottime prints local CEST). Statuses present: blocked, done, ready, running, todo.",
+  "tasks": [
+    {
+      "id": "t_d9b696a2",
+      "title": "V-final: 27-point sweep on the merged facelift, all 32 routes",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792694031,
+      "started_at": 1792696039,
+      "completed_at": 1792702245
+    },
+    {
+      "id": "t_f29ece98",
+      "title": "F. Finish point 7: page-level generated plates and video swapped for real photos",
+      "assignee": "tenten",
+      "status": "done",
+      "created_at": 1792694001,
+      "started_at": 1792694052,
+      "completed_at": 1792696009
+    },
+    {
+      "id": "t_43170f7d",
+      "title": "A repair 2: EN value translation, add-on leak across products, product name in summary",
+      "assignee": "yamato",
+      "status": "done",
+      "created_at": 1792690490,
+      "started_at": 1792690502,
+      "completed_at": 1792691120
+    },
+    {
+      "id": "t_1a6d3e3c",
+      "title": "C repair 2: remove the delisted MULTI TALENT support card",
+      "assignee": "tanjiro",
+      "status": "done",
+      "created_at": 1792690522,
+      "started_at": 1792690563,
+      "completed_at": 1792691005
+    },
+    {
+      "id": "t_0c60aca0",
+      "title": "B repair 2: EN hero grid, logo refinement, test robustness, listener teardown",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792690063,
+      "started_at": 1792690082,
+      "completed_at": 1792691163
+    },
+    {
+      "id": "t_d95f57b4",
+      "title": "E repair 2: complete retirement note, constant-resolving guard, page weight, true comments",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792690063,
+      "started_at": 1792690082,
+      "completed_at": 1792690841
+    },
+    {
+      "id": "t_fac55d2a",
+      "title": "B repair 1b: same ten defects, copy-contact assertion authorised",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792686996,
+      "started_at": 1792687011,
+      "completed_at": 1792688771
+    },
+    {
+      "id": "t_c51eac51",
+      "title": "A repair 1: URL round trip, product switch drift, removable rows, EN values, text limit",
+      "assignee": "yamato",
+      "status": "done",
+      "created_at": 1792688262,
+      "started_at": 1792688276,
+      "completed_at": 1792689091
+    },
+    {
+      "id": "t_8a930834",
+      "title": "C repair 1: catalog reconciled to the live snapshot, empty-filter state",
+      "assignee": "tanjiro",
+      "status": "done",
+      "created_at": 1792688317,
+      "started_at": 1792688336,
+      "completed_at": 1792689059
+    },
+    {
+      "id": "t_12439268",
+      "title": "E repair 1: honest retirement note, real provenance assertion, image-urls globs",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792688317,
+      "started_at": 1792688336,
+      "completed_at": 1792689081
+    },
+    {
+      "id": "t_1199d337",
+      "title": "B repair 1: post-navigation bindings, mobile footer, map card, consent copy, EN parity",
+      "assignee": "zenitsu",
+      "status": "blocked",
+      "created_at": 1792685875,
+      "started_at": 1792685928,
+      "completed_at": null
+    },
+    {
+      "id": "t_1fbbca5b",
+      "title": "D repair 1: delivery wording, SCUDUS exception, contract grants",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792686660,
+      "started_at": 1792686710,
+      "completed_at": 1792687125
+    },
+    {
+      "id": "t_4a166ee6",
+      "title": "YURI stage 02 build: daemon + socket + watch + proof (Devin swe-2-max)",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792534907,
+      "started_at": 1792534940,
+      "completed_at": 1792539904
+    },
+    {
+      "id": "t_d8e1e8da",
+      "title": "B. Design lead: hero, footer everywhere, Behoerdenrabatt, transitions, logo (points 1-4, 8-12, 17)",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792684114,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_bf546191",
+      "title": "B. Design lead: hero, footer everywhere, Behoerdenrabatt, transitions, logo (points 1-4, 8-12, 17)",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792684187,
+      "started_at": 1792684242,
+      "completed_at": 1792684782
+    },
+    {
+      "id": "t_0211dd5e",
+      "title": "A. Konfigurator panel on the T-Rex pattern (points 26, 27)",
+      "assignee": "yamato",
+      "status": "todo",
+      "created_at": 1792684114,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_ad455b17",
+      "title": "A. Konfigurator panel on the T-Rex pattern (points 26, 27)",
+      "assignee": "yamato",
+      "status": "done",
+      "created_at": 1792684187,
+      "started_at": 1792684242,
+      "completed_at": 1792687453
+    },
+    {
+      "id": "t_cae5128c",
+      "title": "HUD v5 C0 TOOLCHAIN: Qt 6.12 on Mac, offscreen render + lint + qsb scripts",
+      "assignee": "yamato",
+      "status": "done",
+      "created_at": 1792706683,
+      "started_at": 1792706746,
+      "completed_at": 1792708184
+    },
+    {
+      "id": "t_1c365d6a",
+      "title": "HUD v5 C1 SCAFFOLD: v5 kit skeleton, tokens, motion, Satoshi, fixtures",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792706768,
+      "started_at": 1792706806,
+      "completed_at": 1792707902
+    },
+    {
+      "id": "t_6ac76e36",
+      "title": "HUD v5 C0 REPAIR: run-tests self-contained, qml-lint syntax errors, Window root render",
+      "assignee": "yamato",
+      "status": "done",
+      "created_at": 1792708450,
+      "started_at": 1792708551,
+      "completed_at": 1792709205
+    },
+    {
+      "id": "t_495778be",
+      "title": "HUD v5 V0b RE-VERIFY: C0 repair at 0ee1cee",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792709363,
+      "started_at": 1792709393,
+      "completed_at": 1792709754
+    },
+    {
+      "id": "t_b17d6934",
+      "title": "C. Shop: category headings, indexed catalog, working buttons, scroll (points 13-16)",
+      "assignee": "tanjiro",
+      "status": "done",
+      "created_at": 1792684196,
+      "started_at": 1792684242,
+      "completed_at": 1792686805
+    },
+    {
+      "id": "t_4d357ec3",
+      "title": "V-B round 3 final: hero grid, logo, test robustness, listener teardown",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792690070,
+      "started_at": 1792691165,
+      "completed_at": 1792693437
+    },
+    {
+      "id": "t_40fe07bc",
+      "title": "V-E round 3 final: retirement note, guard, page weight, comments",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792690070,
+      "started_at": 1792690865,
+      "completed_at": 1792691941
+    },
+    {
+      "id": "t_8881db02",
+      "title": "F. Own Behoerden page + Konfigurations-Anfrage step, no mailto (R9, R11, R12)",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792699407,
+      "started_at": 1792699467,
+      "completed_at": 1792702837
+    },
+    {
+      "id": "t_4e865811",
+      "title": "HUD v5 V0 VERIFY: toolchain scripts, Qt 6.12, offscreen ShaderEffect",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792706783,
+      "started_at": 1792708190,
+      "completed_at": 1792708493
+    },
+    {
+      "id": "t_8f47c55a",
+      "title": "HUD v5 V1 VERIFY: kit skeleton, tokens, fonts, pure-QtQuick rule",
+      "assignee": "shinobu",
+      "status": "done",
+      "created_at": 1792706783,
+      "started_at": 1792707949,
+      "completed_at": 1792709706
+    },
+    {
+      "id": "t_93061b17",
+      "title": "E. Media: real photos instead of generated backgrounds (point 7)",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792684204,
+      "started_at": 1792684242,
+      "completed_at": 1792686220
+    },
+    {
+      "id": "t_d66942a3",
+      "title": "V-A round 2 verify: URL round trip, switch drift, removable rows, EN values",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792688376,
+      "started_at": 1792689119,
+      "completed_at": 1792690376
+    },
+    {
+      "id": "t_ed341721",
+      "title": "V-C round 2 verify: snapshot catalog parity, empty filter, motion.ts",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792688376,
+      "started_at": 1792689119,
+      "completed_at": 1792690168
+    },
+    {
+      "id": "t_2c727cfd",
+      "title": "V-E round 2 verify: honest retirement note, provenance assertion, image-urls",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792688385,
+      "started_at": 1792689119,
+      "completed_at": 1792689844
+    },
+    {
+      "id": "t_87db5cdb",
+      "title": "HUD v5 C2 SWARM SPIKE: 3 renderer options, qsb, stills vs s1, decision",
+      "assignee": "kakashi",
+      "status": "running",
+      "created_at": 1792706793,
+      "started_at": 1792708551,
+      "completed_at": null
+    },
+    {
+      "id": "t_ac3b5cb9",
+      "title": "HUD v5 W1 KNOT: 540 point-swarm knot, IoU above 0.9, assemble",
+      "assignee": "kakashi",
+      "status": "todo",
+      "created_at": 1792710403,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_168449d0",
+      "title": "HUD v5 W2 CREWORB: sphere sub-swarms, expand into sessions",
+      "assignee": "kakuzu",
+      "status": "todo",
+      "created_at": 1792710404,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_90229d97",
+      "title": "D. Kontakt, Referenzen, social media (points 18-25)",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792684196,
+      "started_at": 1792684242,
+      "completed_at": 1792685539
+    },
+    {
+      "id": "t_ecab2045",
+      "title": "V-B round 2 verify: post-navigation bindings, mobile footer, map card, copy",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792687494,
+      "started_at": 1792688818,
+      "completed_at": 1792689865
+    },
+    {
+      "id": "t_a1ea2583",
+      "title": "V-D round 2 verify: delivery copy, SCUDUS exception, points 18-25",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792687494,
+      "started_at": 1792687554,
+      "completed_at": 1792688838
+    },
+    {
+      "id": "t_b44c03a3",
+      "title": "HUD v5 V2 VERIFY: swarm renderer visual match, cost, portability",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792706807,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_3836f685",
+      "title": "HUD v5 W5 LAUNCHER: LauncherArc, amended app set, apps.json",
+      "assignee": "tenten",
+      "status": "running",
+      "created_at": 1792710402,
+      "started_at": 1792710417,
+      "completed_at": null
+    },
+    {
+      "id": "t_eda9e14a",
+      "title": "YURI stage 02 verify: independent rerun + verdict (macOS)",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792534921,
+      "started_at": 1792539933,
+      "completed_at": 1792544809
+    },
+    {
+      "id": "t_22d8f07a",
+      "title": "YURI stage 02 verify round 2: repair-1 findings re-tested + full regression (macOS)",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792612195,
+      "started_at": 1792617476,
+      "completed_at": 1792631534
+    },
+    {
+      "id": "t_6564afde",
+      "title": "CGS facelift: apply 27-point change note to custom-gear.ch rebuild",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792683355,
+      "started_at": 1792683400,
+      "completed_at": 1792702028
+    },
+    {
+      "id": "t_25ea563d",
+      "title": "V-A verify: Konfigurator panel on the T-Rex pattern",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792684240,
+      "started_at": 1792687493,
+      "completed_at": 1792688173
+    },
+    {
+      "id": "t_69dd59f9",
+      "title": "V-B verify: hero, footer everywhere, Behoerdenrabatt, transitions, logo",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792684240,
+      "started_at": 1792684784,
+      "completed_at": 1792685757
+    },
+    {
+      "id": "t_797d275c",
+      "title": "V-C verify: shop headings, indexed catalog, buttons, scroll",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792684246,
+      "started_at": 1792686831,
+      "completed_at": 1792688040
+    },
+    {
+      "id": "t_31a9e472",
+      "title": "V-D verify: Kontakt, Referenzen, social media",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792684246,
+      "started_at": 1792685566,
+      "completed_at": 1792686414
+    },
+    {
+      "id": "t_0d85b79d",
+      "title": "V-E verify: real photos instead of generated backgrounds",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792684251,
+      "started_at": 1792686228,
+      "completed_at": 1792688124
+    },
+    {
+      "id": "t_198999bb",
+      "title": "HUD main screen v5 (DP-2): lead, fleet build",
+      "assignee": "default",
+      "status": "running",
+      "created_at": 1792706267,
+      "started_at": 1792706325,
+      "completed_at": null
+    },
+    {
+      "id": "t_3192fef4",
+      "title": "HUD v5 W3 GAUGES: PulseRing, DotArc, DotBar, LocalOrb",
+      "assignee": "shino",
+      "status": "running",
+      "created_at": 1792710025,
+      "started_at": 1792710055,
+      "completed_at": null
+    },
+    {
+      "id": "t_2bf7a07c",
+      "title": "HUD v5 W4 ICONS: 16 glyphs, IconTile dot ring",
+      "assignee": "shizune",
+      "status": "running",
+      "created_at": 1792710026,
+      "started_at": 1792710055,
+      "completed_at": null
+    },
+    {
+      "id": "t_174bf7a9",
+      "title": "HUD v5 W6 FIND: dot glyph opens into 3 file tiles",
+      "assignee": "jiraiya",
+      "status": "running",
+      "created_at": 1792710027,
+      "started_at": 1792710055,
+      "completed_at": null
+    },
+    {
+      "id": "t_ad5be640",
+      "title": "HUD v5 W7 ENVIRONMENT: Clock, Focus dim+blur, IdleDrift",
+      "assignee": "tanjiro",
+      "status": "running",
+      "created_at": 1792710028,
+      "started_at": 1792710055,
+      "completed_at": null
+    },
+    {
+      "id": "t_c8e03f5c",
+      "title": "HUD v5 W8 FEEDS: 4 stdlib readers, fixtures, self-checks",
+      "assignee": "yamato",
+      "status": "running",
+      "created_at": 1792710029,
+      "started_at": 1792710055,
+      "completed_at": null
+    },
+    {
+      "id": "t_89267db7",
+      "title": "HUD v5 systems layer: Mac Link explorer, boot sequence, system widgets (lead 2)",
+      "assignee": "default",
+      "status": "running",
+      "created_at": 1792710083,
+      "started_at": 1792710115,
+      "completed_at": null
+    },
+    {
+      "id": "t_a08fb5d0",
+      "title": "HUD v5 D1 MAC LINK EXPLORER: rest widget, status explorer, files + confirm-to-run (3 states)",
+      "assignee": "tenten",
+      "status": "running",
+      "created_at": 1792710408,
+      "started_at": 1792710417,
+      "completed_at": null
+    },
+    {
+      "id": "t_f87e12cb",
+      "title": "HUD v5 D2 STARTUP SEQUENCE: 8-frame storyboard over 5 s, timing table, greeting brief card",
+      "assignee": "levi",
+      "status": "running",
+      "created_at": 1792710408,
+      "started_at": 1792710417,
+      "completed_at": null
+    },
+    {
+      "id": "t_2bb64465",
+      "title": "HUD v5 D3 SYSTEM WIDGETS: game mode, local AI dock, fleet pulse, call capture (rest + expanded)",
+      "assignee": "kakuzu",
+      "status": "running",
+      "created_at": 1792710408,
+      "started_at": 1792710417,
+      "completed_at": null
+    },
+    {
+      "id": "t_fa271bb9",
+      "title": "HUD v5 D4 RECENT/PINNED + QUICK ACTIONS: rest, expanded list, six-glyph strip",
+      "assignee": "shizune",
+      "status": "running",
+      "created_at": 1792710427,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_76bc3adc",
+      "title": "HUD v5 D5 NANO SWARM LINKS: event/path/timing spec plus 4-frame stills storyboard",
+      "assignee": "jiraiya",
+      "status": "running",
+      "created_at": 1792710427,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_b20b7e8e",
+      "title": "HUD v5 F1: mac_link feed (one cached collector) + mac_actions (typed, safe/unsafe, confirm)",
+      "assignee": "kakashi",
+      "status": "running",
+      "created_at": 1792710427,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_4419de00",
+      "title": "HUD v5 F2: fleet pulse feed, kanban counts + needs-me + done-since-boot, 10 s cache",
+      "assignee": "shino",
+      "status": "running",
+      "created_at": 1792710427,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_d30281eb",
+      "title": "HUD v5 F3: game mode controller, ptt/game detect/ping+jitter cached, pause-heavy flag contract",
+      "assignee": "yamato",
+      "status": "running",
+      "created_at": 1792710461,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_7509e786",
+      "title": "HUD v5 F4: boot briefing generator, facts-only brief.json + brief.txt, golden test, Slack read-only probe",
+      "assignee": "tanjiro",
+      "status": "running",
+      "created_at": 1792710461,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_b2126460",
+      "title": "HUD v5 F5: generated startup cue (1.5-2 s wav) + greeting script template + TTS options",
+      "assignee": "levi",
+      "status": "running",
+      "created_at": 1792710461,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_af476639",
+      "title": "HUD v5 F6: recent/pinned feed, downloads/screenshots/recents/pins, type classification, 10 s cache",
+      "assignee": "tenten",
+      "status": "running",
+      "created_at": 1792710461,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_7e36a888",
+      "title": "HUD v5 F7: callcap + chief dock bridges and 10 Hz level meter source",
+      "assignee": "kakuzu",
+      "status": "running",
+      "created_at": 1792710461,
+      "started_at": 1792710477,
+      "completed_at": null
+    },
+    {
+      "id": "t_3a96e37f",
+      "title": "HUD v5 V3 VERIFY: gauges (PulseRing, DotArc, DotBar, LocalOrb)",
+      "assignee": "urokodaki",
+      "status": "todo",
+      "created_at": 1792710225,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_aa927a77",
+      "title": "HUD v5 V4 VERIFY: icon set and IconTile",
+      "assignee": "roger",
+      "status": "todo",
+      "created_at": 1792710226,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_1f05bf45",
+      "title": "HUD v5 V6 VERIFY: find glyph and results",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792710227,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_10ab628c",
+      "title": "HUD v5 V7 VERIFY: clock, focus dim, idle drift",
+      "assignee": "shinobu",
+      "status": "todo",
+      "created_at": 1792710229,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_fbf624dd",
+      "title": "HUD v5 V8 VERIFY: feeds readers and self-checks",
+      "assignee": "neji",
+      "status": "todo",
+      "created_at": 1792710230,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_c89405d7",
+      "title": "HUD v5 V5 VERIFY: launcher arc and amended app set",
+      "assignee": "roger",
+      "status": "todo",
+      "created_at": 1792710445,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_9ab4dc60",
+      "title": "HUD v5 D1v VERIFY: Mac Link explorer 3 states against Marcel's rules",
+      "assignee": "neji",
+      "status": "todo",
+      "created_at": 1792710499,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_77ee3b4d",
+      "title": "HUD v5 D2v VERIFY: startup sequence storyboard, timing table, brief card",
+      "assignee": "ibiki",
+      "status": "todo",
+      "created_at": 1792710499,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_af061bb2",
+      "title": "HUD v5 D3v VERIFY: game mode, local AI dock, fleet pulse, call capture, 8 states",
+      "assignee": "shinobu",
+      "status": "todo",
+      "created_at": 1792710499,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_14049bc8",
+      "title": "HUD v5 D4v VERIFY: recent/pinned states and quick actions strip",
+      "assignee": "urokodaki",
+      "status": "todo",
+      "created_at": 1792710499,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_362cc5a4",
+      "title": "HUD v5 D5v VERIFY: swarm links motion spec completeness and stills",
+      "assignee": "roger",
+      "status": "todo",
+      "created_at": 1792710511,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_44b0c099",
+      "title": "HUD v5 F1v VERIFY: mac_link + mac_actions, cache, confirm gate, no destructive path",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792710511,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_f4cabc7a",
+      "title": "HUD v5 F2v VERIFY: fleet pulse counts, needs-me, done-since-boot, cache",
+      "assignee": "neji",
+      "status": "todo",
+      "created_at": 1792710511,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_282d3a38",
+      "title": "HUD v5 F3v VERIFY: game mode, fixture-only Linux paths, ping/jitter, pause flag contract",
+      "assignee": "ibiki",
+      "status": "todo",
+      "created_at": 1792710511,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_a5bf28df",
+      "title": "HUD v5 F4v VERIFY: boot brief facts-only, golden test, Slack read-only claim, digest absence",
+      "assignee": "shinobu",
+      "status": "todo",
+      "created_at": 1792710523,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_3bf57461",
+      "title": "HUD v5 F5v VERIFY: startup wav measured, click/determinism, greeting template, TTS options",
+      "assignee": "urokodaki",
+      "status": "todo",
+      "created_at": 1792710523,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_86367c07",
+      "title": "HUD v5 F6v VERIFY: recent/pinned roots, dedupe, type buckets, symlink containment, cache",
+      "assignee": "roger",
+      "status": "todo",
+      "created_at": 1792710523,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_87840b73",
+      "title": "HUD v5 F7v VERIFY: callcap/chief status wrappers, confirm gate, 10 Hz level meter limit",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792710523,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_1d8ec82c",
+      "title": "HUD v5 V1 VERIFY: knot swarm, IoU, assemble state",
+      "assignee": "zenitsu",
+      "status": "todo",
+      "created_at": 1792710537,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_54a6db21",
+      "title": "HUD v5 V2 VERIFY: crew orb sub-swarms and expand",
+      "assignee": "urokodaki",
+      "status": "todo",
+      "created_at": 1792710538,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_195d7170",
+      "title": "BRIDGE 04 repair: relay writes a second HTTP status block into the SSE stream + client Content-Type injects a header upstream",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792527000,
+      "started_at": 1792527058,
+      "completed_at": 1792542562
+    },
+    {
+      "id": "t_263c7e64",
+      "title": "BRIDGE 03 repair: malformed gauge crashes route_hint.py instead of going stale",
+      "assignee": "tenten",
+      "status": "done",
+      "created_at": 1792521605,
+      "started_at": 1792521700,
+      "completed_at": 1792521868
+    },
+    {
+      "id": "t_68ff5512",
+      "title": "BRIDGE 01: Mac Kanban to Linux relay",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792515563,
+      "started_at": 1792515620,
+      "completed_at": 1792516650
+    },
+    {
+      "id": "t_3d076c2a",
+      "title": "BRIDGE 01 verify",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792515564,
+      "started_at": 1792516704,
+      "completed_at": 1792517825
+    },
+    {
+      "id": "t_69634870",
+      "title": "bridge-smoke-retry",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792515997,
+      "started_at": null,
+      "completed_at": 1792516020
+    },
+    {
+      "id": "t_c89e8ddf",
+      "title": "bridge-smoke-idem",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792516121,
+      "started_at": null,
+      "completed_at": 1792516126
+    },
+    {
+      "id": "t_70946444",
+      "title": "bridge-smoke",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792516505,
+      "started_at": null,
+      "completed_at": 1792516506
+    },
+    {
+      "id": "t_4668a9ab",
+      "title": "BRIDGE 02: wake only on decisions",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792516758,
+      "started_at": 1792517849,
+      "completed_at": 1792518870
+    },
+    {
+      "id": "t_81f60258",
+      "title": "BRIDGE 03: quota pace router script",
+      "assignee": "tenten",
+      "status": "done",
+      "created_at": 1792520056,
+      "started_at": 1792520075,
+      "completed_at": 1792520391
+    },
+    {
+      "id": "t_726192b3",
+      "title": "BRIDGE 03 verify",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792520057,
+      "started_at": 1792520436,
+      "completed_at": 1792521672
+    },
+    {
+      "id": "t_cbffdc91",
+      "title": "BRIDGE 03 repair",
+      "assignee": "tenten",
+      "status": "done",
+      "created_at": 1792521692,
+      "started_at": 1792521700,
+      "completed_at": 1792522089
+    },
+    {
+      "id": "t_0f9b98ea",
+      "title": "BRIDGE 03 re-verify",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792521693,
+      "started_at": 1792522121,
+      "completed_at": 1792523049
+    },
+    {
+      "id": "t_bda8ebc6",
+      "title": "BRIDGE 04: Codex relay (Luna via Linux)",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792522361,
+      "started_at": 1792522362,
+      "completed_at": 1792526794
+    },
+    {
+      "id": "t_3c4e6b68",
+      "title": "BRIDGE 04 verify",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792522362,
+      "started_at": 1792526817,
+      "completed_at": 1792527042
+    },
+    {
+      "id": "t_559f2aab",
+      "title": "HUD 01: Kanban tasks on the Linux HUD",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792526953,
+      "started_at": 1792526998,
+      "completed_at": 1792533037
+    },
+    {
+      "id": "t_cdb53d9f",
+      "title": "HUD 01 verify",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792526954,
+      "started_at": 1792534699,
+      "completed_at": 1792535110
+    },
+    {
+      "id": "t_1046e0f4",
+      "title": "BRIDGE 04 re-verify",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792527065,
+      "started_at": 1792542580,
+      "completed_at": 1792544562
+    },
+    {
+      "id": "t_306f7846",
+      "title": "exec smoke",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792527576,
+      "started_at": 1792527599,
+      "completed_at": 1792527754
+    },
+    {
+      "id": "t_33108015",
+      "title": "YURI stage 01 recheck + stage 02 daemon",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792534501,
+      "started_at": 1792534518,
+      "completed_at": 1792657006
+    },
+    {
+      "id": "t_fe43f907",
+      "title": "HUD 01 repair: test_kanban.py expires 24 h after its fixture (wall-clock leak)",
+      "assignee": "zenitsu",
+      "status": "done",
+      "created_at": 1792535082,
+      "started_at": 1792535120,
+      "completed_at": 1792535762
+    },
+    {
+      "id": "t_8afbcfd5",
+      "title": "HUD 01 re-verify",
+      "assignee": "shino",
+      "status": "done",
+      "created_at": 1792535130,
+      "started_at": 1792535782,
+      "completed_at": 1792536136
+    },
+    {
+      "id": "t_e7b2ca05",
+      "title": "BRIDGE 04 follow-up: account id leaks on redirect",
+      "assignee": "tenten",
+      "status": "done",
+      "created_at": 1792542674,
+      "started_at": 1792544566,
+      "completed_at": 1792545110
+    },
+    {
+      "id": "t_24ea91fd",
+      "title": "YURI stage 02 repair round 1: accepted socket is non-blocking (frames dropped, responses truncated)",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792544717,
+      "started_at": 1792544747,
+      "completed_at": 1792617451
+    },
+    {
+      "id": "t_7ef72768",
+      "title": "BRIDGE 04 redirect fix verify",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792545397,
+      "started_at": 1792545409,
+      "completed_at": 1792548201
+    },
+    {
+      "id": "t_7aa188b4",
+      "title": "BRIDGE 02 verify (wake policy + relay)",
+      "assignee": "ibiki",
+      "status": "done",
+      "created_at": 1792612696,
+      "started_at": 1792612721,
+      "completed_at": 1792614655
+    },
+    {
+      "id": "t_a176992c",
+      "title": "BRIDGE 02 repair: surface dead relay events and stop losing them",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792614436,
+      "started_at": 1792614466,
+      "completed_at": 1792615486
+    },
+    {
+      "id": "t_d22eef88",
+      "title": "Linux triage gateway behind 127.0.0.1:18789 is dead: 47 card events lost since 2026-10-21 04:40",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792614445,
+      "started_at": 1792614467,
+      "completed_at": 1792616282
+    },
+    {
+      "id": "t_e8e5f5c9",
+      "title": "YURI memory hygiene: nightly consolidation (build)",
+      "assignee": "jiraiya",
+      "status": "done",
+      "created_at": 1792615864,
+      "started_at": 1792615911,
+      "completed_at": 1792622920
+    },
+    {
+      "id": "t_fd8f5eb1",
+      "title": "YURI memory hygiene verify",
+      "assignee": "urokodaki",
+      "status": "done",
+      "created_at": 1792615865,
+      "started_at": 1792622950,
+      "completed_at": 1792624409
+    },
+    {
+      "id": "t_051ccc84",
+      "title": "BRIDGE 02 re-verify (repair round 1)",
+      "assignee": "ibiki",
+      "status": "done",
+      "created_at": 1792616177,
+      "started_at": 1792616212,
+      "completed_at": 1792620827
+    },
+    {
+      "id": "t_d685b5ee",
+      "title": "BRIDGE 02 repair round 1: the digest takes 52 s on a 50-dead state.json, and a killed digest re-alerts everything",
+      "assignee": "kakashi",
+      "status": "done",
+      "created_at": 1792620747,
+      "started_at": 1792620844,
+      "completed_at": 1792622978
+    },
+    {
+      "id": "t_9afdca36",
+      "title": "Vari8: green the base (PR #145) then re-gate, verify and merge PR #106 (PR-M1) to unblock SV2",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792620975,
+      "started_at": 1792621024,
+      "completed_at": 1792623912
+    },
+    {
+      "id": "t_4a2fc8ce",
+      "title": "YURI memory hygiene repair round 1: 5 defects (source-aware apply, notes rule, delete guard, FINDINGS ids, max-facts window)",
+      "assignee": "jiraiya",
+      "status": "done",
+      "created_at": 1792624232,
+      "started_at": 1792624273,
+      "completed_at": 1792627008
+    },
+    {
+      "id": "t_95ca0aa6",
+      "title": "YURI stage 02 repair round 2: write budget does not bound a progressing write + stale_since silent on a fresh store",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792631457,
+      "started_at": 1792631492,
+      "completed_at": 1792638193
+    },
+    {
+      "id": "t_bb8951ed",
+      "title": "YURI stage 02 verify round 3 (FINAL GATE): repair-2 findings re-tested + new-defect hunt (macOS)",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792631631,
+      "started_at": 1792638229,
+      "completed_at": 1792655585
+    },
+    {
+      "id": "t_f22d3032",
+      "title": "YURI stage 02 fix: cold start blocks accept 64 s on the real store",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792660078,
+      "started_at": 1792660122,
+      "completed_at": 1792665556
+    },
+    {
+      "id": "t_666c16dc",
+      "title": "BRIDGE 02 re-verify round 3 (f53bf6e)",
+      "assignee": "ibiki",
+      "status": "done",
+      "created_at": 1792660127,
+      "started_at": 1792660183,
+      "completed_at": 1792661871
+    },
+    {
+      "id": "t_ce1caee5",
+      "title": "YURI stage 02 cold-start fix verify",
+      "assignee": "neji",
+      "status": "done",
+      "created_at": 1792669844,
+      "started_at": 1792669865,
+      "completed_at": 1792670297
+    },
+    {
+      "id": "t_0f999847",
+      "title": "YURI stage 02 exact 67452d3 regression proof",
+      "assignee": "levi",
+      "status": "done",
+      "created_at": 1792670277,
+      "started_at": 1792670346,
+      "completed_at": 1792670946
+    },
+    {
+      "id": "t_0772774d",
+      "title": "FRONTEND-SYNC: Lilly frontend into Vari8-Beta, PR",
+      "assignee": "default",
+      "status": "done",
+      "created_at": 1792670299,
+      "started_at": 1792670346,
+      "completed_at": 1792670594
+    },
+    {
+      "id": "t_b9fde93e",
+      "title": "FRONTEND-SYNC verify: independent review of PR #160",
+      "assignee": "roger",
+      "status": "done",
+      "created_at": 1792670583,
+      "started_at": 1792670647,
+      "completed_at": 1792671431
+    },
+    {
+      "id": "t_15ca3f8c",
+      "title": "CANVAS-PORT: Lilly frontend into the root canvas",
+      "assignee": "roger",
+      "status": "blocked",
+      "created_at": 1792671106,
+      "started_at": 1792671128,
+      "completed_at": null
+    },
+    {
+      "id": "t_a0404b65",
+      "title": "SUPERSEDED placeholder: holds two mis-gated duplicate cards, never run",
+      "assignee": "superseded",
+      "status": "ready",
+      "created_at": 1792684219,
+      "started_at": null,
+      "completed_at": null
+    },
+    {
+      "id": "t_0a18fe92",
+      "title": "FRONTEND-HELP: design rules, catalogue, client and competition screens, sheets view (PR to FRONTEND)",
+      "assignee": "default",
+      "status": "running",
+      "created_at": 1792697331,
+      "started_at": 1792697362,
+      "completed_at": null
+    }
+  ]
+}
