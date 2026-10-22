@@ -80,6 +80,20 @@ Remote lanes `<id>@<host>` are emitted only when `<id>` is in
 `REMOTE_PROVIDERS` — `opencode-go@mac`, `devin@mac` — fed from
 `remote/<host>.jsonl` written by `pull_remote.py` (systemd timer every
 5 min, full snapshot per run; units in `systemd/`, not installed).
+`crew.py` and `ledger.py` run from `nexuslink-crew` (10 s) and
+`nexuslink-ledger` (60 s) user timers, which must be installed once:
+
+```
+for u in crew ledger; do for k in service timer; do
+  ln -s ~/.config/omarchy/plugins/nexuslink.hud/tokens/systemd/nexuslink-$u.$k ~/.config/systemd/user/
+done; done
+systemctl --user daemon-reload
+systemctl --user enable --now nexuslink-crew.timer nexuslink-ledger.timer
+```
+
+Rollback: `systemctl --user disable --now nexuslink-crew.timer nexuslink-ledger.timer`,
+then remove the four symlinks. Without the timers `crew.json` and
+`tokens.json` stop updating.
 Everything else (`fireworks`, `haze`, `codex@mac`, `claude@mac`, legacy
 ids) stays in the cursor but is not emitted. `<id>@<host>` kind = the base
 id's kind; label = base label + ` (<host>)`; rids read
