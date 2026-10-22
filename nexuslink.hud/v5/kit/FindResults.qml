@@ -42,6 +42,16 @@ Item {
     implicitWidth: columns * tileWidth + (columns - 1) * colGap
     implicitHeight: rows > 0 ? rows * tileHeight + (rows - 1) * rowGap : 0
 
+    // ---- local design values ----------------------------------------------
+    // Design numbers that no token carries yet. Each one is a named readonly
+    // property so the value has a single home, and each one is a token request
+    // in the PR body (markDotFactor, markAlphaRest, markAlphaLift, subtitleGap).
+    // markSize 56 above joins the same token list.
+    readonly property real markDotFactor: 0.055     // dot radius as a share of markSize
+    readonly property real markAlphaRest: 0.55      // dot ice alpha at score 0
+    readonly property real markAlphaLift: 0.35      // extra dot alpha at score 1
+    readonly property int subtitleGap: 2            // gap under the tile title
+
     // ---- matching ---------------------------------------------------------
     function kindForFilter(filterName) {
         switch (filterName) {
@@ -206,7 +216,10 @@ Item {
                     id: markDot
                     required property var modelData
 
-                    readonly property real dotRadius: root.markSize * 0.055
+                    readonly property real dotRadius: root.markSize * root.markDotFactor
+                    // score lifts the mark from markAlphaRest to rest plus lift.
+                    readonly property real markAlpha: root.markAlphaRest + root.markAlphaLift
+                                                      * Math.min(1, Math.max(0, tile.modelData.score || 0))
 
                     x: root.markSize / 2 + modelData.x - dotRadius
                     y: root.markSize / 2 + modelData.y - dotRadius
@@ -214,8 +227,7 @@ Item {
                     height: width
                     radius: dotRadius
                     antialiasing: true
-                    color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b,
-                                   0.55 + 0.35 * Math.min(1, Math.max(0, tile.modelData.score || 0)))
+                    color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, markAlpha)
                 }
             }
 
@@ -234,7 +246,7 @@ Item {
 
             Text {
                 x: 0
-                y: title.y + title.height + 2
+                y: title.y + title.height + root.subtitleGap
                 width: tile.width
                 text: root.parentPath(tile.modelData.path)
                 color: Tokens.textDim

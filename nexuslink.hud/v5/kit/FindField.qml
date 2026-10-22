@@ -47,6 +47,29 @@ Item {
     // Right band the five rest dots occupy (s3: right 30, pitch 22).
     readonly property int restDotBand: 128
 
+    // ---- local design values ----------------------------------------------
+    // Design numbers that no token carries yet. Each one is a named readonly
+    // property so the value has a single home, and each one is a token request
+    // in the PR body (capsuleFillAlpha, placeholderAlpha, caretWidth,
+    // caretRadius, caretGap, caretAlpha, restDotInset, restDotPitch,
+    // restDotSize, restDotChosenSize, restDotAlphaTop, restDotAlphaStep,
+    // chipHoverScale, chipRestOpacity). Caret height is Tokens.sp4 (34), so it
+    // reads the token directly instead of restating the number.
+    readonly property real capsuleFillAlpha: 0.10       // capsule ice fill
+    readonly property real placeholderAlpha: 0.60       // placeholder ink while the query is empty
+    readonly property int caretWidth: 3                 // caret bar width
+    readonly property int caretRadius: 2                // caret bar corner radius
+    readonly property int caretGap: 4                   // caret gap after the typed text
+    readonly property real caretAlpha: 0.9              // caret ink alpha
+    readonly property int restDotInset: 30              // rest dots, right inset from the capsule edge
+    readonly property int restDotPitch: 22              // rest dot cell size, so also the pitch
+    readonly property int restDotSize: 10               // rest dot diameter
+    readonly property int restDotChosenSize: 12         // chosen rest dot diameter, one size up
+    readonly property real restDotAlphaTop: 0.62        // ice alpha of the first rest dot
+    readonly property real restDotAlphaStep: 0.08       // alpha lost per rest dot
+    readonly property real chipHoverScale: 1.05         // filter word lift under the pointer
+    readonly property real chipRestOpacity: 0.55        // idle filter word alpha
+
     // The component keeps the active footprint at all times so a parent layout
     // never shifts when the field wakes: the capsule is centred, top aligned,
     // and the filter row occupies the lower band only while active.
@@ -89,7 +112,22 @@ Item {
         easing.type: Easing.OutCubic
     }
 
-    onActiveChanged: root.active ? grow.start() : shrink.start()
+    // Grow and shrink both write fieldWidth, so the opposite animation is
+    // stopped before the new one starts. Without the stop, a fast false-then-
+    // true flip leaves the older shrink running: it outlasts the grow (444 ms
+    // against 347 ms) and writes the rest width last, so the field ends at 380
+    // while active is true. restart() also rewinds an animation already running
+    // in the same direction, so a repeated flip re-expands from the width the
+    // capsule actually has instead of being ignored.
+    onActiveChanged: {
+        if (root.active) {
+            shrink.stop()
+            grow.restart()
+        } else {
+            grow.stop()
+            shrink.restart()
+        }
+    }
 
     // A declarative `active: true` never fires onActiveChanged, so snap the
     // initial width to the state the owner asked for.
@@ -105,7 +143,7 @@ Item {
         width: root.fieldWidth
         height: root.fieldHeight
         radius: height / 2
-        color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, 0.10)
+        color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, root.capsuleFillAlpha)
         antialiasing: true
     }
 
@@ -118,7 +156,7 @@ Item {
         text: root.query.length > 0 ? root.query : root.placeholder
         color: root.query.length > 0
                ? Tokens.ink
-               : Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, 0.60)
+               : Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, root.placeholderAlpha)
         font.family: Tokens.fontFamily
         font.weight: Tokens.weightMedium
         font.pixelSize: Tokens.sizeBody
@@ -131,13 +169,13 @@ Item {
     Rectangle {
         id: caret
         visible: root.active
-        x: fieldText.x + Math.min(fieldText.contentWidth, fieldText.width) + 4
+        x: fieldText.x + Math.min(fieldText.contentWidth, fieldText.width) + root.caretGap
         y: (root.fieldHeight - height) / 2
-        width: 3
-        height: 34
-        radius: 2
+        width: root.caretWidth
+        height: Tokens.sp4
+        radius: root.caretRadius
         color: Tokens.ink
-        opacity: 0.9
+        opacity: root.caretAlpha
         antialiasing: true
     }
 
@@ -151,7 +189,7 @@ Item {
         visible: opacity > 0.01
         opacity: root.active ? 0 : 1
         anchors.right: capsule.right
-        anchors.rightMargin: 30
+        anchors.rightMargin: root.restDotInset
         anchors.verticalCenter: capsule.verticalCenter
         spacing: 0
 
@@ -172,18 +210,19 @@ Item {
 
                 readonly property bool chosen: root.filter === restDot.modelData
 
-                width: 22
-                height: 22
+                width: root.restDotPitch
+                height: root.restDotPitch
 
                 Rectangle {
                     anchors.centerIn: parent
-                    width: restDot.chosen ? 12 : 10
+                    width: restDot.chosen ? root.restDotChosenSize : root.restDotSize
                     height: width
                     radius: width / 2
                     antialiasing: true
                     color: restDot.chosen
                            ? Tokens.ink
-                           : Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, 0.62 - restDot.index * 0.08)
+                           : Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b,
+                                     root.restDotAlphaTop - restDot.index * root.restDotAlphaStep)
                 }
 
                 MouseArea {
@@ -230,7 +269,7 @@ Item {
 
                 width: chipLabel.width
                 height: chipRow.height
-                scale: chipHit.containsMouse ? 1.05 : 1.0
+                scale: chipHit.containsMouse ? root.chipHoverScale : 1.0
                 transformOrigin: Item.Center
 
                 Behavior on scale {
@@ -245,7 +284,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: chip.modelData.label
                     color: root.filter === chip.modelData.key ? Tokens.ink : Tokens.textDim
-                    opacity: root.filter === chip.modelData.key ? 1.0 : 0.55
+                    opacity: root.filter === chip.modelData.key ? 1.0 : root.chipRestOpacity
                     font.family: Tokens.fontFamily
                     font.weight: root.filter === chip.modelData.key
                                  ? Tokens.weightBold
