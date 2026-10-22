@@ -262,6 +262,9 @@ def write_wav(path: Path, pcm: "np.ndarray") -> None:
             handle.setsampwidth(SAMPLE_WIDTH_BYTES)
             handle.setframerate(SAMPLE_RATE)
             handle.writeframes(pcm.tobytes())
+        # mkstemp creates 0600; the cue is a shared asset, so give it the same
+        # mode a normal checkout would have.
+        os.chmod(tmp, 0o644)
         os.replace(tmp, path)  # atomic, per cards/feeds-brief.md
     finally:
         if os.path.exists(tmp):
