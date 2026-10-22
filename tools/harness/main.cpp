@@ -14,14 +14,17 @@
 //
 // Contract:
 //   qml-shot-harness <in.qml> <out.png> [width height]
-//   - the root object is an Item (resized to width x height) or a Window.
+//   - the root object is an Item (resized to width x height) or a Window (its
+//     direct content items are moved into the grab window at the same size);
+//     anything else exits 2 with a message.
 //   - the background is opaque black, so captures without alpha are stable.
-//   - exit 0 shot saved, 1 grab/save failed, 2 QML load failed, 64 usage.
+//   - exit 0 shot saved, 1 grab/save failed, 2 QML load failed or unsupported
+//     root, 64 usage.
 //
 // stdout (one line, key=value):
 //   qt=<version> platform=<qpa> mode=rhi|window api=<rhi api> capture=<how>
-//   frames=<n> image=<w>x<h> distinct=<n> minlum=<0-255> maxlum=<0-255>
-//   center=#rrggbb corner=#rrggbb saved=<abs path>
+//   root=item|window frames=<n> image=<w>x<h> distinct=<n> minlum=<0-255>
+//   maxlum=<0-255> center=#rrggbb corner=#rrggbb saved=<abs path>
 
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -124,12 +127,40 @@ bool loadRoot(QQmlEngine &engine, const QString &inPath, QObject **root)
 }
 
 // Puts the loaded root into a window of exactly width x height.
-bool sizeRoot(QObject *root, QQuickWindow *window, int width, int height)
+//
+// A QML Window root owns its own QQuickWindow, which this harness cannot grab:
+// every capture comes from the harness window (the render-control window in RHI
+// mode), so resizing the QML window alone leaves the grab looking at an empty
+// window and the still comes out black. Instead the QML window is hidden,
+// resized, and its direct content items are moved under the harness window's
+// root item, which is the same size, so anchors and relative bindings resolve
+// to the same geometry and the still shows what the window would show.
+bool sizeRoot(QObject *root, QQuickWindow *window, int width, int height, bool *rootIsWindow)
 {
     window->resize(width, height);
     window->setColor(QColor(0, 0, 0));
-    if (auto *windowRoot = qobject_cast<QQuickWindow *>(root)) {
-        windowRoot->resize(width, height);
+    if (auto *qmlWindow = qobject_cast<QQuickWindow *>(root)) {
+        *rootIsWindow = true;
+        qmlWindow->setVisible(false);
+        qmlWindow->resize(width, height);
+        // The Window's own colour belongs to the window, not to its content
+        // item, so carry it over as the grab background.
+        if (qmlWindow->color().isValid() && qmlWindow->color().alpha() > 0)
+            window->setColor(qmlWindow->color());
+        QQuickItem *content = qmlWindow->contentItem();
+        content->setSize(QSizeF(width, height));
+        // Reparent under a container with an explicit size: the grab window's
+        // contentItem has no guaranteed geometry of its own until it is shown,
+        // and anchored children need a correctly sized parent.
+        auto *container = new QQuickItem(window->contentItem());
+        container->setPosition(QPointF(0, 0));
+        container->setSize(QSizeF(width, height));
+        // Copy first: setParentItem() mutates the child list while we iterate.
+        const QList<QQuickItem *> children = content->childItems();
+        if (children.isEmpty())
+            fprintf(stderr, "qml-shot: root is a Window with no content items\n");
+        for (QQuickItem *child : children)
+            child->setParentItem(container);
         return true;
     }
     auto *item = qobject_cast<QQuickItem *>(root);
@@ -144,10 +175,11 @@ bool sizeRoot(QObject *root, QQuickWindow *window, int width, int height)
     return true;
 }
 
-QImage grabViaWindow(QObject *root, int width, int height, QString *api, int *framesOut)
+QImage grabViaWindow(QObject *root, int width, int height, QString *api, int *framesOut,
+                    bool *rootIsWindow)
 {
     QQuickWindow window;
-    if (!sizeRoot(root, &window, width, height))
+    if (!sizeRoot(root, &window, width, height, rootIsWindow))
         return {};
 
     std::atomic<int> frames{0};
@@ -168,11 +200,11 @@ QImage grabViaWindow(QObject *root, int width, int height, QString *api, int *fr
 }
 
 QImage grabViaRhi(QObject *root, int width, int height, QString *api, int *framesOut,
-                  QString *how)
+                  QString *how, bool *rootIsWindow)
 {
     QQuickRenderControl control;
     QQuickWindow window(&control);
-    if (!sizeRoot(root, &window, width, height))
+    if (!sizeRoot(root, &window, width, height, rootIsWindow))
         return {};
 
     if (!control.initialize()) {
@@ -294,15 +326,21 @@ int main(int argc, char *argv[])
     // QML object tree valid for the window fallback.
     if (!loadRoot(engine, inPath, &root))
         return 2;
+    if (!qobject_cast<QQuickItem *>(root) && !qobject_cast<QQuickWindow *>(root)) {
+        fprintf(stderr, "qml-shot: root is neither Item nor Window: %s\n",
+                root->metaObject()->className());
+        return 2;
+    }
 
     QImage image;
     QString api = QStringLiteral("none");
     QString how;
     QString modeUsed;
+    bool rootIsWindow = false;
     int frames = 0;
 
     if (mode != QLatin1String("window")) {
-        image = grabViaRhi(root, width, height, &api, &frames, &how);
+        image = grabViaRhi(root, width, height, &api, &frames, &how, &rootIsWindow);
         modeUsed = QStringLiteral("rhi");
         if (image.isNull() && mode == QLatin1String("rhi")) {
             fprintf(stderr, "qml-shot: RHI mode failed\n");
@@ -316,7 +354,7 @@ int main(int argc, char *argv[])
         // drive; layout and text still render there, shaders do not.
         if (mode == QLatin1String("auto"))
             qputenv("QT_QUICK_BACKEND", "software");
-        image = grabViaWindow(root, width, height, &api, &frames);
+        image = grabViaWindow(root, width, height, &api, &frames, &rootIsWindow);
         modeUsed = QStringLiteral("window");
         how = QStringLiteral("grabWindow");
         if (image.isNull()) {
@@ -348,11 +386,12 @@ int main(int argc, char *argv[])
         }
     }
 
-    printf("qt=%s platform=%s mode=%s api=%s capture=%s frames=%d image=%dx%d distinct=%d "
+    printf("qt=%s platform=%s mode=%s api=%s capture=%s root=%s frames=%d image=%dx%d distinct=%d "
            "minlum=%d maxlum=%d center=%s corner=%s saved=%s\n",
            qVersion(), qPrintable(QGuiApplication::platformName()),
            qPrintable(modeUsed),
-           qPrintable(api), qPrintable(how), frames, image.width(), image.height(),
+           qPrintable(api), qPrintable(how),
+           rootIsWindow ? "window" : "item", frames, image.width(), image.height(),
            int(seen.size()), minLum, maxLum,
            qPrintable(hex(rgb.pixel(rgb.width() / 2, rgb.height() / 2))),
            qPrintable(hex(rgb.pixel(0, 0))), qPrintable(outPath));

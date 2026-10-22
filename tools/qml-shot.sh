@@ -18,12 +18,17 @@
 #   QML_SHOT_TIMEOUT     ms extra wait for slow renders (default 15000)
 #   QML_SHOT_BUILD_DIR   harness build cache (default tools/.build)
 #   QML_SHOT_HARNESS     use an already built harness binary
+#   QML_SHOT_MIN_DISTINCT  exit 1 when the frame has fewer distinct colours
+#                        than this (unset by default). A silently black still,
+#                        for example a missing or unloadable .qsb, is the
+#                        failure this catches; run-tests.sh sets it to 32.
 #
 # stdout is one machine-readable line:
-#   qt=6.12.0 platform=offscreen api=metal frames=2 image=2560x1440 distinct=N ...
+#   qt=6.12.0 platform=offscreen mode=rhi api=metal frames=2 image=2560x1440 distinct=N ...
 #
-# Exit: 0 shot written, 1 grab/save failed, 2 QML load failed, 3 toolchain
-# problem, 64 usage.
+# Exit: 0 shot written, 1 grab/save failed or distinct below
+# QML_SHOT_MIN_DISTINCT, 2 QML load failed or the root is not an Item/Window,
+# 3 toolchain problem, 64 usage.
 
 set -o pipefail
 
@@ -102,5 +107,33 @@ if [ ! -x "$harness" ]; then
     exit 3
 fi
 
-exec env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}" \
-    "$harness" "$src" "$out" "$width" "$height"
+min_distinct=${QML_SHOT_MIN_DISTINCT:-}
+if [ -n "$min_distinct" ]; then
+    case "$min_distinct" in
+        *[!0-9]*) echo "qml-shot: QML_SHOT_MIN_DISTINCT must be a non-negative integer" >&2; exit 64 ;;
+    esac
+fi
+
+line=$(env QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}" \
+    "$harness" "$src" "$out" "$width" "$height")
+rc=$?
+if [ -n "$line" ]; then
+    printf '%s\n' "$line"
+fi
+if [ "$rc" -ne 0 ]; then
+    exit "$rc"
+fi
+
+if [ -n "$min_distinct" ]; then
+    distinct=$(printf '%s\n' "$line" | tr ' ' '\n' | sed -n 's/^distinct=//p')
+    if [ -z "$distinct" ]; then
+        echo "qml-shot: harness printed no distinct= field" >&2
+        exit 1
+    fi
+    if [ "$distinct" -lt "$min_distinct" ]; then
+        echo "qml-shot: distinct=$distinct is below QML_SHOT_MIN_DISTINCT=$min_distinct:" \
+             "the frame is flat, so nothing was drawn (missing or unloadable .qsb, or a backend that does not run the effect)" >&2
+        exit 1
+    fi
+fi
+exit 0

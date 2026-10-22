@@ -15,6 +15,13 @@
 #   <path> <n> warning(s)        one line per linted file, including 0
 #   LINT files=<n> warnings=<w> errors=<e> exit=<rc>          the summary
 #
+# A non-zero qmllint exit is always an error, even when Qt prints the
+# diagnostic with a "Warning:" prefix: Qt 6.12 reports a [syntax] failure as
+# "Warning: <path>:<l>:<c>: ... [syntax]" and returns 255, so the raw exit code,
+# not the prefix, is what the gate is built on. The summary's warnings= counts
+# every Warning diagnostic, including ones without a file path that the per-file
+# lines cannot attribute.
+#
 # Exit: 0 clean, 1 errors (or warnings with --strict), 3 toolchain problem,
 # 64 usage.
 
@@ -88,6 +95,13 @@ fi
 # Per-file counts. Two line formats are handled:
 #   Qt 6.12+  "Warning: path/file.qml:12:5: message [category]"
 #   classic   "path/file.qml:12:5: warning: message [category]"
+#
+# The exit status of qmllint, not the severity prefix, is the source of truth
+# for errors: Qt 6.12 reports a [syntax] failure as a Warning and still exits
+# 255, so such lines are counted as errors and any remaining non-zero exit
+# yields at least one error. Warnings that carry no path ("Warning: 2:1: Failed
+# to import ...") are kept in the totals instead of being dropped, so two runs
+# are compared on the same basis.
 summary=$(awk -v exit_code="$rc" '
     FNR == NR { files[++nf] = $0; known[$0] = 1; next }
     {
@@ -108,8 +122,21 @@ summary=$(awk -v exit_code="$rc" '
             split(rest, parts, ": ")
             sev = parts[2]
         }
-        if (path == "")
+        sev = tolower(sev)
+        if (sev == "")
             next
+        # A file that does not parse is an error whatever prefix Qt used.
+        if (line ~ /\[syntax\]$/)
+            sev = "error"
+        if (sev == "info")
+            next
+        if (path == "") {
+            if (sev == "warning")
+                unattr_w++
+            else if (sev == "error" || sev == "critical")
+                unattr_e++
+            next
+        }
         if (!(path in known)) {
             # qmllint may echo an absolute path; match on the tail instead.
             for (i = 1; i <= nf; i++) {
@@ -120,15 +147,23 @@ summary=$(awk -v exit_code="$rc" '
                 }
             }
         }
-        sev = tolower(sev)
-        key = path
+        if (!(path in known)) {
+            # A diagnostic for a file that was not requested (an imported
+            # module, say): keep it in the totals, it is still a warning.
+            if (sev == "warning")
+                unattr_w++
+            else if (sev == "error" || sev == "critical")
+                unattr_e++
+            next
+        }
         if (sev == "warning")
-            warn[key]++
+            warn[path]++
         else if (sev == "error" || sev == "critical")
-            err[key]++
+            err[path]++
     }
     END {
-        total_w = 0; total_e = 0
+        total_w = unattr_w + 0
+        total_e = unattr_e + 0
         for (i = 1; i <= nf; i++) {
             f = files[i]
             w = warn[f] + 0
@@ -136,6 +171,10 @@ summary=$(awk -v exit_code="$rc" '
             total_w += w
             total_e += e
             printf "%-64s %d warning(s)%s\n", f, w, (e ? sprintf(", %d error(s)", e) : "")
+        }
+        if (exit_code != 0 && total_e == 0) {
+            printf "qml-lint: qmllint exited %d with no attributable error diagnostic; counted as 1 error\n", exit_code > "/dev/stderr"
+            total_e = 1
         }
         printf "LINT files=%d warnings=%d errors=%d exit=%d\n", nf, total_w, total_e, exit_code
     }
