@@ -1,0 +1,5 @@
+Mac fleet since 2026-10-22T22:43:20Z: 3 finished, 2 blocked, 1 failed, 2 running.
+Needs you: CANVAS-PORT: Lilly frontend into the root canvas, B repair 1: post-navigation bindings, mobile footer, Linux: install bridge-digest after review.
+Latest done: HUD v5 W4 ICONS: one stroke set, IconTile ring (yamato).
+Digest: 1 blocked, 1 stalled, 2 dead events.
+Slack: no unread count on this host.

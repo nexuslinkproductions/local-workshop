@@ -1,0 +1,6 @@
+{
+  "note": "The Slack finding on this Mac, recorded from the real read-only probe on 2026-10-23: auth.test ok (bot 'hermes', team 'Nexus Link'), conversations.list ok (8 channels), conversations.info returns unread_count null for a bot token. No read-only unread count exists here.",
+  "available": false,
+  "unread": null,
+  "reason": "auth.test ok, conversations.list ok (8 channels), conversations.info unread_count null for a bot token: Slack returns it only for the calling user's own membership, so no read-only unread count is available on this host"
+}
