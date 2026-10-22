@@ -25,14 +25,19 @@ Signals:
   ~/.cache/ptt-toggle.state  dictation/game state written by ptt-toggle
   ~/.cache/mouse-profile     optional one-line mouse profile, if such a file exists
 
-Output: one JSON object on stdout, UTC ISO timestamps. Exit 0 for data and for
-honest absence ({"ok": false, "reason": ...}), exit 2 only for a bad argument or
-a file the caller named that does not exist.
+Output: one JSON object on stdout, UTC ISO timestamps. --json prints it as one
+compact line for a Process consumer; the default is the same object pretty
+printed. Exit 0 for data and for honest absence ({"ok": false, "reason": ...,
+"kind": ...}), exit 2 only for a bad argument or a file the caller named that
+does not exist.
 
 Writes: ~/.local/state/nexuslink/game_mode.json (the proposed pause-heavy flag,
 atomic) and ~/.local/state/nexuslink/game_mode_net.json (net cache, atomic, 10 s
-floor). --state-dir moves both; --dry-run and --no-write suppress writes.
-Nothing else is written. Contract: GAME_MODE_CONTRACT.md next to this file.
+floor, keyed on both ping targets). --state-dir moves both; --dry-run and
+--no-write suppress writes. A --fixture run writes neither and reads no host
+state unless the caller names --state-dir, --flag-file or --cache-file;
+--toggle --fixture keeps its documented ptt.state write. Nothing else is
+written. Contract: GAME_MODE_CONTRACT.md next to this file.
 
 Stdlib only, Python 3.9+.
 """
@@ -165,14 +170,27 @@ def short(text, limit=160):
     return line[:limit]
 
 
-def fail_payload(reason, **extra):
+ERR_MISSING = "missing"
+ERR_MALFORMED = "malformed"
+ERR_UNAVAILABLE = "unavailable"
+ERR_FAILED = "failed"
+
+
+def fail_payload(reason, kind=None, **extra):
+    """ok:false envelope. kind says why the data is absent, never a plausible value."""
     payload = {"ok": False, "generated_at": utc_now_iso(), "reason": reason}
+    if kind:
+        payload["kind"] = kind
     payload.update(extra)
     return payload
 
 
-def emit(payload, code=0):
-    sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+def emit(payload, code=0, compact=False):
+    """One JSON object on stdout. --json = one compact line, default = pretty."""
+    if compact:
+        sys.stdout.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n")
+    else:
+        sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     return code
 
 
@@ -211,6 +229,10 @@ class Cfg(object):
         self.no_write = bool(args.no_write)
         self.no_net = bool(args.no_net)
         self.live_net = bool(args.live_net)     # fixture signals + real network (Mac demo)
+        self.json_output = bool(args.json)      # one compact line for a Process consumer
+        self.state_dir_given = args.state_dir is not None
+        self.flag_file_given = args.flag_file is not None
+        self.cache_file_given = args.cache_file is not None
 
 
 def parse_args(argv):
@@ -224,7 +246,8 @@ def parse_args(argv):
     g.add_argument("--toggle", action="store_true", help="flip dictation/game and write state")
     g.add_argument("--self-check", action="store_true", help="hermetic checks, non-zero on failure")
 
-    p.add_argument("--json", action="store_true", help="print one JSON object (the default)")
+    p.add_argument("--json", action="store_true",
+                   help="print one compact JSON line (default: the same object, pretty printed)")
     p.add_argument("--fixture", metavar="PATH", help="fixture file or directory instead of the live host")
     p.add_argument("--host", choices=["auto", "mac", "linux", "darwin"], default="auto",
                    help="host profile; Linux commands only run with 'linux'")
@@ -312,6 +335,19 @@ def _num(value):
     return int(value) if float(value).is_integer() else round(float(value), 1)
 
 
+PING_HOST_ERRORS = ("cannot resolve", "unknown host", "name or service not known",
+                    "network is unreachable", "no route to host", "sendto: ")
+
+
+def ping_host_error(text):
+    """The resolver's own line, so a bad target says why. None when ping said nothing."""
+    for line in (text or "").splitlines():
+        low = line.lower()
+        if any(needle in low for needle in PING_HOST_ERRORS):
+            return short(line, 120)
+    return None
+
+
 def parse_ping(text):
     """mean rtt and mdev/stddev from a ping -c 5 capture. Never invents a number."""
     out = {"rtt_ms": None, "jitter_ms": None, "loss": None, "samples": 0, "reason": None}
@@ -354,6 +390,9 @@ def parse_ping(text):
             out["reason"] = "no replies"
         else:
             out["reason"] = "no rtt in ping output"
+        detail = ping_host_error(text)
+        if detail:
+            out["reason"] = "%s: %s" % (out["reason"], detail)
     return out
 
 
@@ -403,9 +442,9 @@ def discover_gateway():
     return None, "gateway discovery unsupported on %s" % host_platform()
 
 
-def net_live(cfg):
-    gateway_host = cfg.gateway_host
-    gateway_reason = None
+def net_live(cfg, gateway_host=None, gateway_reason=None):
+    if gateway_host is None:
+        gateway_host = cfg.gateway_host
     if not gateway_host:
         gateway_host, gateway_reason = discover_gateway()
 
@@ -460,14 +499,29 @@ def sanitize_entry(entry, host):
     return out
 
 
+def fixture_net_hosts(cfg, fx):
+    """The two hosts a fixture names, used for the payload and for the cache key."""
+    if not isinstance(fx, dict):
+        fx = {}
+    net = fx.get("net")
+    if not isinstance(net, dict):
+        net = {}
+    gateway = net.get("gateway")
+    gateway = gateway if isinstance(gateway, dict) else {}
+    public = net.get("public")
+    public = public if isinstance(public, dict) else {}
+    gateway_host = fx.get("gateway_host") or gateway.get("host") or cfg.gateway_host
+    public_host = fx.get("public_host") or public.get("host") or cfg.public_host
+    return gateway_host, public_host
+
+
 def net_from_fixture(cfg, fx):
     ping = fx.get("ping") if isinstance(fx.get("ping"), dict) else {}
     pre = fx.get("net") if isinstance(fx.get("net"), dict) else {}
     pre_gw = pre.get("gateway") if isinstance(pre.get("gateway"), dict) else {}
     pre_pub = pre.get("public") if isinstance(pre.get("public"), dict) else {}
 
-    gateway_host = fx.get("gateway_host") or pre_gw.get("host")
-    public_host = fx.get("public_host") or pre_pub.get("host") or cfg.public_host
+    gateway_host, public_host = fixture_net_hosts(cfg, fx)
     measured = fx.get("generated_at") if isinstance(fx.get("generated_at"), str) else utc_now_iso()
 
     out = {"measured_at": measured, "source": "fixture", "cached": False}
@@ -483,12 +537,29 @@ def net_from_fixture(cfg, fx):
     return out
 
 
-def read_cache(cfg, source):
+def flag_persist_allowed(cfg):
+    """Live mode owns the flag. A fixture run writes it only where the caller pointed."""
+    return cfg.fixture is None or cfg.state_dir_given or cfg.flag_file_given
+
+
+def cache_persist_allowed(cfg):
+    """Live mode owns the net cache. A fixture run shares one only when it was named."""
+    return cfg.fixture is None or cfg.state_dir_given or cfg.cache_file_given
+
+
+def read_cache(cfg, source, gateway_host, public_host):
+    """A cache hit needs the same source and the same two targets, inside the TTL."""
+    if not isinstance(gateway_host, str) or not gateway_host:
+        return None
+    if not isinstance(public_host, str) or not public_host:
+        return None
     obj, err = read_json(cfg.cache_file)
     if not isinstance(obj, dict) or err:
         return None
     if obj.get("source") != source:
         return None                       # a fixture probe never feeds a live status
+    if obj.get("gateway_host") != gateway_host or obj.get("public_host") != public_host:
+        return None                       # a round aimed at other targets is not a hit
     ts = obj.get("ts")
     if not isinstance(ts, (int, float)):
         return None
@@ -499,6 +570,8 @@ def read_cache(cfg, source):
     public = obj.get("public")
     if not isinstance(gateway, dict) or not isinstance(public, dict):
         return None
+    if gateway.get("host") != gateway_host or public.get("host") != public_host:
+        return None
     return {"gateway": gateway, "public": public,
             "measured_at": obj.get("measured_at") or utc_now_iso(),
             "source": source, "cached": True}
@@ -506,18 +579,33 @@ def read_cache(cfg, source):
 
 def probe_net(cfg, fx=None):
     source = "live" if (cfg.fixture is None or cfg.live_net) else "fixture"
-    cached = read_cache(cfg, source)
-    if cached:
-        return cached
+    gateway_reason = None
+    if source == "fixture":
+        gateway_host, public_host = fixture_net_hosts(cfg, fx or {})
+    else:
+        gateway_host = cfg.gateway_host
+        if not gateway_host:
+            gateway_host, gateway_reason = discover_gateway()
+        public_host = cfg.public_host
+
+    shared_cache = cache_persist_allowed(cfg)
+    if shared_cache:
+        cached = read_cache(cfg, source, gateway_host, public_host)
+        if cached:
+            return cached
+
     if source == "fixture":
         net = net_from_fixture(cfg, fx or {})
     else:
-        net = net_live(cfg)
-    if not cfg.dry_run and not cfg.no_write:
+        net = net_live(cfg, gateway_host, gateway_reason)
+
+    if shared_cache and not cfg.dry_run and not cfg.no_write:
         atomic_write_json(cfg.cache_file, {
             "measured_at": net.get("measured_at") or utc_now_iso(),
             "ts": time.time(),
             "source": source,
+            "gateway_host": gateway_host,
+            "public_host": public_host,
             "gateway": net["gateway"],
             "public": net["public"],
         })
@@ -720,13 +808,14 @@ def parse_state_text(text):
 
 def read_ptt(cfg, fx):
     # Sources in order: a path the caller named, the simulated state a fixture
-    # toggle wrote under the state dir, the real ptt-toggle state, then the
-    # fixture's snapshot value. Live mode never writes a ptt state at all.
+    # toggle wrote under a state dir the caller named, the real ptt-toggle state,
+    # then the fixture's snapshot value. Live mode never writes a ptt state at all.
     candidates = []
     if cfg.ptt_state_given:
         candidates.append(cfg.ptt_state)
     if fx is not None:
-        candidates.append(cfg.sim_ptt_state)
+        if cfg.state_dir_given:
+            candidates.append(cfg.sim_ptt_state)   # only where the caller pointed
     else:
         candidates.append(cfg.ptt_state)
     for path in candidates:
@@ -780,7 +869,8 @@ def read_mouse(cfg, fx):
 
 def apply_flag(cfg, gaming, now_iso):
     """Write ~/.local/state/nexuslink/game_mode.json atomically. Returns (obj, warning)."""
-    prev, _ = read_json(cfg.flag_file)
+    persist = flag_persist_allowed(cfg)
+    prev = read_json(cfg.flag_file)[0] if persist else None
     since = None
     if gaming:
         if isinstance(prev, dict) and prev.get("gaming") is True and isinstance(prev.get("since"), str):
@@ -789,6 +879,8 @@ def apply_flag(cfg, gaming, now_iso):
             since = now_iso
     obj = {"gaming": bool(gaming), "pause_heavy": bool(gaming),
            "since": since, "updated_at": now_iso}
+    if not persist:
+        return obj, "pause-heavy flag not written: fixture mode, no --state-dir or --flag-file"
     if cfg.dry_run:
         return obj, "pause-heavy flag not written (--dry-run)"
     if cfg.no_write:
@@ -809,7 +901,8 @@ def load_signals(cfg):
 
 
 def fixture_error_payload(kind, message):
-    payload = fail_payload(message)
+    """A missing or empty fixture is kind 'missing'; unreadable or bad JSON is 'malformed'."""
+    payload = fail_payload(message, kind=ERR_MISSING if kind in ("missing", "empty") else ERR_MALFORMED)
     payload["source"] = "fixture"
     return payload, (2 if kind == "missing" else 0)
 
@@ -936,7 +1029,12 @@ def atomic_write_text(path, text):
 
 
 def flip(mode):
-    return "game" if mode == "dictation" else "dictation"
+    """The other mode, or None when the current one is unknown (never a guess)."""
+    if mode == "dictation":
+        return "game"
+    if mode == "game":
+        return "dictation"
+    return None
 
 
 def build_toggle(cfg):
@@ -956,8 +1054,11 @@ def build_toggle(cfg):
               "dry_run": bool(cfg.dry_run), "source_of_truth": ptt_info.get("source")}
 
     if cfg.dry_run:
-        result["after"] = flip(before)
-        result["mode"] = flip(before)
+        after = flip(before)
+        result["after"] = after
+        result["mode"] = after or before
+        if after is None:
+            result["after_reason"] = "current dictation/game state is unknown"
         if cfg.fixture is not None:
             result["would_run"] = "fixture simulation (no command)"
         elif cfg.host == "linux":
@@ -966,29 +1067,33 @@ def build_toggle(cfg):
             result["would_run"] = "nothing: ptt-toggle is Linux-only and absent on this host"
     elif fx is not None:
         after = flip(before)
-        written, err, ptt_target = toggle_state_file(cfg, after)
-        result.update({"after": after, "mode": after, "simulated": True,
-                       "ran": False, "command": "ptt-toggle (fixture)",
-                       "ptt_state_file": display_path(ptt_target)})
-        captured = fx.get("toggle") if isinstance(fx.get("toggle"), dict) else None
-        if captured:
-            result["exit_code"] = captured.get("exit_code")
-            result["output"] = short(captured.get("output"), 200)
-        if not written and err:
-            if "dry-run" not in err:
-                return fail_payload("simulated toggle could not write ptt state: %s" % err,
-                                    source=source), 0
-            result["ptt_state_write"] = err
+        result.update({"after": after, "mode": after or before,
+                       "simulated": after is not None,
+                       "ran": False, "command": "ptt-toggle (fixture)"})
+        if after is None:
+            result["after_reason"] = "current dictation/game state is unknown"
+        else:
+            written, err, ptt_target = toggle_state_file(cfg, after)
+            result["ptt_state_file"] = display_path(ptt_target)
+            captured = fx.get("toggle") if isinstance(fx.get("toggle"), dict) else None
+            if captured:
+                result["exit_code"] = captured.get("exit_code")
+                result["output"] = short(captured.get("output"), 200)
+            if not written and err:
+                if "dry-run" not in err:
+                    return fail_payload("simulated toggle could not write ptt state: %s" % err,
+                                        kind=ERR_FAILED, source=source), 0
+                result["ptt_state_write"] = err
     elif cfg.host == "linux":
         binary = cfg.toggle_cmd or shutil.which("ptt-toggle")
         if not binary:
             return fail_payload(
                 "ptt-toggle not found on this host; pass --toggle-cmd or use --fixture",
-                source=source, action="toggle", before=before), 0
+                kind=ERR_UNAVAILABLE, source=source, action="toggle", before=before), 0
         rc, out, err = run_cmd([binary], TOGGLE_TIMEOUT_S)
         if rc is None:
-            return fail_payload("ptt-toggle could not run: %s" % err, source=source,
-                                action="toggle", before=before), 0
+            return fail_payload("ptt-toggle could not run: %s" % err, kind=ERR_UNAVAILABLE,
+                                source=source, action="toggle", before=before), 0
         after_state, after_info = read_ptt(cfg, None)
         after = resolve_mode(after_state, game.get("running"))
         result.update({"after": after, "mode": after, "ran": True,
@@ -997,12 +1102,13 @@ def build_toggle(cfg):
                        "source_of_truth": after_info.get("source")})
         if rc != 0:
             result["ok"] = False
+            result["kind"] = ERR_FAILED
             result["reason"] = "ptt-toggle exited %s" % rc
     else:
         return fail_payload(
             "ptt-toggle is Linux-only and absent on this host; use --fixture PATH "
             "or --host linux (never simulated silently)",
-            source=source, action="toggle", before=before), 0
+            kind=ERR_UNAVAILABLE, source=source, action="toggle", before=before), 0
 
     gaming = game.get("running") is True
     flag, flag_warning = apply_flag(cfg, gaming, now_iso)
@@ -1424,10 +1530,148 @@ def run_self_check(script):
     checks.true("unwritable flag warning",
                 any("write failed" in w for w in bad.get("warnings", [])), str(bad.get("warnings")))
 
-    # 17. --json is accepted and still one object
+    # 17. --json is one compact line; the default stays pretty printed
     rc, payload, out_j, err_j = ok_json(["--status", "--fixture", str(game_fx), "--json"] + common)
     checks.eq("--json exit", rc, 0)
     checks.eq("--json ok", payload.get("ok"), True)
+    checks.eq("--json one line", out_j.count("\n"), 1)
+    checks.true("--json compact (no indentation)", '\n  "' not in out_j, out_j[:120])
+    checks.eq("--json starts at the envelope", out_j.startswith('{"ok":'), True)
+    rc, pretty, out_pj, err_pj = ok_json(["--status", "--fixture", str(game_fx)] + common)
+    checks.eq("pretty default exit", rc, 0)
+    checks.true("pretty default is indented", out_pj.count("\n") > 1, out_pj[:60])
+    rc, compact_err, out_ce, err_ce = ok_json(
+        ["--status", "--fixture", str(tmp / "nope.json"), "--json"])
+    checks.eq("compact error exit", rc, 2)
+    checks.eq("compact error one line", out_ce.count("\n"), 1)
+    checks.eq("compact error kind", (compact_err or {}).get("kind"), "missing")
+
+    # 18. every error payload carries a kind
+    rc, missing_kind, _, _ = ok_json(["--status", "--fixture", str(tmp / "nope.json")] + common)
+    checks.eq("missing fixture kind", (missing_kind or {}).get("kind"), "missing")
+    rc, empty_kind, _, _ = ok_json(["--status", "--fixture", str(empty_dir)] + common)
+    checks.eq("empty fixture kind", (empty_kind or {}).get("kind"), "missing")
+    rc, bad_kind, _, _ = ok_json(["--status", "--fixture", str(malformed_fx)] + common)
+    checks.eq("malformed fixture kind", (bad_kind or {}).get("kind"), "malformed")
+    rc, probe_kind, _, _ = ok_json(["--probe", "--fixture", str(malformed_fx)] + common)
+    checks.eq("probe malformed kind", (probe_kind or {}).get("kind"), "malformed")
+    rc, toggle_kind, _, _ = ok_json(["--toggle", "--fixture", str(tmp / "nope.json")] + common)
+    checks.eq("toggle missing fixture kind", (toggle_kind or {}).get("kind"), "missing")
+    rc, refuse_kind, _, _ = ok_json(["--toggle"] + common)
+    checks.eq("refusal kind", (refuse_kind or {}).get("kind"), "unavailable")
+
+    # 19. a fixture status neither writes nor reads host state without named paths
+    pure_home = tmp / "pure-home"
+    pure_home.mkdir()
+    decoy_home = tmp / "decoy-home"
+    decoy_state = decoy_home / ".local" / "state" / "nexuslink"
+    decoy_state.mkdir(parents=True)
+    _write_json(decoy_state / FLAG_NAME, {"gaming": False, "pause_heavy": False,
+                                          "since": "2020-01-01T00:00:00Z",
+                                          "updated_at": "2020-01-01T00:00:00Z"})
+    _write_json(decoy_state / CACHE_NAME, {
+        "measured_at": "2020-01-01T00:00:00Z", "ts": time.time(), "source": "fixture",
+        "gateway_host": "10.9.9.9", "public_host": "10.9.9.8",
+        "gateway": {"host": "10.9.9.9", "rtt_ms": 1.0, "jitter_ms": 0.1, "loss": 0},
+        "public": {"host": "10.9.9.8", "rtt_ms": 2.0, "jitter_ms": 0.2, "loss": 0}})
+    pure_env = dict(os.environ)
+    pure_env["HOME"] = str(pure_home)
+    pure_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    rc, pure, out_pu, err_pu = ok_json(["--status", "--fixture", str(game_fx)], env=pure_env)
+    checks.eq("purity exit", rc, 0)
+    pure = pure or {}
+    checks.eq("purity ok", pure.get("ok"), True)
+    checks.eq("purity empty HOME writes nothing",
+              sorted(str(p.relative_to(pure_home)) for p in pure_home.rglob("*") if p.is_file()), [])
+    checks.eq("purity creates no state dir", (pure_home / ".local").exists(), False)
+    checks.eq("purity still reports the flag", pure.get("pause_heavy", {}).get("flag"), True)
+    decoy_env = dict(pure_env)
+    decoy_env["HOME"] = str(decoy_home)
+    rc, decoy, out_de, err_de = ok_json(["--status", "--fixture", str(game_fx)], env=decoy_env)
+    checks.eq("purity decoy exit", rc, 0)
+    decoy = decoy or {}
+    checks.true("purity ignores the host flag",
+                decoy.get("pause_heavy", {}).get("since") != "2020-01-01T00:00:00Z",
+                str(decoy.get("pause_heavy")))
+    checks.true("purity ignores the host cache",
+                decoy.get("net", {}).get("gateway", {}).get("host") != "10.9.9.9",
+                str(decoy.get("net", {}).get("gateway")))
+    checks.eq("purity decoy cache not reused", decoy.get("net", {}).get("cached"), False)
+
+    # 20. the net cache is keyed to both targets
+    target_cache = tmp / "target-cache.json"
+    target_args = ["--probe", "--ping-cmd", str(stub), "--cache-file", str(target_cache),
+                   "--state-dir", str(state), "--ptt-state", str(ptt)]
+    if log.exists():
+        log.unlink()
+    rc, target_a, _, _ = ok_json(target_args + ["--gateway-host", "192.168.0.1"], env=ping_env)
+    checks.eq("target cache first exit", rc, 0)
+    target_a = target_a or {}
+    checks.eq("target cache first host", target_a.get("net", {}).get("gateway", {}).get("host"),
+              "192.168.0.1")
+    checks.eq("target cache first cached", target_a.get("net", {}).get("cached"), False)
+    rc, target_b, _, _ = ok_json(target_args + ["--gateway-host", "192.0.2.1"], env=ping_env)
+    checks.eq("target cache second exit", rc, 0)
+    target_b = target_b or {}
+    checks.eq("target cache second host", target_b.get("net", {}).get("gateway", {}).get("host"),
+              "192.0.2.1")
+    checks.eq("target cache second cached", target_b.get("net", {}).get("cached"), False)
+    lines = log.read_text().splitlines() if log.exists() else []
+    checks.eq("target cache second round pinged twice", len(lines), 4)
+    checks.true("target cache second round pinged the new target",
+                any("192.0.2.1" in line for line in lines), str(lines))
+    rc, target_b2, _, _ = ok_json(target_args + ["--gateway-host", "192.0.2.1"], env=ping_env)
+    target_b2 = target_b2 or {}
+    checks.eq("target cache same target cached", target_b2.get("net", {}).get("cached"), True)
+    lines = log.read_text().splitlines() if log.exists() else []
+    checks.eq("target cache same target ran no ping", len(lines), 4)
+
+    # 21. the shipped fixture's samples agree with its own summary
+    shipped = Path(__file__).resolve().parent.parent / "fixtures" / FIXTURE_MAIN
+    checks.true("shipped fixture present", shipped.is_file(), str(shipped))
+    shipped_fx, shipped_err = read_json(shipped)
+    shipped_ping = (shipped_fx or {}).get("ping") if isinstance(shipped_fx, dict) else None
+    checks.true("shipped fixture parses", isinstance(shipped_ping, dict), str(shipped_err))
+    for key in ("gateway", "public"):
+        text = (shipped_ping or {}).get(key) if isinstance(shipped_ping, dict) else None
+        times = [float(value) for value in re.findall(r"time[=<]([\d.]+)\s*ms", text or "")]
+        summary = re.search(r"min/avg/max/(?:mdev|stddev)\s*=\s*"
+                            r"([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)", text or "")
+        mean = sum(times) / len(times) if times else None
+        sd = (sum((t - mean) ** 2 for t in times) / len(times)) ** 0.5 if times else None
+        parsed = parse_ping(text or "")
+        checks.eq("shipped %s sample count" % key, len(times), 5)
+        checks.true("shipped %s summary line" % key, summary is not None, str(text)[:80])
+        if mean is not None and sd is not None and summary is not None:
+            checks.true("shipped %s mean matches summary" % key,
+                        abs(mean - float(summary.group(2))) <= 0.01,
+                        "%r vs %s" % (mean, summary.group(2)))
+            checks.true("shipped %s stddev matches summary" % key,
+                        abs(sd - float(summary.group(4))) <= 0.01,
+                        "%r vs %s" % (sd, summary.group(4)))
+            checks.true("shipped %s reported jitter matches its samples" % key,
+                        abs(float(parsed.get("jitter_ms") or -1.0) - sd) <= 0.01,
+                        "%r vs %r" % (parsed.get("jitter_ms"), sd))
+
+    # 22. a bad host keeps ping's own line; an unknown mode flips to null, not a guess
+    unresolved = parse_ping("ping: cannot resolve nope.invalid: Unknown host\n")
+    checks.eq("unresolved rtt", unresolved.get("rtt_ms"), None)
+    checks.true("unresolved keeps the resolver line",
+                "cannot resolve" in str(unresolved.get("reason")), str(unresolved.get("reason")))
+    unknown_fx = _write_json(tmp / "unknown.json", {
+        "generated_at": "2026-10-23T01:23:00Z",
+        "ptt_state": "sideways",
+        "pgrep": [],
+        "ping": {"gateway": PING_GATEWAY, "public": PING_PUBLIC},
+    })
+    rc, unknown_dry, _, _ = ok_json(
+        ["--toggle", "--fixture", str(unknown_fx), "--dry-run",
+         "--state-dir", str(tmp / "unknown-state"),
+         "--ptt-state", str(tmp / "absent-mode.state")])
+    checks.eq("unknown mode exit", rc, 0)
+    unknown_dry = unknown_dry or {}
+    checks.eq("unknown mode before", unknown_dry.get("before"), "unknown")
+    checks.eq("unknown mode after", unknown_dry.get("after"), None)
 
     print("\nfixtures and state under %s" % tmp)
     code = checks.summary()
@@ -1447,12 +1691,12 @@ def main(argv):
         return run_self_check(os.path.abspath(__file__))
     if cfg.action == "probe":
         payload, code = build_probe(cfg)
-        return emit(payload, code)
+        return emit(payload, code, cfg.json_output)
     if cfg.action == "toggle":
         payload, code = build_toggle(cfg)
-        return emit(payload, code)
+        return emit(payload, code, cfg.json_output)
     payload, code = build_status(cfg)
-    return emit(payload, code)
+    return emit(payload, code, cfg.json_output)
 
 
 if __name__ == "__main__":

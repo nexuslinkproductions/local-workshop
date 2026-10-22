@@ -19,6 +19,9 @@ Contract version: 1, 2026-10-23.
   `os.replace`. A reader never sees a half-written object.
 - Written only by `game_mode.py --status` and `game_mode.py --toggle`.
   `--dry-run` and `--no-write` suppress it. Nothing else writes it, ever.
+- A `--fixture` run writes it only when the caller names `--state-dir` or
+  `--flag-file`. A fixture snapshot never picks up the live flag, and `since`
+  is then the moment of that run, not a value read off the host.
 
 ## The fields
 
@@ -108,6 +111,14 @@ state; live `--toggle` does not either, because on Linux `ptt-toggle` owns that
 file. `--ptt-state PATH` redirects the simulated state if a caller wants it
 elsewhere.
 
+A `--fixture` run writes none of these unless the caller names the path:
+`--state-dir` covers all three, `--flag-file` the flag, `--cache-file` the net
+cache. It also reads no host state in fixture mode (`~/.cache/ptt-toggle.state`,
+the live flag and the live net cache are not consulted). `--toggle --fixture`
+keeps its documented `ptt.state` write, the one host write a fixture run makes
+on its own; the following tick only reads that file back when the same
+`--state-dir` is named, so a round trip has to name it.
+
 Nothing under a profile config, nothing in cron, nothing in the Quickshell tree.
 
 ## Signals and how mode is decided
@@ -120,8 +131,9 @@ Nothing under a profile config, nothing in cron, nothing in the Quickshell tree.
 | `$HOME/.local/state/nexuslink/ptt.state` | fixture mode, written by a simulated `--toggle` | same, so a Mac demo can flip and read back |
 | `$HOME/.cache/mouse-profile` (one line), `--mouse-profile`, or `mouse_profile` in the fixture | optional, none on this Mac | `mouse_profile` |
 
-The simulated state is read only in fixture mode, after any path the caller named
-with `--ptt-state`; the live path never reads or writes it.
+The simulated state is read only in fixture mode, when the caller named a state
+dir with `--state-dir` or a file with `--ptt-state`; a bare `--status --fixture`
+never reads it. The live path never reads or writes it.
 
 `mode` is the dictation/game toggle, not the process: a `ptt-toggle` state of
 `on`/`dictation`/`enabled`/`1` reports `dictation`; `off`/`game`/`gaming`/`0`
@@ -148,6 +160,12 @@ The router is the default-route gateway (`route -n get default` on macOS,
 `null` with a `reason`, loss stays a measured percentage; when the command
 cannot run at all, all three are `null` with a `reason`. No zero is ever invented.
 
+The cache is keyed on both targets, not just on time: `game_mode_net.json` stores
+`gateway_host` and `public_host` next to the numbers, and a request for another
+router or another public target inside the 10 s window is a miss. A round aimed
+at a dead target therefore reports that target's null with its own reason
+instead of inheriting the previous target's numbers.
+
 ## Fixture schema
 
 `--fixture PATH` takes a file, or a directory containing `game_mode.json`. Used
@@ -167,7 +185,11 @@ optional and tolerated if partial:
 | `toggle` | `{"exit_code": 0, "output": "..."}`, reported when `--toggle` is simulated |
 | `needs_me`, `needs_me_reason` | force attention in a fixture |
 
-`nexuslink.hud/v5/fixtures/game_mode.json` is the shipped example.
+`nexuslink.hud/v5/fixtures/game_mode.json` is the shipped example. Its ping
+blocks are internally consistent: the mean and the population stddev recomputed
+from the `time=` samples match the summary line within 0.01, so the parser cannot
+report a jitter the samples do not give. `--self-check` proves that on the
+shipped file, not only on a generated one.
 
 ## Commands and exit codes
 
@@ -176,6 +198,12 @@ optional and tolerated if partial:
     game_mode.py --toggle  [--fixture PATH] [--dry-run]  # flips mode, writes state
     game_mode.py --self-check                            # hermetic, exit 1 on failure
 
-Exit `0` for data and for honest absence (`{"ok": false, "reason": ...}`), `2`
-only for a bad argument or a path the caller named that is not there. `--json`
-prints exactly one object on stdout and nothing else; it is also the default.
+Exit `0` for data and for honest absence (`{"ok": false, "reason": "...", "kind":
+"missing" | "malformed"}`), `2` only for a bad argument or a path the caller named
+that is not there. `kind` is `missing` for a fixture that is absent or empty and
+`malformed` for one that is unreadable or not JSON; an operation the host refused
+reports `unavailable` (no binary) or `failed` (the command ran and failed).
+
+`--json` prints exactly one compact line on stdout (no indentation, UTF-8 kept as
+is) for a `Process` consumer; without it the same object is pretty printed for a
+human. Both are exactly one JSON object and nothing else.
