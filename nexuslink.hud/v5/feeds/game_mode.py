@@ -203,6 +203,8 @@ class Cfg(object):
         self.cache_file = (Path(args.cache_file).expanduser() if args.cache_file
                            else self.state_dir / CACHE_NAME)
         self.ptt_state = Path(args.ptt_state).expanduser() if args.ptt_state else PTT_STATE
+        self.ptt_state_given = args.ptt_state is not None
+        self.sim_ptt_state = self.state_dir / "ptt.state"
         self.mouse_state = Path(args.mouse_state).expanduser() if args.mouse_state else MOUSE_STATE
         self.cache_ttl = max(CACHE_TTL_FLOOR_S, float(args.cache_ttl or 0.0))
         self.dry_run = bool(args.dry_run)
@@ -717,17 +719,25 @@ def parse_state_text(text):
 
 
 def read_ptt(cfg, fx):
-    # A real state file wins over a fixture snapshot: the fixture supplies
-    # defaults, and a simulated --toggle writes the file the next tick reads.
-    path = cfg.ptt_state
-    if path.is_file():
-        text, err = read_text(path)
-        if text is not None:
-            state, raw = parse_state_text(text)
-            return state, {"state": state, "raw": raw, "source": "file",
-                           "path": display_path(path)}
-        return "unknown", {"state": "unknown", "raw": None, "source": "file",
-                           "path": display_path(path), "reason": err}
+    # Sources in order: a path the caller named, the simulated state a fixture
+    # toggle wrote under the state dir, the real ptt-toggle state, then the
+    # fixture's snapshot value. Live mode never writes a ptt state at all.
+    candidates = []
+    if cfg.ptt_state_given:
+        candidates.append(cfg.ptt_state)
+    if fx is not None:
+        candidates.append(cfg.sim_ptt_state)
+    else:
+        candidates.append(cfg.ptt_state)
+    for path in candidates:
+        if path.is_file():
+            text, err = read_text(path)
+            if text is not None:
+                state, raw = parse_state_text(text)
+                return state, {"state": state, "raw": raw, "source": "file",
+                               "path": display_path(path)}
+            return "unknown", {"state": "unknown", "raw": None, "source": "file",
+                               "path": display_path(path), "reason": err}
     if fx is not None:
         value = fx.get("ptt_state")
         if isinstance(value, dict):
@@ -737,7 +747,7 @@ def read_ptt(cfg, fx):
             return state, {"state": state, "raw": raw, "source": "fixture"}
         return "unknown", {"state": "unknown", "raw": None, "source": "fixture"}
     return "unknown", {"state": "unknown", "raw": None, "source": "absent",
-                       "path": display_path(path)}
+                       "path": display_path(cfg.ptt_state)}
 
 
 def resolve_mode(ptt_state, running):
@@ -887,14 +897,19 @@ def build_probe(cfg):
 
 
 def toggle_state_file(cfg, mode):
-    """Simulated ptt-toggle on the Mac: persist the flipped state where ptt-toggle would."""
+    """Simulated ptt-toggle on the Mac: persist the flipped state the next tick reads.
+
+    Never touches the Mac's real ~/.cache: the simulated state lives under the
+    state directory unless the caller names a path with --ptt-state.
+    """
     token = "dictation" if mode == "dictation" else "game"
+    target = cfg.ptt_state if cfg.ptt_state_given else cfg.sim_ptt_state
     if cfg.dry_run:
-        return False, "not written (--dry-run)"
-    ok, err = atomic_write_text(cfg.ptt_state, token + "\n")
+        return False, "not written (--dry-run)", target
+    ok, err = atomic_write_text(target, token + "\n")
     if not ok:
-        return False, "ptt state write failed: %s" % err
-    return True, None
+        return False, "ptt state write failed: %s" % err, target
+    return True, None, target
 
 
 def atomic_write_text(path, text):
@@ -951,9 +966,10 @@ def build_toggle(cfg):
             result["would_run"] = "nothing: ptt-toggle is Linux-only and absent on this host"
     elif fx is not None:
         after = flip(before)
-        written, err = toggle_state_file(cfg, after)
+        written, err, ptt_target = toggle_state_file(cfg, after)
         result.update({"after": after, "mode": after, "simulated": True,
-                       "ran": False, "command": "ptt-toggle (fixture)"})
+                       "ran": False, "command": "ptt-toggle (fixture)",
+                       "ptt_state_file": display_path(ptt_target)})
         captured = fx.get("toggle") if isinstance(fx.get("toggle"), dict) else None
         if captured:
             result["exit_code"] = captured.get("exit_code")

@@ -101,6 +101,12 @@ not part of this branch.
 |---|---|---|
 | `$HOME/.local/state/nexuslink/game_mode.json` | the flag above | every `--status` / `--toggle` |
 | `$HOME/.local/state/nexuslink/game_mode_net.json` | ping+jitter cache for both targets, one round | refreshed at most every 10 s |
+| `$HOME/.local/state/nexuslink/ptt.state` | simulated dictation/game state, fixture mode only (a `--toggle` with `--fixture`) | on `--toggle` |
+
+Every write is atomic (temp file + `os.replace`). `--status` never writes a ptt
+state; live `--toggle` does not either, because on Linux `ptt-toggle` owns that
+file. `--ptt-state PATH` redirects the simulated state if a caller wants it
+elsewhere.
 
 Nothing under a profile config, nothing in cron, nothing in the Quickshell tree.
 
@@ -111,7 +117,11 @@ Nothing under a profile config, nothing in cron, nothing in the Quickshell tree.
 | `pgrep -f PioneerGame`, `pgrep -f ArcRaiders` (override: `--pattern`, repeatable) | Mac and Linux | `game.running`, `game.process`, `game.pid` |
 | `hyprctl clients -j`, window `class` / `initialClass` | Linux only | `game.class`; fills `game.running` when `pgrep` misses |
 | `$HOME/.cache/ptt-toggle.state` | Linux, written by `ptt-toggle` | `mode` = `dictation` or `game` |
+| `$HOME/.local/state/nexuslink/ptt.state` | fixture mode, written by a simulated `--toggle` | same, so a Mac demo can flip and read back |
 | `$HOME/.cache/mouse-profile` (one line), `--mouse-profile`, or `mouse_profile` in the fixture | optional, none on this Mac | `mouse_profile` |
+
+The simulated state is read only in fixture mode, after any path the caller named
+with `--ptt-state`; the live path never reads or writes it.
 
 `mode` is the dictation/game toggle, not the process: a `ptt-toggle` state of
 `on`/`dictation`/`enabled`/`1` reports `dictation`; `off`/`game`/`gaming`/`0`
