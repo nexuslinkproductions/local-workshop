@@ -1,0 +1,47 @@
+[
+  {
+    "id": "a01748",
+    "full": "local-41f61b378208419ae9188e2a91370ad7b5081453d0096ce0d66a72192da01748",
+    "parent": null,
+    "model": "sonnet-5-5",
+    "tools": 33,
+    "tokens": 125381,
+    "started_at": 1792669476,
+    "started_iso": "2026-10-22T11:44:36Z",
+    "last_activity_at": 1792703190,
+    "last_activity_iso": "2026-10-22T21:06:30Z",
+    "idle_s": 32,
+    "title": "Draft vari8-beta issues for Marcel and Hanzlah",
+    "activity": "starting new turn"
+  },
+  {
+    "id": "a1d052",
+    "full": "local-44a2e51264918fc1103c0a35091389ee78b0c53bb8028f6f2364c61866a1d052",
+    "parent": null,
+    "model": "sonnet-5-5",
+    "tools": 158,
+    "tokens": 139559,
+    "started_at": 1792692023,
+    "started_iso": "2026-10-22T18:00:23Z",
+    "last_activity_at": 1792703202,
+    "last_activity_iso": "2026-10-22T21:06:42Z",
+    "idle_s": 20,
+    "title": "Enable marcel-mode",
+    "activity": "delegate_task: subagent receiving stream response (iteration 6/100000)"
+  },
+  {
+    "id": "683c2c",
+    "full": "20261022_230541_683c2c",
+    "parent": "a1d052",
+    "model": "sonnet-5-5",
+    "tools": 9,
+    "tokens": 3645,
+    "started_at": 1792703143,
+    "started_iso": "2026-10-22T21:05:43Z",
+    "last_activity_at": 1792703205,
+    "last_activity_iso": "2026-10-22T21:06:45Z",
+    "idle_s": 17,
+    "title": "Composition study s1: widget-and-icon-first HUD",
+    "activity": "receiving stream response"
+  }
+]
