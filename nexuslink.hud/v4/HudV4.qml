@@ -74,6 +74,7 @@ Item {
     property int batchSeq: 0
     property double lastBatchMs: 0
     property string lastFrameRaw: ""
+    property bool selftestArmed: false // knotProbe samples only after the first selftest call
 
     property real cpuPct: -1
     property real rxRate: 0
@@ -946,7 +947,7 @@ Item {
 
             Timer {
                 id: knotProbe
-                running: win.isCommand && !win.isHidden(win.deckId)
+                running: hud.selftestArmed && win.isCommand && !win.isHidden(win.deckId)
                 // dense only while a transition cycle is actually in flight
                 interval: (win.knotNode !== null && win.knotNode !== undefined
                            && win.knotNode.effect >= 0) ? 250 : 1500
@@ -1236,7 +1237,7 @@ Item {
         function show(id: string): string { return hud.ipcShowHide(id, false) }
         function hide(id: string): string { return hud.ipcShowHide(id, true) }
         function layout(name: string): string { return hud.ipcLayout(name) }
-        function selftest(): string { return JSON.stringify(hud.selftestData()) }
+        function selftest(): string { hud.selftestArmed = true; return JSON.stringify(hud.selftestData()) }
         function roleprobe(): string {
             var out = []
             var ins = winVariants.instances
