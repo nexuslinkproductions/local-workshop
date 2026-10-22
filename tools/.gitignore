@@ -1,0 +1,5 @@
+# harness build cache (per Qt version), never committed
+.build/
+
+# compiled shader packs from the toolchain self-check (qsb.sh output)
+tests/*.qsb
