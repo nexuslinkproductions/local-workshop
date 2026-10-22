@@ -54,6 +54,7 @@ Item {
     readonly property int litDots: Math.round(pitchCount * shownLevel)
 
     readonly property string valueText: Math.round(shownLevel * 100) + " %"
+    readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
 
     Item {
         id: bar
@@ -61,7 +62,7 @@ Item {
         height: root.barHeight
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: 1 + 0.04 * root.focusLevel
+        scale: 1 + 0.04 * root.focusAmount
         transformOrigin: Item.Center
 
         Behavior on scale {
@@ -86,7 +87,7 @@ Item {
                 x: (index + 0.5) * root.pitch - dotDiameter / 2
                 y: (root.barHeight - dotDiameter) / 2
                 color: root.accent
-                opacity: lit ? 1.0 : 0.16 + 0.14 * root.focusLevel
+                opacity: lit ? 1.0 : 0.16 + 0.14 * root.focusAmount
                 antialiasing: true
             }
         }

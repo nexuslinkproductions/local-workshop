@@ -70,6 +70,7 @@ Item {
     // damping = 2 * zeta * omega. Same conversion in all four gauges.
     readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
     readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
+    readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
 
     Item {
         id: art
@@ -77,7 +78,7 @@ Item {
         height: root.referenceSize
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: root.artDiameter / root.referenceSize
+        scale: (root.artDiameter / root.referenceSize) * (1 + 0.04 * root.focusAmount)
 
         Behavior on scale {
             SpringAnimation {
@@ -99,7 +100,7 @@ Item {
                 required property int index
                 required property var modelData
                 property var ring: modelData
-                opacity: root.hasReading ? 0.9 + 0.1 * root.focusLevel : 0.45
+                opacity: root.hasReading ? 0.9 + 0.1 * root.focusAmount : 0.45
 
                 Item {
                     id: ringField

@@ -57,6 +57,7 @@ Item {
 
     readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
     readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
+    readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
 
     Item {
         id: art
@@ -64,7 +65,7 @@ Item {
         height: root.referenceSize
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: root.artDiameter / root.referenceSize
+        scale: (root.artDiameter / root.referenceSize) * (1 + 0.04 * root.focusAmount)
 
         Behavior on scale {
             SpringAnimation {
@@ -91,7 +92,7 @@ Item {
                 x: root.referenceSize / 2 + Math.cos(angle) * root.arcRadius - dotDiameter / 2
                 y: root.referenceSize / 2 + Math.sin(angle) * root.arcRadius - dotDiameter / 2
                 color: root.accent
-                opacity: lit ? 0.95 : 0.18 + 0.14 * root.focusLevel
+                opacity: lit ? 0.95 : 0.18 + 0.14 * root.focusAmount
                 antialiasing: true
             }
         }

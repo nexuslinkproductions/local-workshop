@@ -5,7 +5,7 @@ import NexusHud.V5 1.0
 
 // LocalOrb.qml - the local model as a dot sphere. The sphere radius carries
 // the model size, the field breathes slowly all the time and activity lifts
-// brightness, a centre core and 6 percent of radius. No text unless showValue.
+// brightness, a centre core and 8 percent of radius. No text unless showValue.
 //
 // Card API (W3): sizeGb, activity 0..1, accent, size, showValue, label, and the
 // 0..1 focus amount (spelled focusLevel, because QQuickItem::focus is FINAL in
@@ -63,6 +63,7 @@ Item {
 
     readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
     readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
+    readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
 
     // Unit sphere points with the s2 depth cues folded in. Positions are on the
     // unit sphere; the delegate multiplies by orbRadius.
@@ -131,7 +132,7 @@ Item {
                 anchors.centerIn: parent
                 width: 0
                 height: 0
-                scale: (0.9 + 0.1 * root.focusLevel) * (1 + 0.08 * Math.max(0, Math.min(1, root.activity)))
+                scale: (1 + 0.08 * Math.max(0, Math.min(1, root.activity))) * (1 + 0.04 * root.focusAmount)
                 opacity: 0.62 + 0.38 * Math.max(0, Math.min(1, root.activity))
 
                 Behavior on scale {
