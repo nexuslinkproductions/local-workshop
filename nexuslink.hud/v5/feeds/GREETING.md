@@ -6,31 +6,35 @@ Read by chief after the boot brief card appears, and only then. Facts come from
 ## The line
 
 ```
-{fleet.finished} finished, {fleet.blocked} blocked, {needs_me} needs you.
+{fleet.finished} finished, {fleet.blocked} blocked, {needs_me.#} waiting on you.
 ```
 
 Eight words, one line, no greeting filler.
 
-## Placeholders (must match F4's `brief.json` keys)
+## Placeholders (resolve with F4's own resolver)
+
+F4 resolves placeholders with `lookup()` in `feeds/boot_brief.py:236-265`: dotted
+paths into `brief.json`, `[n]` for list indices, and a `#` segment for a list's
+length. Every placeholder below resolves through that function unchanged.
 
 | placeholder | `brief.json` key path | renders as |
 |---|---|---|
 | `{fleet.finished}` | `fleet.finished` | integer count of cards finished since last shutdown |
 | `{fleet.blocked}` | `fleet.blocked` | integer count of cards blocked |
-| `{needs_me}` | `needs_me` | `len(brief["needs_me"])` — cards blocked or failed, one per entry |
+| `{needs_me.#}` | `needs_me.#` | length of the `needs_me` array — cards blocked or failed |
 
-The build card names these shorthand as finished, blocked and needs_me; the
-dotted forms above are the exact key paths in F4's JSON, so F4's phrasing rule
-(every placeholder resolves to a key path in the same object) holds without a
-translation table. `{needs_me}` resolves to the array itself; the count is the
-array length, never a separate number.
+Note the `.#` on the last one: `needs_me` is an array, so naming it without the
+length operator would render the whole list, not a count. `{needs_me.#}` is F4's
+own length operator and is the form that must be used. The build card names these
+shorthand as finished, blocked and needs_me; the dotted and `#` forms are the
+paths that actually resolve.
 
 ## Variants (still one line, still under 20 words)
 
 | when | line |
 |---|---|
-| default, something needs him | `{fleet.finished} finished, {fleet.blocked} blocked, {needs_me} needs you.` |
-| `needs_me` is empty | `{fleet.finished} finished, {fleet.blocked} blocked. Nothing needs you.` |
+| default, something needs him | `{fleet.finished} finished, {fleet.blocked} blocked, {needs_me.#} waiting on you.` |
+| `needs_me.#` is 0 | `{fleet.finished} finished, {fleet.blocked} blocked. Nothing needs you.` |
 | all three counts are zero | `Quiet night. Nothing finished, nothing blocked.` |
 
 ## Rules for chief
