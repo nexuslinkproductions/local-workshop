@@ -56,10 +56,6 @@ Item {
     // ------------------------------------------------------------------ paths
     readonly property string collectScript:
         decodeURIComponent(String(Qt.resolvedUrl("../collect.sh")).replace(/^file:\/\//, ""))
-    readonly property string ledgerScript:
-        decodeURIComponent(String(Qt.resolvedUrl("../tokens/ledger.py")).replace(/^file:\/\//, ""))
-    readonly property string crewScript:
-        decodeURIComponent(String(Qt.resolvedUrl("../tokens/crew.py")).replace(/^file:\/\//, ""))
     readonly property string tokStatePath:
         Quickshell.env("HOME") + "/.local/state/nexuslink/tokens.json"
     readonly property string crewStatePath:
@@ -339,56 +335,27 @@ Item {
     }
 
     // ------------------------------------------------------- token ledger
+    // ledger.py and crew.py run from systemd user timers (tokens/systemd),
+    // not from this process; both files are re-read when they change.
     FileView {
         id: tokFile
         path: hud.tokStatePath
-        watchChanges: false
+        watchChanges: true
         atomicWrites: true
         printErrors: false
+        onFileChanged: tokFile.reload()
         onLoaded: hud.loadTokens(text())
         onLoadFailed: hud.loadTokens("")
     }
-    Process {
-        id: ledgerProc
-        command: ["python3", hud.ledgerScript]
-        running: false
-        onExited: tokFile.reload()
-    }
-    // crew feed — same 60 s ledger cadence; crew.py writes crew.json
     FileView {
         id: crewFile
         path: hud.crewStatePath
-        watchChanges: false
+        watchChanges: true
         atomicWrites: true
         printErrors: false
+        onFileChanged: crewFile.reload()
         onLoaded: hud.loadCrew(text())
         onLoadFailed: hud.loadCrew("")
-    }
-    Process {
-        id: crewProc
-        command: ["python3", hud.crewScript]
-        running: false
-        onRunningChanged: if (!running) crewFile.reload()
-    }
-    Timer {
-        id: ledgerTimer
-        interval: 60000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (!ledgerProc.running) ledgerProc.running = true
-        }
-    }
-    Timer {
-        id: crewTimer
-        interval: 10000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (!crewProc.running) crewProc.running = true
-        }
     }
     function loadTokens(raw) {
         var data = null

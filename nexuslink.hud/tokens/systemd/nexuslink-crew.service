@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the HUD crew feed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nexuslink.hud/tokens/crew.py
+Nice=19
+IOSchedulingClass=idle

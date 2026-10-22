@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the HUD token ledger
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/nexuslink.hud/tokens/ledger.py
+Nice=19
+IOSchedulingClass=idle
