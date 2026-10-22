@@ -1,0 +1,7 @@
+module NexusHud.V5
+# v5 deck kit. Singletons only in Wave 0 (C1 SCAFFOLD).
+# The integrator owns this file. Component cards never edit it: they add their
+# own .qml file and ask for the one registration line in their PR body.
+singleton Tokens 1.0 Tokens.qml
+singleton Motion 1.0 Motion.qml
+# Wave 1 registrations land below this line, one per component card.

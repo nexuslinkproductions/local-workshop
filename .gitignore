@@ -9,4 +9,5 @@
 *.v1bak
 __pycache__/
 !/collector/
+!/tools/
 target/
