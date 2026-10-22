@@ -982,6 +982,7 @@ Item {
                     }
                     entry.reactorCenter = [cx, cy]  // reactor is centreIn deck
                     entry.knotCenter = kc
+                    if (hud.selftestArmed && knotCur < 0) knotSample()  // first call measures, not seeds
                     entry.knotLit = {
                         // seeded at the contracted resting level (0.56 x 0.9
                         // host = 0.504 of accent) until the first real sample
