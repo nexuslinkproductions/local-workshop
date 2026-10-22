@@ -30,7 +30,7 @@ own length operator and is the form that must be used. The build card names thes
 shorthand as finished, blocked and needs_me; the dotted and `#` forms are the
 paths that actually resolve.
 
-## Variants (one line each; the budget rule below decides which one fits)
+## Variants (one line each; the budget rule below decides which is spoken and shortens it when none fits)
 
 | when | line |
 |---|---|
@@ -49,13 +49,15 @@ paths that actually resolve.
 - Budget: the whole startup sequence is capped at 5 s (MAIN-SCREEN-BUILD.md
   Phase 2 item 10). The wake animation and `startup.wav` (1.75 s) come out of
   that first, so the spoken line has roughly 2 s, not 5. That is about 5 words
-  at 150 words per minute, and the 8-word default line measures about 3.2 s at
+  at 150 words per minute, and the 8-word default line comes to about 3.2 s at
   that rate, so it does not fit: measure the rendered file (`ffprobe
-  -show_entries format=duration`) and use the shortest variant that does, giving
-  up the needs-me clause first and the blocked clause second. Never raise the
+  -show_entries format=duration`) and shorten until it does, dropping the
+  finished clause first and the blocked clause second. The needs-me count goes
+  last because it is the only clause Marcel has to act on. Never raise the
   speaking rate to make a longer line fit.
-- If no variant fits, speak only `{needs_me.#} waiting on you.`, or skip speech
-  for that boot. The brief is on screen either way.
+- Shortened all the way the line is `{needs_me.#} waiting on you.`: 4 words,
+  about 1.6 s at that rate, which fits the 2 s. If the voice cannot render even
+  that, skip speech for that boot. The brief is on screen either way.
 
 ## Speech options on Linux (what each needs)
 
