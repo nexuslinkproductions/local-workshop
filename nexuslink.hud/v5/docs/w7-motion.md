@@ -173,6 +173,9 @@ short run; the deck defaults are 2 px / 13 s):
 6.12.0. The tests directory lints clean as well: `LINT files=17 warnings=0
 errors=0 exit=0`.
 
+Breath is not touched by this card: `Motion.breathPeriod` stays 5.8 s (the 5 to
+6 s band) exactly as Wave 0 shipped it.
+
 ## 5. Request for the integrator
 
 `kit/qmldir`, after the Wave 0 singletons:

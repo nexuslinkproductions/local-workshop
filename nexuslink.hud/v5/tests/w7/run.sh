@@ -19,7 +19,7 @@ set -o pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPO=$(cd -- "$HERE/../../../.." && pwd -P)
-OUT=${1:-"$HERE/out"}
+OUT=${1:-"${TMPDIR:-/tmp}/w7-evidence"}
 QT_BIN=${QT_BIN:-/opt/homebrew/opt/qt/bin}
 SHOT="$REPO/tools/qml-shot.sh"
 LINT="$REPO/tools/qml-lint.sh"
