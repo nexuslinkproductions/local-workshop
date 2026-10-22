@@ -1,0 +1,102 @@
+[
+  {
+    "id": "browser",
+    "name": "Browser",
+    "glyph": "browser",
+    "desktop": "chromium.desktop",
+    "launches": 0,
+    "running": false,
+    "slot": 0,
+    "size": "tile"
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "glyph": "spotify",
+    "desktop": "spotify.desktop",
+    "launches": 1,
+    "running": true,
+    "slot": 1,
+    "size": "tile"
+  },
+  {
+    "id": "discord",
+    "name": "Discord",
+    "glyph": "discord",
+    "desktop": "Discord.desktop",
+    "launches": 3,
+    "running": false,
+    "slot": 2,
+    "size": "tile"
+  },
+  {
+    "id": "hermes",
+    "name": "Hermes",
+    "glyph": "hermes",
+    "desktop": "hermes-desktop.desktop",
+    "launches": 3,
+    "running": true,
+    "slot": 3,
+    "size": "tile"
+  },
+  {
+    "id": "devin",
+    "name": "Devin",
+    "glyph": "devin",
+    "desktop": "devin-desktop.desktop",
+    "launches": 8,
+    "running": false,
+    "slot": 4,
+    "size": "tile"
+  },
+  {
+    "id": "october",
+    "name": "October",
+    "glyph": "october",
+    "desktop": "october.desktop",
+    "launches": 3,
+    "running": false,
+    "slot": 5,
+    "size": "tile"
+  },
+  {
+    "id": "files",
+    "name": "Files",
+    "glyph": "files",
+    "desktop": "org.gnome.Nautilus.desktop",
+    "launches": 2,
+    "running": false,
+    "slot": 6,
+    "size": "tile"
+  },
+  {
+    "id": "obs",
+    "name": "OBS",
+    "glyph": "obs",
+    "desktop": "com.obsproject.Studio.desktop",
+    "launches": 1,
+    "running": false,
+    "slot": 7,
+    "size": "tile"
+  },
+  {
+    "id": "terminal",
+    "name": "Terminal",
+    "glyph": "terminal",
+    "desktop": "foot.desktop",
+    "launches": 0,
+    "running": false,
+    "slot": 8,
+    "size": "tile"
+  },
+  {
+    "id": "arc-raiders",
+    "name": "Arc Raiders",
+    "glyph": "arc-raiders",
+    "desktop": "steam_app_1808500",
+    "launches": 0,
+    "running": true,
+    "slot": 9,
+    "size": "feature"
+  }
+]
