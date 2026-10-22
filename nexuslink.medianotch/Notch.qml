@@ -24,7 +24,7 @@ import qs.Commons
 //     (same pattern as nexuslink.hud).
 //   - INPUT: only the body rect is in `mask:` — everything outside passes
 //     clicks through; the region tracks the body while it is dragged.
-//   - CLOCK: ~30Hz while playing or dragging, slow heartbeat when idle.
+//   - CLOCK: ~30Hz while playing or dragging, runs only while something moves.
 Item {
   id: root
 
@@ -170,7 +170,7 @@ Item {
   // ------------------------------------------------------- animation clock
   // One clock for the whole plugin (Timer, not FrameAnimation — the root
   // Item lives outside any QQuickWindow). ~30Hz while media plays or a drag
-  // is active; a slow heartbeat keeps the halo breathing when idle.
+  // is active, or while a value is still easing; it stops when idle.
   property double animT: 0.0
   property double lastTickMs: 0
 
@@ -178,11 +178,14 @@ Item {
   readonly property real pulse: 0.5 + 0.5 * Math.sin(animT * 2.4)
   // 1->0 decay after a track change; adds a short flare to the halo.
   readonly property real flash: Math.max(0, 1 - (animT - flashT) / 1.4)
+  // Clock only runs while something moves; idle bindings rest on their last values.
+  readonly property real progTgt: lenSec > 0 ? Util.clamp(posSec / lenSec, 0, 1) : 0
+  readonly property bool animating: playing || dragActive || flash > 0 || eqEnv > 0.002 || progDisp !== progTgt
 
   Timer {
     id: animClock
     interval: (root.playing || root.dragActive || root.flash > 0) ? 33 : 420
-    running: true
+    running: root.animating
     repeat: true
     triggeredOnStart: true
     onTriggered: root.tick()

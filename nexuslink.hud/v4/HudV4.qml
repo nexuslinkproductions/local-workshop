@@ -56,10 +56,6 @@ Item {
     // ------------------------------------------------------------------ paths
     readonly property string collectScript:
         decodeURIComponent(String(Qt.resolvedUrl("../collect.sh")).replace(/^file:\/\//, ""))
-    readonly property string ledgerScript:
-        decodeURIComponent(String(Qt.resolvedUrl("../tokens/ledger.py")).replace(/^file:\/\//, ""))
-    readonly property string crewScript:
-        decodeURIComponent(String(Qt.resolvedUrl("../tokens/crew.py")).replace(/^file:\/\//, ""))
     readonly property string tokStatePath:
         Quickshell.env("HOME") + "/.local/state/nexuslink/tokens.json"
     readonly property string crewStatePath:
@@ -78,6 +74,7 @@ Item {
     property int batchSeq: 0
     property double lastBatchMs: 0
     property string lastFrameRaw: ""
+    property bool selftestArmed: false // knotProbe samples only after the first selftest call
 
     property real cpuPct: -1
     property real rxRate: 0
@@ -339,56 +336,35 @@ Item {
     }
 
     // ------------------------------------------------------- token ledger
+    // ledger.py and crew.py run from systemd user timers (tokens/systemd),
+    // not from this process; both files are re-read when they change.
     FileView {
         id: tokFile
         path: hud.tokStatePath
-        watchChanges: false
+        watchChanges: true
         atomicWrites: true
         printErrors: false
+        onFileChanged: tokFile.reload()
         onLoaded: hud.loadTokens(text())
         onLoadFailed: hud.loadTokens("")
     }
-    Process {
-        id: ledgerProc
-        command: ["python3", hud.ledgerScript]
-        running: false
-        onExited: tokFile.reload()
-    }
-    // crew feed — same 60 s ledger cadence; crew.py writes crew.json
     FileView {
         id: crewFile
         path: hud.crewStatePath
-        watchChanges: false
+        watchChanges: true
         atomicWrites: true
         printErrors: false
+        onFileChanged: crewFile.reload()
         onLoaded: hud.loadCrew(text())
         onLoadFailed: hud.loadCrew("")
     }
-    Process {
-        id: crewProc
-        command: ["python3", hud.crewScript]
-        running: false
-        onRunningChanged: if (!running) crewFile.reload()
-    }
+    // Self-heal: a missed inotify event must not leave the decks stale.
+    // Re-reads only, no Process, so the fork saving stays.
     Timer {
-        id: ledgerTimer
         interval: 60000
-        running: true
         repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (!ledgerProc.running) ledgerProc.running = true
-        }
-    }
-    Timer {
-        id: crewTimer
-        interval: 10000
         running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (!crewProc.running) crewProc.running = true
-        }
+        onTriggered: { tokFile.reload(); crewFile.reload() }
     }
     function loadTokens(raw) {
         var data = null
@@ -979,7 +955,7 @@ Item {
 
             Timer {
                 id: knotProbe
-                running: win.isCommand && !win.isHidden(win.deckId)
+                running: hud.selftestArmed && win.isCommand && !win.isHidden(win.deckId)
                 // dense only while a transition cycle is actually in flight
                 interval: (win.knotNode !== null && win.knotNode !== undefined
                            && win.knotNode.effect >= 0) ? 250 : 1500
@@ -1014,6 +990,7 @@ Item {
                     }
                     entry.reactorCenter = [cx, cy]  // reactor is centreIn deck
                     entry.knotCenter = kc
+                    if (hud.selftestArmed && knotCur < 0) knotSample()  // first call measures, not seeds
                     entry.knotLit = {
                         // seeded at the contracted resting level (0.56 x 0.9
                         // host = 0.504 of accent) until the first real sample
@@ -1269,7 +1246,7 @@ Item {
         function show(id: string): string { return hud.ipcShowHide(id, false) }
         function hide(id: string): string { return hud.ipcShowHide(id, true) }
         function layout(name: string): string { return hud.ipcLayout(name) }
-        function selftest(): string { return JSON.stringify(hud.selftestData()) }
+        function selftest(): string { hud.selftestArmed = true; return JSON.stringify(hud.selftestData()) }
         function roleprobe(): string {
             var out = []
             var ins = winVariants.instances
