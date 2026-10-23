@@ -55,7 +55,7 @@ nexuslink.hud/v5/tools/deck-layout.py nexuslink.hud/v5/stills/i1-deck-rest.png
    local        xcentre   measured (2133.5, 663)    expected (2133.5, 666.5)  delta  3.5 px  ok
    mac          origin    measured (314, 866)       expected (310, 865.7)     delta  4.0 px  ok
    storage      origin    measured (2021, 866)      expected (2017, 865.7)    delta  4.0 px  ok
-   find         centre    measured (2183.5, 213.5)  expected (2184.0, 214.0)  delta  0.5 px  ok
+   find         centre    measured (2133.0, 213.5)  expected (2133.5, 214.0)  delta  0.5 px  ok
    clock        centre    measured (1285.4, 146.9)  expected (1280.0, 144.0)  delta  5.4 px  ok
    launcherM    yonly     measured (1190.0,)        expected (1192.0,)        delta  2.0 px  ok
    arc extent   x 1139..2403 (planned 1135..2407)  ok
@@ -86,7 +86,7 @@ the deck measures 1190. Everything else is a deliberate, documented move:
 | knot | (1280, 550) 540 px | same | unchanged |
 | clock | 168 px numerals | 96 px | amendment "CLOCK TOO BIG … about 96 px" |
 | crew | thirds point (853, 480) | (426.5, 550) | amendment "move Crew and Find further out toward the margins (14 to 20 %)" — 16.7 % |
-| find | 150 px magnifier at (1707, 480) | slim pill, box 1904..2464 | amendment "no magnifying glass, no doc count, a slim pill" |
+| find | 150 px magnifier at (1707, 480) | slim pill, box centred on the margin column at 2133.5 | amendment "no magnifying glass, no doc count, a slim pill" |
 | mac | dot ring at (853, 960) | segmented dot field at (426.5, 883.5) | amendment "Mac as a dot-matrix or segmented bar field" |
 | storage | sphere at (1707, 960) | stacked dot bars at (2133.5, 883.5) | amendment "Storage as stacked dot-bars or a squared cell grid" |
 | local AI | sphere at (1707, 960) | vertical level stack at (2133.5, 550) | amendment "Local AI as a vertical level stack or waveform" |

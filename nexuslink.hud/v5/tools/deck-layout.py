@@ -134,7 +134,7 @@ def main(argv):
         ("local",    (2060, 400, 2210, 680), "xcentre", (2133.5, 666.5)),
         ("mac",      (250, 830, 620, 902),   "origin", (310.0, lowerBarX)),
         ("storage",  (1980, 830, 2300, 902), "origin", (2017.0, lowerBarX)),
-        ("find",     (1850, 150, 2500, 280), "centre", (2184.0, 214.0)),
+        ("find",     (1790, 150, 2500, 280), "centre", (2133.5, 214.0)),
         ("clock",    (1000, 60, 1560, 260),  "centre", (1280.0, 144.0)),
         # The launcher is measured by the ROW, not by x: the middle of the arc is
         # not exactly the box centre because the hero tile sits 40 px apart.

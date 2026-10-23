@@ -138,9 +138,12 @@ Item {
     readonly property real launcherY: 988
     readonly property real tileRowY: launcherY + launcherH - 108   // arcBottomInset
     // Find pill: FindField's implicit box is the active width (560); the capsule
-    // rests centred inside it at 380.
+    // rests centred inside it at 380. The box is centred on the right margin
+    // column (rightX 2133.5), so the pill, LOCAL and STORAGE share one vertical
+    // alignment instead of three different right edges. (Centring a 560 box on
+    // 2133.5 puts its edge at 2413.5, still inside the 96 px safe margin.)
     readonly property real findBoxW: Tokens.findFieldActiveWidth
-    readonly property real findX: targetW - Tokens.safeMargin - findBoxW
+    readonly property real findX: rightX - findBoxW / 2
     readonly property real findY: 180
     // Clock: 96 px numerals per the amendment, not Tokens.sizeClock (168).
     readonly property int clockSize: 96
