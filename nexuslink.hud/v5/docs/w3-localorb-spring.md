@@ -178,6 +178,7 @@ and flat, on the deck scene's ~100 ms grid.
 | `v5/tests/w3/LocalDeepAudit.qml` | the `local` deep view's structure (focus id, orb box, scale) |
 | `v5/tests/w3/LocalDeepTrace.qml` | the same lift through the composed deck |
 | `v5/tools/w3-localorb-trace.py` | runs the four runs, scores them, prints the 8 ms table |
+| `v5/tools/w3-deep-still-check.py` | diffs a focused still against the unfocused one (deep view only inside focusRect) |
 | `v5/stills/w3-local-deep.qml` | the still: the deck's `local` deep view at 2560x1440 |
 | `v5/docs/w3-localorb-traces/{before,after}/` | raw TRACE lines |
 
@@ -207,6 +208,14 @@ LocalOrb: visible, size 200 px, box [1804, 390, 200, 200], 171 dots,
 `modelActivity` is the fixtures' 0.0, so the orb is at rest in this still - which
 is the point: the rest layout and the rest silhouette do not move. The lift
 itself is the trace above.
+
+Pixel check (`tools/w3-deep-still-check.py`): the same still rendered twice, once
+as shipped and once with `focusRequest: ""` (a one-line copy of
+`stills/w3-local-deep.qml`), then diffed - **10,759 pixels changed, 100.0 percent
+of them inside focusRect [1804, 390, 660, 340]**, focus-box mean luminance 11.22
+and the deck's brightest pixel dropping from 146 to 41 when the focus is cleared
+(the acid orb dots are the bright content there). So the deep view is drawn, and
+it is drawn exactly where the audit says it is.
 
 ## Not in this card: the other three gauges carry the same spring
 
