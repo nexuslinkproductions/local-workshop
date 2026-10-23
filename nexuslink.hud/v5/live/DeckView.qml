@@ -188,7 +188,11 @@ Item {
         }
 
         LauncherArc {
-            x: 700
+            id: launcherArc
+            // Centred on the deck centre line: local centre (width/2) lands on
+            // deck x 1280, so the whole group is mirror symmetric about it.
+            x: 1280 - width / 2
+            width: 1380
             y: 1230
             tick: root.tick
             apps: root.apps
@@ -215,6 +219,7 @@ Item {
     readonly property Item macWidget: macW
     readonly property Item localWidget: localW
     readonly property Item storageWidget: storageW
+    readonly property Item launcherBand: launcherArc
 
     // ---- Find backdrop -----------------------------------------------------
     // The result tiles are soft fills, so while Find is open the deck behind

@@ -27,6 +27,7 @@ BRAND = {
     "discord":    ("discord",      0.96, 0.0),
     "youtube":    ("youtube",      0.98, 0.0),
     "whatsapp":   ("whatsapp",     0.97, 0.8),
+    "obs":        ("obsstudio",    0.95, 1.0),
 }
 
 # id: markup on the 24 grid. Every hole is a closed subpath of the same path

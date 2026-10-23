@@ -1,6 +1,6 @@
 {
   "generated": "2026-10-23",
-  "note": "v5 launcher order, 10 tiles. Source of names and commands: hud-candidates/comp-r1/s3/src/apps.json. Launches are real counts only (appuse). Chrome is the installed Chromium (chromium.desktop) with the Chrome mark. No October. Arc Raiders URL is verbatim from s3.",
+  "note": "v5 launcher order, 11 tiles (5 + hero + 5). Source of names and commands: hud-candidates/comp-r1/s3/src/apps.json. Launches are real counts only (appuse). Chrome is the installed Chromium (chromium.desktop) with the Chrome mark. No October. Arc Raiders URL is verbatim from s3. Round 3: ARC Raiders (size feature) is the centre slot, the other ten split five left and five right in this order. OBS Studio (com.obsproject.Studio.desktop, 1 launch) added from the real appuse history; it is the pick of the old launcher MOST USED rule (AppGrid.qml: count desc, then name asc) between the two apps tied at one launch, OBS Studio before Spotify; Spotify was not added. Round 3: the OBS mark comes from simple-icons (CC0), same as the other brand marks; s5 may replace it.",
   "apps": [
     {
       "id": "hermes",
@@ -80,6 +80,15 @@
       "glyph": "whatsapp",
       "launch": { "mode": "command", "argv": ["omarchy-launch-webapp", "https://web.whatsapp.com"] },
       "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "obs",
+      "name": "OBS Studio",
+      "glyph": "obs",
+      "launch": { "mode": "desktop", "id": "com.obsproject.Studio.desktop" },
+      "launches": 1,
       "running": false,
       "size": "tile"
     },

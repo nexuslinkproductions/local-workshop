@@ -39,6 +39,7 @@ Item {
     }
 
     Image {
+        id: glyphImage
         anchors.fill: parent
         source: tile.glyph.length > 0 ? Qt.resolvedUrl("assets/icons/" + tile.glyph + ".svg") : ""
         sourceSize.width: 128
@@ -47,6 +48,18 @@ Item {
         smooth: true
         asynchronous: false
         visible: status === Image.Ready
+    }
+
+    // Neutral fallback: a missing glyph (empty name, or an asset that does not
+    // load) draws one soft ink dot, never a box and never a binding error.
+    Rectangle {
+        visible: !glyphImage.visible
+        width: 18
+        height: 18
+        radius: 9
+        color: Tokens.ink
+        opacity: 0.3
+        anchors.centerIn: parent
     }
 
     // Live marker: lit acid dot, only where the app is running.
