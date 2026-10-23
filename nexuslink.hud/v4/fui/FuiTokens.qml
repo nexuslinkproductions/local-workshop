@@ -53,6 +53,10 @@ QtObject {
         id: monoLoader
         source: "file:///home/nexuslink/.local/share/fonts/nexushud/KodeMono-VF.ttf"
     }
+    property FontLoader _sans: FontLoader {
+        id: sansLoader
+        source: "file:///home/nexuslink/.local/share/fonts/nexushud/Satoshi-Medium.ttf"
+    }
     // FA glyphs for engraved controls (same file the HTML sheets used).
     property FontLoader _icons: FontLoader {
         id: iconLoader
@@ -62,6 +66,9 @@ QtObject {
                                       && displayLoader.name !== "" ? displayLoader.name : "sans-serif"
     readonly property string mono: monoLoader.status === FontLoader.Ready
                                    && monoLoader.name !== "" ? monoLoader.name : "monospace"
+    // Satoshi: gauge freshness text (stale, age, error) only.
+    readonly property string sans: sansLoader.status === FontLoader.Ready
+                                   && sansLoader.name !== "" ? sansLoader.name : "sans-serif"
     readonly property string icons: iconLoader.status === FontLoader.Ready
                                     && iconLoader.name !== "" ? iconLoader.name : "sans-serif"
 

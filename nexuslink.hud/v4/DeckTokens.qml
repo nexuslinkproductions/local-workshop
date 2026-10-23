@@ -172,6 +172,24 @@ Item {
         return /auth|waiting/i.test(String(metaObj.status || ""));
     }
 
+    // gauge contract (tokens.json meta.gauge, from the ledger). Age is measured on our
+    // own clock: a dead collector must not keep its last state "fresh" forever.
+    function gaugeOf(pid) {
+        var g = meta(pid).gauge;
+        if (!g) return null;
+        var t = Date.parse(String(g.fetchedAt || "")), ttl = Number(g.ttl) || 0;
+        var ageMs = isFinite(t) ? root.nowMs - t : NaN;
+        var st = g.state === "error" ? "error"
+               : (g.state === "stale" || (ttl > 0 && ageMs > 2 * ttl * 1000)) ? "stale" : "fresh";
+        var age = ttl > 0 && isFinite(ageMs) && ageMs > ttl * 1000 ? root.fmtAge(ageMs) : "";
+        return { "state": st, "error": g.error, "ageText": st === "stale" ? "stale " + root.fmtAge(ageMs)
+                                                              : (age !== "" ? age + " old" : "") };
+    }
+    function fmtAge(ms) {
+        var s = Math.max(0, Math.round(ms / 1000));
+        return s < 90 ? s + "s" : (s < 5400 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h");
+    }
+
     // per-provider limit summary for ring + timeline
     function limitInfo(pid) {
         var mt = meta(pid), lims = mt.limits;
@@ -255,8 +273,8 @@ Item {
     readonly property var noFeedProviders: {
         var out = [];
         for (var i = 0; i < pdesc.length; i++) {
-            var lims = meta(pdesc[i].id).limits;
-            if (!(lims && lims.length))
+            var lims = meta(pdesc[i].id).limits, gz = gaugeOf(pdesc[i].id);
+            if (!(lims && lims.length) && !(gz && gz.state === "error"))
                 out.push(pdesc[i].name);
         }
         return out;
@@ -267,7 +285,17 @@ Item {
             return cap > 0 ? m.limCells.slice(0, cap) : m.limCells;
         var cells = [], i, j, lim, ms, wms;
         for (i = 0; i < pdesc.length; i++) {
-            var d = pdesc[i], mt = meta(d.id), lims = mt.limits;
+            var d = pdesc[i], mt = meta(d.id), lims = mt.limits, gz = gaugeOf(d.id);
+            if (gz && gz.state === "error" && !(lims && lims.length)) {
+                // no number, the reason in amber/red; never the last good value
+                cells.push({
+                    "code": "LIM-" + d.key.toUpperCase(), "sub": "LIMIT FEED", "name": d.name,
+                    "stag": "ERR", "sev": "alert", "frac": null, "win": null,
+                    "statusLine": "NO NUMBER", "lines": [], "winlab": "", "action": null,
+                    "gstate": "error", "ageText": "", "errText": "error: " + String(gz.error || "unknown").slice(0, 80),
+                    "ord": 0 });
+                continue;
+            }
             if (!lims || !lims.length) continue;
             for (j = 0; j < lims.length; j++) {
                 lim = lims[j];
@@ -279,6 +307,7 @@ Item {
                 else if (pct >= 1) { sev = "alert"; sline = "EXHAUSTED"; tag = "E429"; }
                 else if (pct >= 0.85) { sev = "warn"; sline = "NEAR LIMIT"; tag = "OK"; }
                 else { sev = "ok"; sline = "NOMINAL"; tag = "OK"; }
+                if (gz && gz.state === "stale") { sline = "LAST VALUE"; tag = "STALE"; }
                 var nm = lim.title ? String(lim.title).toUpperCase().replace(/\s*WEEKLY\s*/i, "").trim()
                                    : d.name;
                 if (nm === "") nm = d.name;
@@ -321,6 +350,7 @@ Item {
                                 + "%"
                               : "window n/a",
                     "action": act,
+                    "gstate": gz ? gz.state : "", "ageText": gz ? gz.ageText : "", "errText": "",
                     "ord": sev === "alert" ? 0 : sev === "warn" ? 1 : sev === "ok" ? 2 : 3
                 });
             }
@@ -1060,6 +1090,9 @@ Item {
                     statusLine: modelData.statusLine
                     lines: modelData.lines
                     winlab: modelData.winlab
+                    gstate: modelData.gstate
+                    ageText: modelData.ageText
+                    errText: modelData.errText
                     action: modelData.action
                     onRunAction: (argv) => root.execArgv(argv)
                 }
