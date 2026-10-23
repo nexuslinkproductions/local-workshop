@@ -267,6 +267,86 @@ def within(path, roots):
     return False
 
 
+MAX_LINK_HOPS = 64
+
+
+def _parts(path):
+    """A relative path -> its components, without empty or dot parts."""
+    return [part for part in path.split(os.sep) if part not in ("", ".")]
+
+
+def _respelled(path, root, root_real):
+    """Express a path under the resolved `root` in `root`'s own spelling.
+
+    A macos temp directory is `/var/...` while its real path is
+    `/private/var/...`; a link target can carry either. Rewriting one prefix to
+    the other is a string comparison, so it costs no stat on the target.
+    """
+    if root_real and root_real != root and within(path, [root_real]):
+        return root + path[len(root_real):]
+    return path
+
+
+def resolved_inside(path, root, root_real=None):
+    """Resolve `path` inside fixture directory `root`, reading links only there.
+
+    Returns ``(resolved, inside)``. The walk is lexical: one component at a
+    time, and a component that lies inside `root` and is a symlink has its own
+    target read (``os.readlink`` on the link, which sits inside `root`) and
+    spliced in. The moment a component or a link target leaves `root` the walk
+    stops with ``inside`` false, before ``os.stat``, ``os.lstat``,
+    ``os.path.exists`` or ``open`` is ever called on the outside target. That
+    matters because ``os.path.realpath`` is not lexical on Python 3.9: it
+    ``lstat``s every component it resolves, including the components of a
+    target outside `root`.
+
+    `root_real` is `root`'s resolved form, used only to accept a target that
+    spells the directory through its resolved prefix. A link chain longer than
+    MAX_LINK_HOPS stops as if it pointed inside: the caller's stat then reports
+    it broken instead of the walk looping.
+    """
+    root = os.path.abspath(root)
+    if root_real is None:
+        root_real = os.path.realpath(root)
+    path = _respelled(os.path.abspath(path), root, root_real)
+    if not within(path, [root]):
+        return os.path.normpath(path), False
+    current = root
+    pending = _parts(os.path.relpath(path, root))
+    hops = 0
+    while pending:
+        name = pending.pop(0)
+        if name == "..":
+            current = os.path.dirname(current)
+            if not within(current, [root]):
+                return os.path.normpath(current), False
+            continue
+        candidate = os.path.join(current, name)
+        if not within(candidate, [root]):
+            return os.path.normpath(candidate), False
+        hops += 1
+        if hops > MAX_LINK_HOPS:
+            return os.path.normpath(candidate), True
+        try:
+            target = os.readlink(candidate) if os.path.islink(candidate) else None
+        except OSError:
+            target = None
+        if target is None:
+            current = candidate
+            continue
+        if os.path.isabs(target):
+            joined = os.path.normpath(target)
+        else:
+            joined = os.path.normpath(os.path.join(os.path.dirname(candidate), target))
+        joined = _respelled(joined, root, root_real)
+        if not within(joined, [root]):
+            return joined, False
+        current = root
+        pending = _parts(os.path.relpath(joined, root)) + pending
+    return current, True
+
+
+
 def classify(name):
     """Extension -> one of BUCKETS, case-insensitive. Unknown -> 'other'."""
     base = os.path.basename(str(name)).lower()
@@ -477,8 +557,9 @@ def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
     plus a private identity key. Symlinks are resolved before stat, broken
     ones are counted and skipped, and a link whose target leaves every
     configured root is counted and skipped, never followed out. `confined` is
-    the fixture directory in DIR mode: a link that leaves it is judged on its
-    target string alone, so no host path is ever stat'ed from there.
+    the fixture directory in DIR mode: a link that leaves it is judged by
+    reading the link itself and comparing its target lexically, so no path
+    outside that directory is stat'ed or opened from here.
     """
     entries = []
     stats = {"broken": 0, "outside": 0}
@@ -488,21 +569,30 @@ def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
     if not os.path.isdir(root):
         raise Missing("not a directory: %s" % tilde(root, home_dir))
     single_level = depth == 1
+    # The fixture directory itself is the boundary; resolving it reads its own
+    # prefixes, never a target that an entry points at.
+    confined_root = os.path.realpath(confined) if confined is not None else None
 
     def consider(path):
         name = os.path.basename(path)
         is_link = os.path.islink(path)
         if is_link:
-            outside = not within(os.path.realpath(path), allowed_roots)
-            if outside and confined is not None:
-                stats["outside"] += 1
-                return
-            if not os.path.exists(path):
-                stats["broken"] += 1
-                return
-            if outside:
-                stats["outside"] += 1
-                return
+            if confined_root is not None:
+                # Lexical containment: a link that leaves DIR is refused before
+                # its target is stat'ed or opened (os.path.realpath would lstat
+                # every component of that target).
+                target, inside_dir = resolved_inside(path, confined, confined_root)
+                if not inside_dir or not within(target, allowed_roots):
+                    stats["outside"] += 1
+                    return
+            else:
+                outside = not within(os.path.realpath(path), allowed_roots)
+                if not os.path.exists(path):
+                    stats["broken"] += 1
+                    return
+                if outside:
+                    stats["outside"] += 1
+                    return
         try:
             info = os.stat(path)
         except OSError:
@@ -538,13 +628,18 @@ def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
                     if os.path.islink(child):
                         # A linked directory is never followed; count it the
                         # same way a linked file is counted.
-                        outside = not within(os.path.realpath(child), allowed_roots)
-                        if outside and confined is not None:
-                            stats["outside"] += 1
-                        elif not os.path.exists(child):
-                            stats["broken"] += 1
-                        elif outside:
-                            stats["outside"] += 1
+                        if confined_root is not None:
+                            child_target, inside_dir = resolved_inside(child, confined, confined_root)
+                            if not inside_dir or not within(child_target, allowed_roots):
+                                stats["outside"] += 1
+                            elif not os.path.exists(child):
+                                stats["broken"] += 1
+                        else:
+                            outside = not within(os.path.realpath(child), allowed_roots)
+                            if not os.path.exists(child):
+                                stats["broken"] += 1
+                            elif outside:
+                                stats["outside"] += 1
                         continue
                     kept.append(name)
                 dirnames[:] = kept
@@ -562,26 +657,30 @@ def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
 
 
 def pin_rows(pins, home_dir=HOST_HOME, confined=None, stats=None):
-    """Pinned rows. In a fixture directory every pin is judged on its target.
+    """Pinned rows. In a fixture directory every pin is kept only inside it.
 
-    `confined` is the fixture directory standing in for the machine. Both sides
-    are resolved with ``os.path.realpath``: a pin that is a symlink inside the
-    directory but points at the host has left it, so it is refused and counted
-    instead of stat'ed. `stats["outside"]` accumulates those refusals.
+    `confined` is the fixture directory standing in for the machine. A pin that
+    is a symlink inside the directory but points at the host has left it, so it
+    is refused and counted instead of stat'ed. The check is ``resolved_inside``:
+    it reads the link itself (inside the directory) and judges its target
+    lexically, so no path outside the directory is stat'ed, opened or resolved.
+    `stats["outside"]` accumulates those refusals.
     """
     confined_root = os.path.realpath(confined) if confined is not None else None
     rows = []
     for pin in pins:
         path = pin["path"]
         name = pin["name"] or os.path.basename(path.rstrip(os.sep)) or tilde(path, home_dir)
-        if confined_root is not None and not within(os.path.realpath(path), [confined_root]):
-            # Same rule as a root: a pin outside the fixture directory is
-            # reported missing, never stat'ed on the host.
-            if stats is not None:
-                stats["outside"] = stats.get("outside", 0) + 1
-            rows.append({"name": name, "path": path, "exists": False, "kind": None,
-                         "reason": "pin is outside the fixture directory"})
-            continue
+        if confined_root is not None:
+            _, inside_dir = resolved_inside(path, confined, confined_root)
+            if not inside_dir:
+                # Same rule as a root: a pin outside the fixture directory is
+                # reported missing, never stat'ed on the host.
+                if stats is not None:
+                    stats["outside"] = stats.get("outside", 0) + 1
+                rows.append({"name": name, "path": path, "exists": False, "kind": None,
+                             "reason": "pin is outside the fixture directory"})
+                continue
         exists = os.path.isdir(path)
         kind = "dir" if exists else None
         if not exists:
@@ -761,26 +860,31 @@ def build_live(config, limit, mode="live", home_dir=HOST_HOME, confined=None):
     # A fixture directory stands in for the whole machine. Every root and every
     # pin is judged on its resolved target, so a symlink that lives inside DIR
     # but points at the host has left DIR: it is refused (and counted) before
-    # any stat, instead of being read through the link.
+    # any stat, instead of being read through the link. The resolution is
+    # lexical (``resolved_inside``) so that no component of an outside target is
+    # ever stat'ed or opened.
     confined_root = os.path.realpath(confined) if confined is not None else None
 
-    def inside(path):
+    def contain(path):
+        """(resolved, admitted). DIR mode never touches the host."""
         if confined_root is None:
-            return True
-        return within(os.path.realpath(path), [confined_root])
+            return os.path.realpath(path), True
+        return resolved_inside(path, confined, confined_root)
 
     allowed = []
     for key in LISTS:
         for root in config["roots"][key]:
-            if inside(root["path"]):
-                allowed.append(os.path.realpath(root["path"]))
+            resolved, admitted = contain(root["path"])
+            if admitted:
+                allowed.append(resolved)
     for pin in config["pinned"]:
-        if inside(pin["path"]):
-            allowed.append(os.path.realpath(pin["path"]))
+        resolved, admitted = contain(pin["path"])
+        if admitted:
+            allowed.append(resolved)
 
     for key in LISTS:
         for root in config["roots"][key]:
-            admitted = inside(root["path"])
+            admitted = contain(root["path"])[1]
             row = {
                 "list": key,
                 "path": tilde(root["path"], home_dir),
@@ -1156,6 +1260,64 @@ def main(argv=None):
 
 SELF_CHECK_MT0 = 1792700000
 
+HOST_GUARD_RUNNER = '''\
+"""Run recent.py with one outside path unwatchable (recent.py self-check help).
+
+usage: host-guard.py SCRIPT TARGET [--probe | ARGS...]
+
+os.stat, os.lstat and open are replaced so that any call on TARGET (or below
+it) raises before the call happens. --probe proves the guard fires; otherwise
+SCRIPT runs with the remaining arguments, stdout and exit code passing through.
+"""
+import builtins
+import os
+import runpy
+import sys
+
+script = os.path.abspath(sys.argv[1])
+target = os.path.abspath(sys.argv[2])
+rest = sys.argv[3:]
+
+
+def guarded(original, label):
+    def call(path, *args, **kwargs):
+        if isinstance(path, (str, bytes)):
+            text = os.fsdecode(path)
+            if text == target or text.startswith(target + os.sep):
+                raise AssertionError("%s touched the outside target: %s" % (label, text))
+        return original(path, *args, **kwargs)
+
+    return call
+
+
+os.stat = guarded(os.stat, "os.stat")
+os.lstat = guarded(os.lstat, "os.lstat")
+_real_open = builtins.open
+
+
+def guarded_open(file, *args, **kwargs):
+    if isinstance(file, (str, bytes)):
+        text = os.fsdecode(file)
+        if text == target or text.startswith(target + os.sep):
+            raise AssertionError("open touched the outside target: %s" % text)
+    return _real_open(file, *args, **kwargs)
+
+
+builtins.open = guarded_open
+
+if rest[:1] == ["--probe"]:
+    try:
+        os.lstat(target)
+    except AssertionError:
+        sys.stdout.write("guard-fired\\n")
+        sys.exit(0)
+    sys.stderr.write("guard did not fire\\n")
+    sys.exit(1)
+
+sys.argv = [script] + rest
+runpy.run_path(script, run_name="__main__")
+'''
+
 
 def _touch(path, offset, payload=b"x"):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1424,6 +1586,95 @@ def self_check():
             "refused root and pin are counted outside",
             (linked or {}).get("outside") == 2,
             (linked or {}).get("outside"),
+        )
+
+        # --- a pin that links outside DIR is refused before a metadata read --
+        # The guard turns os.stat/os.lstat/open on that outside target into a
+        # hard failure, so this proves the refusal is lexical and the target is
+        # never touched (os.path.realpath would lstat every one of its parts).
+        outside_pin = os.path.join(tmp, "outside-pin")
+        _touch(os.path.join(outside_pin, "host-only.png"), 910)
+        guard_fixture = os.path.join(tmp, "dir-guard-fixture")
+        _write(
+            os.path.join(guard_fixture, "hud_paths.json"),
+            '{"limit": 8, "downloads": [], "pinned": [{"name": "Outside", "path": "~/link-pin"}]}',
+        )
+        os.symlink(outside_pin, os.path.join(guard_fixture, "link-pin"))
+        guard = os.path.join(tmp, "host-guard.py")
+        _write(guard, HOST_GUARD_RUNNER)
+        probe = subprocess.run(
+            [sys.executable, guard, script, outside_pin, "--probe"],
+            capture_output=True, text=True, cwd=tmp,
+        )
+        check(
+            "host guard fires on the outside target",
+            probe.returncode == 0 and probe.stdout.strip() == "guard-fired",
+            [probe.returncode, probe.stdout[:120], probe.stderr[-200:]],
+        )
+        guarded = subprocess.run(
+            [sys.executable, guard, script, outside_pin, "--fixture", guard_fixture, "--json"],
+            capture_output=True, text=True, cwd=tmp,
+        )
+        guarded_payload = as_json(guarded)
+        check(
+            "symlinked pin outside DIR runs clean under the guard",
+            guarded.returncode == 0 and "Traceback" not in guarded.stderr,
+            [guarded.returncode, guarded.stderr[-400:]],
+        )
+        check(
+            "symlinked pin outside DIR still answers",
+            isinstance(guarded_payload, dict) and guarded_payload.get("ok") is True,
+            guarded_payload or guarded.stderr[-200:],
+        )
+        guarded_pins = (guarded_payload or {}).get("pinned") or []
+        check(
+            "symlinked pin outside DIR is refused",
+            len(guarded_pins) == 1
+            and guarded_pins[0].get("exists") is False
+            and guarded_pins[0].get("reason") == "pin is outside the fixture directory",
+            guarded_pins,
+        )
+        check(
+            "symlinked pin outside DIR counts outside 1",
+            (guarded_payload or {}).get("outside") == 1,
+            (guarded_payload or {}).get("outside"),
+        )
+        check(
+            "symlinked pin outside DIR reads no metadata",
+            "AssertionError" not in guarded.stderr,
+            guarded.stderr[-400:],
+        )
+        # The same rule inside an admitted root: a link in a walked directory
+        # that escapes DIR is counted outside, and its target is never touched.
+        guard_walk = os.path.join(tmp, "dir-guard-walk")
+        _write(
+            os.path.join(guard_walk, "hud_paths.json"),
+            '{"limit": 8, "downloads": [{"path": "~/root", "depth": 2}]}',
+        )
+        _touch(os.path.join(guard_walk, "root", "sub", "kept.png"), 920)
+        os.symlink(outside_pin, os.path.join(guard_walk, "root", "sub", "escape"))
+        walked = subprocess.run(
+            [sys.executable, guard, script, outside_pin, "--fixture", guard_walk, "--json"],
+            capture_output=True, text=True, cwd=tmp,
+        )
+        walked_payload = as_json(walked)
+        walked_rows = (walked_payload or {}).get("roots") or []
+        check(
+            "walk link outside DIR runs clean under the guard",
+            walked.returncode == 0 and "AssertionError" not in walked.stderr,
+            [walked.returncode, walked.stderr[-400:]],
+        )
+        check(
+            "walk link outside DIR is counted outside",
+            (walked_payload or {}).get("outside") == 1
+            and walked_rows
+            and walked_rows[0].get("outside") == 1,
+            [walked_payload and walked_payload.get("outside"), walked_rows],
+        )
+        check(
+            "walk link outside DIR leaks no host file",
+            _names(walked_payload or {}, "downloads") == ["kept.png"],
+            _names(walked_payload or {}, "downloads"),
         )
 
         # --- the shipped fixture file ---

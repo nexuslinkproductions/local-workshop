@@ -218,16 +218,24 @@ held:
   cache file and no state directory are used. Useful for a bigger, real-shaped
   check: copy a tree into a directory, point the feed at it, get that tree.
 
-  **The rule is resolution, not spelling.** Every root and every pin is
-  resolved with `os.path.realpath` before it is used, and both sides of the
-  comparison — the path and `DIR` — are resolved, so a macos `/var` → `/private/var`
-  difference cannot make an inside path look outside. A path is kept only when
-  its resolved target is still inside the resolved `DIR`. A symlink that sits
-  inside `DIR` but points at the host therefore leaves `DIR`: the root is
-  refused with `"root is outside the fixture directory"`, the pin is reported
-  `exists: false` with `"pin is outside the fixture directory"`, and a pin is
-  never `stat`ed through a link. Each of those refusals also increments the
-  top-level `outside` count, and the target's files never reach a list.
+  **The rule is lexical containment, and the host is never touched.** A root,
+  a pin or a link is judged by walking its own components: a component that
+  sits inside `DIR` and is a symlink has its link text read (`os.readlink` on
+  the link, which is inside `DIR`) and spliced in. The first component or link
+  target that leaves `DIR` ends the walk, so the path is refused and counted
+  before `os.stat`, `os.lstat`, `os.path.exists` or `open` is called on the
+  outside target. `os.path.realpath` is deliberately not used on a candidate:
+  on Python 3.9 it `lstat`s every component it resolves, including the
+  components of the outside target, which is a host read. `DIR` itself is
+  resolved once — it is the boundary, not a candidate — and a target that
+  spells it through the resolved prefix (`/private/var` for `/var`) is matched
+  by string comparison, so that difference cannot make an inside path look
+  outside. A symlink that sits inside `DIR` but points at the host therefore
+  leaves `DIR`: the root is refused with `"root is outside the fixture
+  directory"`, the pin is reported `exists: false` with `"pin is outside the
+  fixture directory"`, and a pin is never `stat`ed through a link. Each of those
+  refusals also increments the top-level `outside` count, and the target's files
+  never reach a list.
 
 ## Exit codes
 
@@ -272,9 +280,13 @@ for `true`, `"true"`, `false`, `"false"`, `""`, `0` and `"0"`, and `null`, `[]`,
 reason. Fixture-directory purity is proven on a directory holding its own tree:
 `~` resolves to the directory, a root outside it is refused, the output is
 identical under two `HOME` values, a host mtime change leaves it unchanged, and
-no state directory appears. A second directory proves the resolution rule: a
+no state directory appears. A second directory proves the containment rule: a
 symlinked root that points at the host leaks no file and is counted `outside`,
-and a symlinked pin is refused without being `stat`ed. The run prints its check
+and a symlinked pin is refused without being `stat`ed. The last two cases run
+under a helper that turns `os.stat`, `os.lstat` and `open` on the outside target
+into a hard failure, and a probe first shows the guard fires, so a refusal that
+still touched the host would fail the check. A walk link inside an admitted root
+that escapes `DIR` is held to the same rule. The run prints its check
 count.
 Error paths run through the real CLI (named missing config → 2, malformed
 config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
