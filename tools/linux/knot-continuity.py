@@ -36,6 +36,9 @@ from PIL import Image
 
 MIN_WINDOW_CHG = 0.02   # fraction of frame changed per 4 s; fixed build 0.035
 MAX_AREA_RATIO = 1.25   # lit area vs triquetra; fixed build 1.07, blob 2.28
+MIN_HOLD_IOU = 0.5      # shape IoU vs t = 0 inside the triquetra hold (no deformed hold)
+CYCLE_S = 48.0          # shader CYC (wall s)
+HOLD_A_S = 26.4         # shader HOLD_A (wall s)
 LIT = 20.0
 DIFF = 12.0
 
@@ -108,6 +111,9 @@ def main():
     ap.add_argument("--step", type=float, default=2.0)
     ap.add_argument("--min-window-chg", type=float, default=MIN_WINDOW_CHG)
     ap.add_argument("--max-area-ratio", type=float, default=MAX_AREA_RATIO)
+    ap.add_argument("--min-hold-iou", type=float, default=MIN_HOLD_IOU)
+    ap.add_argument("--cycle", type=float, default=CYCLE_S, help="morph cycle, wall s (shader CYC)")
+    ap.add_argument("--hold-len", type=float, default=HOLD_A_S, help="triquetra hold per cycle, s (shader HOLD_A)")
     a = ap.parse_args()
     ts, area, ratio, iou, windows = analyse(a.frames, a.step)
     wchg = np.array([w[1] for w in windows])
@@ -117,6 +123,12 @@ def main():
         fails.append(f"frozen: 4 s window change {wchg.min():.4f} at t={windows[worst][0]:.1f} < {a.min_window_chg}")
     if ratio.max() > a.max_area_ratio:
         fails.append(f"blob: area ratio {ratio.max():.2f} at t={ts[int(np.argmax(ratio))]:.1f} > {a.max_area_ratio}")
+    # deformed hold: inside the triquetra hold (not the morph legs) the shape must still match t = 0
+    hold = [i for i, t in enumerate(ts) if (t % a.cycle) < a.hold_len - 1.0]
+    hold_iou = iou[hold] if hold else np.array([1.0])
+    if hold and hold_iou.min() < a.min_hold_iou:
+        bad = hold[int(np.argmin(hold_iou))]
+        fails.append(f"deformed hold: shape IoU {hold_iou.min():.3f} at t={ts[bad]:.1f} < {a.min_hold_iou}")
     rep = {
         "frames": len(ts), "t_range": [float(ts[0]), float(ts[-1])],
         "window_chg_min": float(wchg.min()), "window_chg_min_t": windows[worst][0],
