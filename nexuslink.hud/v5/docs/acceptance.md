@@ -243,10 +243,10 @@ qmllint -I <NexusHud/V5 -> kit, NexusHud/fonts -> v5/fonts> \
   nexuslink.hud/v5/DeckSurface.qml nexuslink.hud/v5/tests/i1/DeckAudit.qml \
   nexuslink.hud/v5/tests/i1/FontProof.qml
 ```
-0 warnings, exit 0. (`DeckMain.qml` keeps its 15, unchanged: they are all
-`import Quickshell` being absent on this Mac. Linting `DeckSurface.qml` by file
-path without `-I` prints 129 `[unqualified]` notes for `Tokens.*`, which is the
-import path missing, not the file.)
+0 warnings, exit 0. (`DeckMain.qml` keeps its 15, unchanged: they are all the
+Quickshell module being absent on this Mac. Linting `DeckSurface.qml` by file
+path without `-I` prints 104 `[unqualified]` notes out of 131 warnings, which is
+the import path missing, not the file.)
 
 `deck-shot.sh`/`deck-audit.py`/`deck-trace.py` build the import path themselves,
 so no one has to hand-edit `tools/qml-lint.sh` (the `-I` request W4 raised is
