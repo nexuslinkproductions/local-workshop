@@ -213,7 +213,7 @@ itself is the trace above.
 `PulseRing.qml:110-111`, `DotArc.qml:70-71`, `DotBar.qml:90-92` and
 `IconTile.qml:102-107` pass the same analytic pair to `SpringAnimation`, so they
 diverge the same way. This card's acceptance is "no other component file
-touched", so they are reported, not patched here: follow-up card `t_<filed>`.
+touched", so they are reported, not patched here: follow-up card `t_34fe7635`.
 
 Also noticed while rendering (pre-existing, not W3's): `LauncherArc` still loads
 glyphs by URL (card `t_9778a241`) and `DeckSurface.qml:99` declares
