@@ -17,12 +17,13 @@ The budget rule under "Rules for chief" can shorten it.
 F4 resolves placeholders with `lookup()` in `feeds/boot_brief.py`: dotted paths
 into `brief.json`, `[n]` for list indices, and a `#` segment for a list's length.
 Every placeholder below resolves through that function unchanged. No line numbers
-here on purpose, because F4 is still moving: checked against F4 head `86160a9` on
-`v5/f4-bootbrief` (PR #26), where `lookup()` and `placeholders()` sit next to each
-other in that file, and against that head's own payload,
-`feeds/golden/boot-brief.json`. All three placeholders in the table below resolve
-with nothing left unresolved there, and so do the four spoken lines built from
-them; the counts are `fleet.finished` 3, `fleet.blocked` 2 and `needs_me.#` 3.
+here on purpose, because F4 is still moving: checked against F4 as merged into
+`v5/main-deck` (merge commit `81e5055`, PR #26), where `lookup()` and
+`placeholders()` sit next to each other in `feeds/boot_brief.py`, and against
+that merge's own payload, `feeds/golden/boot-brief.json`. All three placeholders
+in the table below resolve with nothing left unresolved there, and so do the four
+spoken lines built from them; the counts are `fleet.finished` 3, `fleet.blocked` 2
+and `needs_me.#` 3.
 
 | placeholder | `brief.json` key path | renders as |
 |---|---|---|
