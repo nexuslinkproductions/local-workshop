@@ -19,18 +19,18 @@ Four passes of the tool, all PASS:
 
 | pass | expand peak | overshoot | expand settle | return min | return rises | drift max | breath period |
 |---|---|---|---|---|---|---|---|
-| committed trace | 1.4190 | **+4.75 %** | 265 ms | 1.0000 | 0 | 1.891 px | **5.771 s** |
-| 2 | 1.4179 | **+4.48 %** | 248 ms | 1.0000 | 0 | 1.890 px | 5.783 s |
-| 3 | 1.4178 | **+4.44 %** | 276 ms | 1.0000 | 0 | 1.891 px | 5.843 s |
-| 4 | 1.4190 | **+4.75 %** | 268 ms | 1.0000 | 0 | 1.891 px | 5.800 s |
+| committed trace (`expand.json`) | 1.4195 | **+4.87 %** | 285 ms | 1.0000 | 0 | 1.890 px | **5.805 s** |
+| tool run (best of 3) | 1.4193 | **+4.83 %** | 233 ms | 1.0000 | 0 | 1.891 px | 5.763 s |
+| earlier passes | 1.4190 / 1.4179 / 1.4178 | **+4.75 / +4.48 / +4.44 %** | 265 / 248 / 276 ms | 1.0000 | 0 | 1.891 px | 5.771 / 5.783 / 5.843 s |
 | band | — | 4 to 6 % | — | ≥ 1.0 | 0 | > 0 | 5 to 6 s |
 | token | — | `Motion.expandOvershoot` 4.87 % (OutBack 1.15) / 5.00 % (zeta 0.69, omega 16.7) | `Motion.expandMillis` 347 | — | — | `Motion.driftAmpMax` 2.0 | `Motion.breathPeriod` 5.8 |
 
 Reading it:
 
 * **Overshoot** is (peak − target) / travel, with travel = `CrewOrb.expandScale`
-  − 1 = 0.4 (growth runs 1.0 → 1.4). Four passes give 4.44 to 4.75 %, inside the
-  approved 4 to 6 % band. The peak lands at 168 to 226 ms, which is where the
+  − 1 = 0.4 (growth runs 1.0 → 1.4). Five captures give 4.44 to 4.87 %, inside
+  the approved 4 to 6 % band, and the committed trace lands on 4.87 %, which is
+  the analytic OutBack peak. The peak is detected 163 to 226 ms in, where the
   curve's vertex is.
 * **Return** reaches exactly 1.0000, never dips below it (`min` ≥ 1.0) and never
   rises while falling (`rises` = 0 in every pass): monotone, no overshoot. It
