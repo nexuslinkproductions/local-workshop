@@ -20,7 +20,8 @@ from pathlib import Path
 
 HOME = Path.home()
 RUN = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "gauges"
-TOKENS = Path(__file__).resolve().parent
+# ledger.py lives with the live HUD tree (the ledger timer runs it from there), not beside this file
+TOKENS = Path(os.environ.get("NEXUSLINK_TOKENS") or HOME / ".config/omarchy/plugins/nexuslink.hud/tokens")
 TICK = 5                     # scheduler wake-up, seconds (idle cost only)
 HEARTBEAT_S = 30             # collector.json rewrite cadence
 CLAUDE_REFRESH_S = 900       # at most one `claude auth status` refresh per 15 min
