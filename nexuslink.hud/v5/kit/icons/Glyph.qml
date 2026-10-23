@@ -45,7 +45,12 @@ Item {
         "wifi": wifiGlyph,
         "battery": batteryGlyph,
         "volume": volumeGlyph,
-        "settings": settingsGlyph
+        "settings": settingsGlyph,
+        "filter-all": filterAllGlyph,
+        "filter-files": filterFilesGlyph,
+        "filter-images": filterImagesGlyph,
+        "filter-docs": filterDocsGlyph,
+        "filter-downloads": filterDownloadsGlyph
     })
     readonly property bool known: root.components[root.glyph] !== undefined
 
@@ -80,6 +85,11 @@ Item {
     Component { id: batteryGlyph; Battery { color: root.color; weight: root.weight; size: root.size } }
     Component { id: volumeGlyph; Volume { color: root.color; weight: root.weight; size: root.size } }
     Component { id: settingsGlyph; Settings { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: filterAllGlyph; FilterAll { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: filterFilesGlyph; FilterFiles { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: filterImagesGlyph; FilterImages { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: filterDocsGlyph; FilterDocs { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: filterDownloadsGlyph; FilterDownloads { color: root.color; weight: root.weight; size: root.size } }
 
     // Unknown key: one node, the dot the set already uses for accents.
     Component {

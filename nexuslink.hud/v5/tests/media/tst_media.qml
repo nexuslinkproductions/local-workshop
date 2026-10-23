@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import NexusHud.V5 1.0
+import "../../kit"
 
 // tests/media/tst_media.qml - MediaPill states. Run with qmltestrunner and an
 // imports dir that maps NexusHud/V5 -> kit (see the report for the exact line).

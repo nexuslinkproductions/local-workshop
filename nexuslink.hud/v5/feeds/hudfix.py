@@ -1416,9 +1416,13 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         checks.ok("list.invalid_surfaced",
                   any(row.get("error") for row in listing.get("actions", [])
                       if row["name"] == "probe-invalid") if listing else False)
-        checks.ok("list.linux_only_unavailable",
-                  any(row["name"] == "probe-linux" and row["available"] is False
-                      for row in listing.get("actions", [])) if listing else False)
+        # probe-linux is linux_only: it is unavailable off Linux and available
+        # on Linux. The expectation follows the host, as the plan.linux branch does.
+        probe_linux_row = next((row for row in listing.get("actions", [])
+                                if row["name"] == "probe-linux"), None) if listing else None
+        expect_linux_avail = platform.system() == "Linux"
+        checks.eq("list.linux_only_unavailable",
+                  (probe_linux_row or {}).get("available") is expect_linux_avail, True)
         checks.eq("list.pretty_default_ok",
                   _one_object(cli(["list"])[1], single_line=False) is not None, True)
 

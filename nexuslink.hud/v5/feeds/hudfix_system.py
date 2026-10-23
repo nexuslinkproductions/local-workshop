@@ -2578,6 +2578,20 @@ def _spawn_decoy(extra_arg):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
 
 
+def _cli_as_macos(argv):
+    """_cli with the platform reported as macOS, so a launchctl stub on PATH is reached.
+
+    The launchctl reader gates on the host before it runs anything, so a stub
+    alone never reaches the parser on Linux. The real platform comes back on exit.
+    """
+    real = globals()["platform_name"]
+    globals()["platform_name"] = lambda: "macos"
+    try:
+        return _cli(argv)
+    finally:
+        globals()["platform_name"] = real
+
+
 def self_check():
     check = Checker()
     fixture = _fixture_dir()
@@ -2848,8 +2862,8 @@ def self_check():
         saved_path = os.environ.get("PATH", "")
         try:
             os.environ["PATH"] = stub_dir + os.pathsep + saved_path
-            payload, code = _cli(["--action", "system.failed-jobs", "--json",
-                                  "--state-dir", os.path.join(temp_root, "hostile-state-a")])
+            payload, code = _cli_as_macos(["--action", "system.failed-jobs", "--json",
+                                           "--state-dir", os.path.join(temp_root, "hostile-state-a")])
         finally:
             os.environ["PATH"] = saved_path
         payload = payload or {}
@@ -2907,8 +2921,8 @@ def self_check():
         saved_path = os.environ.get("PATH", "")
         try:
             os.environ["PATH"] = clean_bin + os.pathsep + saved_path
-            payload, code = _cli(["--action", "system.failed-jobs", "--json",
-                                  "--state-dir", cache_state])
+            payload, code = _cli_as_macos(["--action", "system.failed-jobs", "--json",
+                                           "--state-dir", cache_state])
         finally:
             os.environ["PATH"] = saved_path
         payload = payload or {}
@@ -3122,9 +3136,19 @@ def self_check():
         protected, protected_code = _cli([
             "--action", "system.restart-shell", "--target", str(decoy.pid), "--plan", "--json"])
         check.equal(protected_code, 0, "a quickshell decoy exits 0 (a refusal, not a crash)")
-        check.ok(protected.get("reason") != "protected",
-                 "a quickshell-named decoy is not protected by itself",
-                 protected.get("reason"))
+        # The live guard has two inputs: the name and argv (pure, checked here
+        # with no process at all), and the supervisor unit the pid sits in. The
+        # decoy inherits the unit of the shell that runs this suite, so the
+        # refusal may come from the unit, and only from it.
+        check.ok(protected_hit({"name": "python3", "args": "python3 -c import time quickshell"})
+                 is None,
+                 "a quickshell-named argv is not protected by its name alone")
+        live_rule = protected.get("reason") == "protected"
+        live_unit = (((protected.get("plan") or {}).get("target") or {})
+                     .get("supervisor")) if live_rule else None
+        check.ok(not live_rule or live_unit is not None,
+                 "a quickshell-named decoy is not protected by its name alone",
+                 str(protected.get("reason")))
 
         gateway = _spawn_decoy("hermes-gateway")
         decoys.append(gateway)

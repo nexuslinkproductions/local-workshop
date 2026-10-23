@@ -19,8 +19,10 @@ Subcommands (exactly one):
   --self-check  hermetic checks, exit non-zero on any failure
 
 Signals:
-  pgrep -f <pattern>         game process; patterns PioneerGame and ArcRaiders,
-                             override with --pattern (repeatable)
+  /proc/<pid>/cmdline        game process, read directly (no subprocess per poll);
+                             patterns PioneerGame and ArcRaiders, override with
+                             --pattern (repeatable). pgrep -f only with --pgrep-cmd
+                             or on a host without /proc
   hyprctl clients -j         window classes, Linux only (fixture-only on the Mac)
   ~/.cache/ptt-toggle.state  dictation/game state written by ptt-toggle
   ~/.cache/mouse-profile     optional one-line mouse profile, if such a file exists
@@ -778,6 +780,60 @@ def game_from_fixture(fx, patterns):
     return game
 
 
+def proc_available():
+    return os.path.isdir("/proc/self")
+
+
+def proc_cmdline_text(pid_name):
+    """Command line of one /proc entry, or its comm name for kernel threads."""
+    base = "/proc/%s/" % pid_name
+    try:
+        with open(base + "cmdline", "rb") as fh:
+            text = fh.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+    except OSError:
+        text = ""
+    if not text:
+        try:
+            with open(base + "comm", "rb") as fh:
+                text = fh.read().decode("utf-8", "replace").strip()
+        except OSError:
+            text = ""
+    return text
+
+
+def proc_match(patterns):
+    """Game process from /proc alone: no subprocess, same answer shape as pgrep_match.
+
+    A process matches when its command line (or comm, for kernel threads)
+    contains one of the patterns. The scanner's own pid is skipped, as pgrep
+    does for itself.
+    """
+    try:
+        names = [n for n in os.listdir("/proc") if n.isdigit()]
+    except OSError as e:
+        return {"running": None, "process": None, "pid": None,
+                "reason": "cannot read /proc: %s" % short(e.strerror or e)}
+    me = os.getpid()
+    live = [p for p in patterns if p]
+    for name in sorted(names, key=int):
+        if int(name) == me:
+            continue
+        text = proc_cmdline_text(name)
+        if not text:
+            continue
+        for pattern in live:
+            if pattern in text:
+                return {"running": True, "process": pattern, "pid": int(name), "reason": None}
+    return {"running": False, "process": None, "pid": None, "reason": None}
+
+
+def process_match(cfg):
+    """Process signal: /proc on Linux; pgrep only when --pgrep-cmd is given or /proc is absent."""
+    if cfg.pgrep_cmd or not proc_available():
+        return pgrep_match(cfg)
+    return proc_match(cfg.patterns)
+
+
 def pgrep_match(cfg):
     binary = cfg.pgrep_cmd or shutil.which("pgrep") or "pgrep"
     errors = []
@@ -825,7 +881,7 @@ def hyprctl_clients(cfg):
 
 
 def detect_live(cfg):
-    found = pgrep_match(cfg)
+    found = process_match(cfg)
     game = {"running": found["running"], "process": found["process"],
             "class": None, "pid": found.get("pid")}
     if found.get("reason"):
@@ -1643,6 +1699,46 @@ def run_self_check(script):
             decoy.wait(timeout=5)
         except subprocess.TimeoutExpired:
             decoy.kill()
+
+    # 15b. /proc detection: finds a decoy by cmdline, skips its own pid,
+    # names the pattern, and spawns no pgrep (run_cmd is spied on).
+    if proc_available():
+        decoy2 = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
+                                   "PioneerGame"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        real_run_cmd = globals()["run_cmd"]
+        spied = []
+
+        def spy_run_cmd(cmd, timeout):
+            spied.append([str(x) for x in cmd])
+            return real_run_cmd(cmd, timeout)
+
+        try:
+            hit = {}
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                hit = proc_match(["NoSuchGameXyz", "PioneerGame"])
+                if hit.get("running") is True:
+                    break
+                time.sleep(0.2)
+            checks.eq("proc scan finds decoy", hit.get("running"), True)
+            checks.eq("proc scan names the pattern", hit.get("process"), "PioneerGame")
+            checks.true("proc scan pid is a PioneerGame process",
+                        "PioneerGame" in proc_cmdline_text(str(hit.get("pid"))), str(hit))
+            checks.true("proc scan skips own pid", hit.get("pid") != os.getpid(), str(hit))
+            checks.eq("proc scan no match", proc_match(["NoSuchGameXyz9f2"]).get("running"), False)
+            globals()["run_cmd"] = spy_run_cmd
+            hit2 = process_match(Cfg(parse_args(["--status", "--pattern", "PioneerGame"])))
+            checks.eq("process_match running via proc", hit2.get("running"), True)
+            checks.eq("proc path spawns no pgrep",
+                      [c for c in spied if "pgrep" in " ".join(c)], [])
+        finally:
+            globals()["run_cmd"] = real_run_cmd
+            decoy2.terminate()
+            try:
+                decoy2.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                decoy2.kill()
 
     # 16. an unwritable flag path degrades to a warning, not a crash
     bad_target = tmp / "flag-is-a-dir"

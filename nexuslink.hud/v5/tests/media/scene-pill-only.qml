@@ -1,5 +1,5 @@
 import QtQuick
-import NexusHud.V5 1.0
+import "../../kit"
 
 // tests/media/scene-pill-only.qml - render B fallback: the media pill alone at
 // its DeckSurface position (250, 1284) on the field colour, 2560x1440. Used

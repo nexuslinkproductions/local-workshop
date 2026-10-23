@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import NexusHud.V5 1.0
+import "../../kit"
 
 // tst_quick.qml - QuickActions: each icon emits its id exactly once; hover
 // brightens; mediaPlaying and mediaAvailable switch the first glyph.
@@ -31,7 +31,7 @@ TestCase {
         QuickActions {
             id: qa
 
-            anchors.fill: parent
+            anchors.fill: stage
         }
     }
 

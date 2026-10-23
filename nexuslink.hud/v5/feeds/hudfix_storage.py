@@ -532,6 +532,78 @@ def _scan_cache_root(ctx):
 
 
 def plan_cache_top(ctx):
+    """Cache-first: a scan is served from disk for CACHE_TOP_MIN_INTERVAL_S seconds.
+
+    The full ~/.cache walk costs about 9 s of CPU. A poll at a 10 s cadence
+    would spend most of a core on it, so the reader keeps the last scan in a
+    state file and answers from it until the interval has passed. A hit says
+    ``served_from: cache``; ``generated_at`` is when this answer was built and
+    ``source_as_of`` is when the directory was actually walked.
+    """
+    now = time.time()
+    root_path = ctx.root("cache", "~/.cache")
+    cached = _cache_top_read(ctx, root_path)
+    if cached is not None:
+        age = now - cached["scanned_at"]
+        if 0 <= age < CACHE_TOP_MIN_INTERVAL_S:
+            payload = dict(cached["payload"])
+            payload["served_from"] = "cache"
+            payload["cache_age_s"] = round(age, 1)
+            payload["cache_interval_s"] = CACHE_TOP_MIN_INTERVAL_S
+            payload["generated_at"] = hudfix.utc_now_iso()
+            payload["source_as_of"] = cached["source_as_of"]
+            return payload
+    payload = _plan_cache_top_scan(ctx)
+    payload["served_from"] = "scan"
+    payload["cache_age_s"] = 0.0
+    payload["cache_interval_s"] = CACHE_TOP_MIN_INTERVAL_S
+    payload["generated_at"] = hudfix.utc_now_iso()
+    payload["source_as_of"] = payload["generated_at"]
+    if payload.get("ok"):
+        _cache_top_write(ctx, root_path, now, payload)
+    return payload
+
+
+CACHE_TOP_MIN_INTERVAL_S = 300
+
+
+def _cache_top_path(ctx):
+    return os.path.join(ctx.root("state", "~/.local/state/hudfix"), "storage-cache-top.json")
+
+
+def _cache_top_read(ctx, root_path):
+    try:
+        with open(_cache_top_path(ctx), "r", encoding="utf-8") as handle:
+            entry = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(entry, dict) or entry.get("root") != root_path:
+        return None
+    if not isinstance(entry.get("payload"), dict):
+        return None
+    scanned_at = entry.get("scanned_at")
+    if not isinstance(scanned_at, (int, float)) or isinstance(scanned_at, bool):
+        return None
+    return {"scanned_at": float(scanned_at), "payload": entry["payload"],
+            "source_as_of": entry.get("source_as_of")}
+
+
+def _cache_top_write(ctx, root_path, scanned_at, payload):
+    path = _cache_top_path(ctx)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"root": root_path, "scanned_at": scanned_at,
+                       "source_as_of": payload["source_as_of"],
+                       "payload": payload}, handle)
+        os.replace(tmp, path)
+    except OSError:
+        return None
+    return path
+
+
+def _plan_cache_top_scan(ctx):
     root, scanned = _scan_cache_root(ctx)
     if root is None:
         return {"ok": False, "reason": "no cache directory at %s" % tilde(
@@ -551,7 +623,9 @@ def plan_cache_top(ctx):
         "entries": len(scanned["children"]),
         "unattributed": unattributed[:20],
         "notes": ["top %d children of ~/.cache by size" % TOP_CONSUMERS,
-                  "attributed=false means the owner is unknown, so it is never cleared"],
+                  "attributed=false means the owner is unknown, so it is never cleared",
+                  "at most one full scan per %d s; other polls are served from the state file"
+                  % CACHE_TOP_MIN_INTERVAL_S],
     }
 
 
@@ -1482,6 +1556,7 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
             "yay": os.path.join(home, ".cache/yay"),
             "pacman": os.path.join(base, "var-cache-pacman"),
             "smart": smart_file,
+            "state": os.path.join(base, "state"),
         }
         base_args = ["--module-dir", feeds_dir, "--quarantine-root", quarantine,
                      "--log", log_path]

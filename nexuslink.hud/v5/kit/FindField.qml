@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import NexusHud.V5 1.0
+import "icons" as Icons
 
 // FindField.qml - v5 Find pill with a live TextInput, filter words, busy dots.
 //
@@ -101,10 +102,20 @@ Item {
     }
 
     // Rest word and five faint type dots (the rest pill, unchanged from s3).
+    // The search glyph sits at the left of the pill in both states (s3).
+    Icons.Glyph {
+        id: searchGlyph
+        glyph: "find"
+        color: Tokens.ice
+        size: 28
+        x: pill.x + 36 - width / 2
+        y: pill.y + (root.pillHeight - height) / 2
+    }
+
     Text {
         id: restWord
         visible: !root.active
-        x: pill.x + 36
+        x: pill.x + 64
         y: pill.y + (root.pillHeight - height) / 2
         text: root.placeholder
         color: Tokens.ink
@@ -240,8 +251,7 @@ Item {
     }
 
     // ---- filter words ----------------------------------------------------------
-    // Plain words: the active one is ink and bold on a soft-fill capsule. Icons
-    // (s3 glyphs) are not drawn yet; see the report.
+    // Filter chips: an icon each (s3 glyphs), the word on the chosen chip only.
     Row {
         id: chipRow
         visible: root.active
@@ -252,11 +262,11 @@ Item {
 
         Repeater {
             model: [
-                { "key": "all", "label": "All" },
-                { "key": "files", "label": "Files" },
-                { "key": "images", "label": "Images" },
-                { "key": "docs", "label": "Docs" },
-                { "key": "downloads", "label": "Downloads" }
+                { "key": "all", "label": "All", "glyph": "filter-all" },
+                { "key": "files", "label": "Files", "glyph": "filter-files" },
+                { "key": "images", "label": "Images", "glyph": "filter-images" },
+                { "key": "docs", "label": "Docs", "glyph": "filter-docs" },
+                { "key": "downloads", "label": "Downloads", "glyph": "filter-downloads" }
             ]
 
             delegate: Rectangle {
@@ -267,21 +277,35 @@ Item {
                 readonly property bool chosen: root.filter === chip.modelData.key
 
                 height: root.chipCapsuleH
-                width: chipLabel.implicitWidth + root.chipPad * 2
+                width: chipContent.width + root.chipPad * 2
                 radius: height / 2
                 antialiasing: true
                 color: chip.chosen
                        ? Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, Tokens.capsuleFillAlpha)
                        : "transparent"
 
-                Text {
-                    id: chipLabel
-                    anchors.centerIn: parent
-                    text: chip.modelData.label
-                    color: chip.chosen ? Tokens.ink : Tokens.textDim
-                    font.family: Tokens.fontFamily
-                    font.weight: chip.chosen ? Tokens.weightBold : Tokens.weightMedium
-                    font.pixelSize: Tokens.sizeLabel
+                // Icon on every chip; the word shows on the chosen one only.
+                Row {
+                    id: chipContent
+                    x: Math.round((chip.width - width) / 2)
+                    y: Math.round((chip.height - height) / 2)
+                    spacing: Tokens.sp2
+
+                    Icons.Glyph {
+                        glyph: chip.modelData.glyph
+                        color: chip.chosen ? Tokens.ink : Tokens.textDim
+                        size: 26
+                    }
+
+                    Text {
+                        id: chipLabel
+                        visible: chip.chosen
+                        text: chip.modelData.label
+                        color: Tokens.ink
+                        font.family: Tokens.fontFamily
+                        font.weight: Tokens.weightBold
+                        font.pixelSize: Tokens.sizeLabel
+                    }
                 }
 
                 MouseArea {

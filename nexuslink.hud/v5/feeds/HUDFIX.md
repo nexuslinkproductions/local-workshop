@@ -241,3 +241,10 @@ so their parsing is exercised only through the gates and the self-checks; Linux
 verifies the live path. `disk-health` on this Mac reads the real drive through
 `smartctl` without root, which works here; a host that needs root gets a refusal
 that says so and the command to run by hand.
+
+## cache-top cadence (fe1r)
+
+`hudfix.py --json plan cache-top` is cache-first. A full walk of ~/.cache costs about 8 s of CPU, so the reader keeps the last walk in `~/.local/state/hudfix/storage-cache-top.json` (override key: `--root state=DIR`).
+Cadence: at most one full walk per 300 s (`CACHE_TOP_MIN_INTERVAL_S`). Polls inside that window are served from the state file.
+Every answer carries `generated_at` (when this answer was built) and `source_as_of` (when the directory was walked). A served answer says `served_from: cache` and `cache_age_s`. A fresh walk says `served_from: scan`.
+The cache is keyed to the cache root; a different root never hits.

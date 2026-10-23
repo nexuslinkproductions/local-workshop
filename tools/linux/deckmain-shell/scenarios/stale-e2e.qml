@@ -40,6 +40,15 @@ Item {
         Qt.quit()
     }
 
+    // (b) per-tick cost of the freshness check, timed in this shell. One tick is
+    // one hud.freshnessTick() call (5 feeds, the 1 Hz path). Mean over n ticks.
+    function tickCost(n) {
+        var t0 = Date.now()
+        for (var i = 0; i < n; ++i)
+            hud.freshnessTick()
+        return (Date.now() - t0) * 1000 / n
+    }
+
     function probe(id) {
         return hud.deckView.readoutProbe[id]
     }
@@ -105,6 +114,9 @@ Item {
             } else if (root.phase === 3) {
                 if (root.metricsTimeoutSeen || elapsed > 20) {
                     root.note("metrics_watchdog_seen", root.metricsTimeoutSeen, "metrics=" + JSON.stringify(hud.feedState.metrics))
+                    var ticks = 50000
+                    var us = root.tickCost(ticks)
+                    root.note("freshness_tick_cost", us < 1000, "ticks=" + ticks + " per_tick_us=" + us.toFixed(2) + " budget_us=1000")
                     root.finish()
                 }
             }

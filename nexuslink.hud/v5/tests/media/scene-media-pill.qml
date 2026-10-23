@@ -1,5 +1,5 @@
 import QtQuick
-import NexusHud.V5 1.0
+import "../../kit"
 import "../.." as Deck
 import "../../stills" as Fx
 

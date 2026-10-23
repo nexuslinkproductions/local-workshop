@@ -929,12 +929,16 @@ def envelope(action, ctx, source, **fields):
     Errors come through ``error_payload``, the one error constructor, so an
     ``ok: false`` answer cannot skip the stamp either.
     """
+    # Every miss answer says cached: false. Set here, not only in cache_put,
+    # because early returns (no jitter capture, nothing measured) never reach
+    # cache_put, and a caller must never meet a payload without the flag.
     payload = {
         "ok": True,
         "generated_at": utc_now_iso(),
         "source": source,
         "action": action,
         "class": ACTIONS[action]["class"],
+        "cached": False,
     }
     payload.update(fields)
     return payload
@@ -947,7 +951,8 @@ def error_payload(reason, kind=None, **fields):
     exactly this object, so ``generated_at`` is on every envelope, success or
     error, as the feeds brief requires.
     """
-    payload = {"ok": False, "generated_at": utc_now_iso(), "reason": reason}
+    payload = {"ok": False, "generated_at": utc_now_iso(), "reason": reason,
+               "cached": False}
     if kind is not None:
         payload["kind"] = kind
     payload.update(fields)
@@ -2577,6 +2582,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             runner2 = CountingRunner(answers=answers)
             ctx2 = default_ctx()
             ctx2.update({"runner": runner2, "now": (lambda c=clock2: c["now"]),
+                         "host": "mac",
                          "cache_dir": str(temp_root / ("cache-%s" % name.split(".")[-1]))})
             first_call = ACTIONS[name]["run"](ctx2)
             assert_true(first_call["cached"] is False, "%s first call claims cached" % name)

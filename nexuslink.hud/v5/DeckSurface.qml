@@ -616,7 +616,16 @@ Item {
                 hero: deck.hero
                 expanded: deck.focusId === "launcher"
 
+                opacity: deck.isStale("apps") ? 0.45 : 1
                 onLaunch: function (launcherSlug) { deck.launchRequested(launcherSlug) }
+            }
+
+            // apps feed stale: the tiles dim and the mark shows (SHARED3 rule c).
+            StaleMark {
+                x: deck.launcherX
+                y: deck.launcherY - Tokens.sp4
+                visible: deck.staleText("apps") !== ""
+                label: "STALE " + deck.staleText("apps")
             }
 
             // Find: full deck size, absolute coordinates. FindField owns the pill,
@@ -738,6 +747,7 @@ Item {
             id: macDeep
 
             visible: deck.focusId === "mac"
+            opacity: deck.isStale("link") ? 0.45 : 1
             x: deck.marginX - 300
             y: deck.lowerY + Tokens.sp5
             width: 600
@@ -749,7 +759,7 @@ Item {
                 x: 0
                 y: 0
                 size: 156
-                value: deck.rttMs
+                value: deck.isStale("link") ? 0 : deck.rttMs
                 accent: Tokens.ice
                 focusLevel: 0
             }
@@ -760,7 +770,7 @@ Item {
                 x: 156 + Tokens.sp5
                 y: 6
                 size: 144
-                level: deck.batteryLevel
+                level: deck.isStale("link") ? 0 : deck.batteryLevel
                 accent: Tokens.acid
                 focusLevel: 0
             }
@@ -770,7 +780,7 @@ Item {
                 anchors.top: macRing.bottom
                 anchors.topMargin: Tokens.sp2
                 width: macRing.width
-                text: "RTT " + Math.round(deck.rttMs) + " ms"
+                text: deck.isStale("link") ? "RTT --" : "RTT " + Math.round(deck.rttMs) + " ms"
             }
 
             DeckLabel {
@@ -778,7 +788,14 @@ Item {
                 anchors.top: macBattery.bottom
                 anchors.topMargin: Tokens.sp2
                 width: macBattery.width
-                text: "BAT " + Math.round(deck.batteryLevel * 100) + " %"
+                text: deck.isStale("link") ? "BAT --" : "BAT " + Math.round(deck.batteryLevel * 100) + " %"
+            }
+
+            StaleMark {
+                x: 0
+                y: 260
+                visible: deck.staleText("link") !== ""
+                label: "STALE " + deck.staleText("link")
             }
         }
 
@@ -788,6 +805,7 @@ Item {
             id: storageDeep
 
             visible: deck.focusId === "storage"
+            opacity: deck.isStale("disks") ? 0.45 : 1
             x: deck.rightX - 330
             y: deck.lowerY - 250
             width: 660
@@ -839,9 +857,16 @@ Item {
                 x: 0
                 y: diskColumn.implicitHeight + Tokens.sp4
                 size: 160
-                level: deck.disks.length > 0 ? deck.disks[0].used : 0
+                level: deck.isStale("disks") ? 0 : (deck.disks.length > 0 ? deck.disks[0].used : 0)
                 accent: Tokens.azure
                 focusLevel: 0
+            }
+
+            StaleMark {
+                x: 200
+                y: diskColumn.implicitHeight + Tokens.sp4
+                visible: deck.staleText("disks") !== ""
+                label: "STALE " + deck.staleText("disks")
             }
         }
 
@@ -851,6 +876,7 @@ Item {
             id: localDeep
 
             visible: deck.focusId === "local"
+            opacity: deck.isStale("metrics") ? 0.45 : 1
             x: deck.rightX - 330
             y: deck.bandY - 160
             width: 660
@@ -862,8 +888,8 @@ Item {
                 x: 0
                 y: 0
                 size: 200
-                sizeGb: deck.modelGb
-                activity: deck.modelActivity
+                sizeGb: deck.isStale("metrics") ? 0 : deck.modelGb
+                activity: deck.isStale("metrics") ? 0 : deck.modelActivity
                 accent: Tokens.acid
                 focusLevel: 0
             }
@@ -877,7 +903,7 @@ Item {
                 height: 320
                 size: 320
                 segments: Tokens.dotBarSegments
-                level: Math.max(0, Math.min(1, deck.modelGb / Tokens.localBudgetGb))
+                level: deck.isStale("metrics") ? 0 : Math.max(0, Math.min(1, deck.modelGb / Tokens.localBudgetGb))
                 accent: Tokens.acid
                 focusLevel: 0
                 anchors.verticalCenter: modelOrb.verticalCenter
@@ -889,7 +915,14 @@ Item {
                 anchors.top: modelOrb.bottom
                 anchors.topMargin: Tokens.sp2
                 width: modelOrb.width
-                text: "MODEL " + deck.modelGb.toFixed(1) + " GB"
+                text: deck.isStale("metrics") ? "MODEL -- GB" : "MODEL " + deck.modelGb.toFixed(1) + " GB"
+            }
+
+            StaleMark {
+                x: 200 + Tokens.sp6 + 80
+                y: 0
+                visible: deck.staleText("metrics") !== ""
+                label: "STALE " + deck.staleText("metrics")
             }
         }
     }
