@@ -68,9 +68,74 @@ Item {
     readonly property real artDiameter: size
     readonly property string valueText: Math.round(shownLevel * 100) + " %"
 
-    readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
-    readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
     readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
+
+    // ---- motion ----------------------------------------------------------
+    // The focus lift runs the wave's measured curve, not a Qt spring: expand in
+    // on Easing.OutBack at parameter 1.15 (peak 1.04871 = 4.87 percent, inside
+    // Motion.expandOvershoot's 4 to 6 band) over Motion.expandMillis, return out
+    // on Easing.OutCubic over Motion.returnMillis with no overshoot.
+    //
+    // Not a SpringAnimation, and that is the repair: on Qt 6.12 the integrator
+    // clamps `damping` to [0, 1] and applies the spring term without a dt
+    // factor, so the analytic pair this gauge used to hand it (spring =
+    // Motion.expandOmega^2 = 278.89, damping = 2 * Motion.expandZeta *
+    // Motion.expandOmega = 23.05) is not the 5.00 percent / 347 ms Motion
+    // states, it is a barely damped explicit Euler spring that diverges on the
+    // first change of focusLevel. Measured before the repair: 1.0 to 1.13e+39
+    // within 1.4 s and 1.6e+34 on a 150 ms stalled frame. Numbers, closed form
+    // and probe: v5/docs/w3-gauges-spring.md and
+    // v5/tools/w3-gauge-spring-trace.py.
+    //
+    // Easing.overshoot is the OutBack *parameter*, not Motion.expandOvershoot
+    // (0.05, the analytic zeta peak). Requested as Motion.expandBackOvershoot.
+    readonly property real expandBackOvershoot: 1.15
+    readonly property real targetScale: (root.artDiameter / root.referenceSize)
+                                        * (1 + root.focusLift * root.focusAmount)
+    // The one number the art is drawn at. Component.onCompleted snaps it to the
+    // target so a still is deterministic; after that the two animations own it,
+    // because one Behavior can hold only one curve and this needs two (a lift up
+    // and a slower settle down).
+    property real artScale: 1.0
+    // Set by Component.onCompleted, after the snap. Nothing animates before it:
+    // at creation targetScale goes from its declared default to the real value,
+    // and without this guard the deck's first frame would run a 444 ms settle
+    // from 1.0 down to the resting scale (measured on DotArc at 144 px: 0.691172
+    // instead of 0.666667 at 120 ms).
+    property bool motionReady: false
+
+    Component.onCompleted: {
+        root.artScale = root.targetScale
+        root.motionReady = true
+    }
+
+    onTargetScaleChanged: {
+        if (!root.motionReady)
+            return
+        var up = root.targetScale > root.artScale
+        grow.stop()
+        settle.stop()
+        var anim = up ? grow : settle
+        anim.to = root.targetScale
+        anim.restart()
+    }
+
+    NumberAnimation {
+        id: grow
+        target: root
+        property: "artScale"
+        duration: Motion.expandMillis
+        easing.type: Easing.OutBack
+        easing.overshoot: root.expandBackOvershoot
+    }
+
+    NumberAnimation {
+        id: settle
+        target: root
+        property: "artScale"
+        duration: Motion.returnMillis
+        easing.type: Easing.OutCubic
+    }
 
     Item {
         id: art
@@ -78,15 +143,7 @@ Item {
         height: root.referenceSize
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: (root.artDiameter / root.referenceSize) * (1 + root.focusLift * root.focusAmount)
-
-        Behavior on scale {
-            SpringAnimation {
-                spring: root.springStiffness
-                damping: root.springDamping
-                mass: 1.0
-            }
-        }
+        scale: root.artScale
 
         Repeater {
             model: root.dots
