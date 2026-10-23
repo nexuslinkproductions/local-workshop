@@ -118,6 +118,7 @@ import inspect
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -707,7 +708,9 @@ def cmd_status(args, ctx, actions, errors):
         rows = read_manifest(manifest)
         quarantine["manifest"] = tilde(manifest)
         quarantine["items_today"] = len(rows)
-        quarantine["bytes_today"] = sum(row["bytes"] for row in rows)
+        quarantine["bytes_today"] = sum(row["bytes"] or 0 for row in rows)
+        if any(row["bytes"] is None or not row["bytes_exact"] for row in rows):
+            quarantine["bytes_note"] = "some rows carry a KB figure or no size at all"
     log = {"path": tilde(ctx.log_path), "exists": os.path.isfile(ctx.log_path),
            "bytes": 0, "lines": 0, "last": None}
     if log["exists"]:
@@ -746,26 +749,75 @@ def cmd_status(args, ctx, actions, errors):
 
 
 def read_manifest(path):
-    """Tolerant MANIFEST.tsv reader: rows with a bad byte count are kept at 0."""
+    """Tolerant MANIFEST reader across the layouts that exist in the quarantine.
+
+    Three dialects live on this box:
+
+        iso_utc  action  original_path  bytes  destination      this engine
+        orig_path  new_path  size_kb  reason  date               2026-10 legacy
+        date  name  reason                                        write-off
+
+    A row this reader cannot map keeps ``None`` where a fact is missing - no
+    invented byte count, no invented original path - and a ``bytes_exact`` flag
+    says whether the number came from a real byte count or a KB figure.
+    """
     rows = []
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.rstrip("\n")
-                if not line or line.startswith("iso_utc\t"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) < 5:
-                    continue
-                try:
-                    size = int(parts[3])
-                except ValueError:
-                    size = 0
-                rows.append({"ts": parts[0], "action": parts[1], "source": parts[2],
-                             "bytes": size, "destination": parts[4]})
+            lines = [line.rstrip("\n") for line in handle if line.strip()]
     except OSError:
         return rows
+    if not lines:
+        return rows
+    header = [part.strip().lower() for part in lines[0].split("\t")]
+    if header and header[0] in ("iso_utc", "orig_path") or "new_path" in header:
+        layout = "hudfix" if header[:1] == ["iso_utc"] else "legacy5"
+        body = lines[1:]
+    else:
+        layout = None
+        body = lines
+    for line in body:
+        row = _manifest_row(line.split("\t"), layout)
+        if row is not None:
+            rows.append(row)
     return rows
+
+
+def _is_iso_stamp(text):
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", text or ""))
+
+
+def _is_day_stamp(text):
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", text or ""))
+
+
+def _manifest_row(parts, layout):
+    if layout == "hudfix" or (layout is None and len(parts) >= 5 and _is_iso_stamp(parts[0])):
+        if len(parts) < 5:
+            return None
+        raw = parts[3].strip()
+        return {"ts": parts[0], "action": parts[1], "source": parts[2] or None,
+                "bytes": int(raw) if raw.isdigit() else None,
+                "destination": parts[4] or None, "format": "hudfix",
+                "bytes_exact": raw.isdigit(), "reason": None}
+    if layout == "legacy5" or (layout is None and len(parts) >= 5
+                               and parts[0].startswith("/")):
+        if len(parts) < 5:
+            return None
+        raw = parts[2].strip()
+        size = None
+        try:
+            size = int(round(float(raw) * 1024))
+        except ValueError:
+            size = None
+        return {"ts": parts[4], "action": "quarantine", "source": parts[0] or None,
+                "bytes": size, "destination": parts[1] or None, "format": "legacy5",
+                "bytes_exact": False, "reason": parts[3] or None}
+    if layout is None and len(parts) == 3 and _is_day_stamp(parts[0]):
+        return {"ts": parts[0], "action": "quarantine", "source": None, "bytes": None,
+                "destination": None, "format": "legacy3", "bytes_exact": False,
+                "reason": parts[2] or None, "name": parts[1] or None}
+    return None
 
 
 def cmd_plan(args, ctx, actions, errors):

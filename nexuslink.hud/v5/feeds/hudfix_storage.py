@@ -1041,37 +1041,52 @@ def _quarantine_plan(ctx):
             raise hudfix.UsageError("--param days wants an integer, got %r" % raw)
     root = ctx.quarantine_root
     today = datetime.date.today()
-    rows, scanned = [], []
+    rows = []
     for offset in range(days):
         day = (today - datetime.timedelta(days=offset)).isoformat()
         manifest = os.path.join(root, day, hudfix.MANIFEST_NAME)
-        scanned.append(day)
         if not os.path.isfile(manifest):
             continue
         for row in hudfix.read_manifest(manifest):
             row["day"] = day
-            row["destination"] = tilde(row["destination"])
-            row["source"] = tilde(row["source"])
             rows.append(row)
-    rows.sort(key=lambda row: row["ts"], reverse=True)
-    by_action = {}
+    rows.sort(key=lambda row: (row["ts"] or "", row.get("source") or ""), reverse=True)
+    items, by_action, formats, without_source = [], {}, {}, 0
     for row in rows:
+        formats[row["format"]] = formats.get(row["format"], 0) + 1
         by_action[row["action"]] = by_action.get(row["action"], 0) + 1
-    return {
+        if not row["source"]:
+            without_source += 1
+            continue
+        items.append({
+            "path": tilde(row["source"]),
+            "bytes": row["bytes"] or 0,
+            "destination": tilde(row["destination"]) if row["destination"] else None,
+            "action": row["action"],
+            "ts": row["ts"],
+            "format": row["format"],
+        })
+    plan = {
         "ok": True,
-        "items": [{"path": row["source"], "bytes": row["bytes"],
-                   "destination": row["destination"], "action": row["action"],
-                   "ts": row["ts"]} for row in rows[:200]],
+        "items": items[:200],
         "count": len(rows),
-        "bytes": sum(row["bytes"] for row in rows),
+        "bytes": sum(row["bytes"] or 0 for row in rows),
         "would": {"verb": "read", "count": 0, "bytes": 0,
                   "detail": "the MANIFEST rows are the restore instructions"},
         "quarantine_root": tilde(root),
         "days": days,
         "by_action": by_action,
+        "formats": formats,
+        "rows_without_source": without_source,
+        "bytes_exact": all(row["bytes_exact"] for row in rows if row["bytes"] is not None),
         "notes": ["restore = move the destination back to the original path",
                   "rows older than %d d are not read" % days],
     }
+    if without_source or not plan["bytes_exact"]:
+        plan["notes"].append("older manifests here use other columns; a row without "
+                             "an exact byte count or a source path stays unreported, "
+                             "never guessed")
+    return plan
 
 
 def plan_quarantine_list(ctx):
@@ -1333,6 +1348,20 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
                      "--log", log_path]
         for key in roots:
             base_args += ["--root", "%s=%s" % (key, roots[key])]
+
+        # Two older manifest dialects live in the real quarantine, so prove the
+        # reader handles them instead of guessing: a 2026-10 five-column file
+        # (size in KB) and a three-column write-off (no path, no size).
+        older5 = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
+        older3 = (datetime.date.today() - datetime.timedelta(days=3)).isoformat()
+        _write(os.path.join(quarantine, older5, hudfix.MANIFEST_NAME),
+               "orig_path\tnew_path\tsize_kb\treason\tdate\n"
+               "/Users/old/.cache/a\t%s/old5/a\t2\tlegacy entry\t%s\n"
+               "/Users/old/.cache/b\t%s/old5/b\t1\tlegacy entry\t%s\n"
+               % (quarantine, older5, quarantine, older5))
+        _write(os.path.join(quarantine, older3, hudfix.MANIFEST_NAME),
+               "%s\tstale-shot.png\tstale screenshot\n"
+               "%s\tnotes.md\twrite-off\n" % (older3, older3))
         counts = {"plan": 0, "run": 0}
 
         def cli(argv, timeout=180):
@@ -1568,12 +1597,22 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         code, out, _err = cli(["plan", "quarantine-list", "--json"])
         qued = hudfix.one_object(out)
         checks.eq("quarantine.exit", code, hudfix.EXIT_OK)
-        checks.ok("quarantine.rows", (qued or {}).get("count", 0) >= 5,
+        checks.ok("quarantine.rows", (qued or {}).get("count", 0) == 9,
                   repr((qued or {}).get("count")))
         checks.eq("quarantine.bytes_matches",
                   (qued or {}).get("bytes"),
                   sum(row["bytes"] for row in (qued or {}).get("items", [])))
-        checks.ok("quarantine.by_action", (qued or {}).get("by_action", {}).get("cache-npm") == 2)
+        checks.eq("quarantine.bytes_total", (qued or {}).get("bytes"), 8668)
+        checks.eq("quarantine.by_action", (qued or {}).get("by_action"),
+                  {"cache-npm": 2, "hermes-scratch": 2, "trash": 1, "quarantine": 4})
+        checks.eq("quarantine.formats", (qued or {}).get("formats"),
+                  {"hudfix": 5, "legacy5": 2, "legacy3": 2})
+        checks.eq("quarantine.without_source", (qued or {}).get("rows_without_source"), 2)
+        checks.eq("quarantine.bytes_not_claimed_exact", (qued or {}).get("bytes_exact"),
+                  False)
+        checks.ok("quarantine.legacy_rows_in_items",
+                  sum(1 for row in (qued or {}).get("items", [])
+                      if row.get("format") == "legacy5") == 2)
 
         # ---- log: one line per plan and per run -------------------------
         with open(log_path, "r", encoding="utf-8") as handle:

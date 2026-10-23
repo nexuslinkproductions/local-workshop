@@ -125,6 +125,14 @@ refuses `/`, `$HOME`, the quarantine root, any path that contains the quarantine
 root, and anything that vanished before the move - and it only ever moves paths
 that came out of the action's own enumeration.
 
+Three manifest layouts exist in this quarantine, and the reader handles all of
+them instead of guessing: this engine's five columns, the 2026-10 legacy five
+(`orig_path new_path size_kb reason date`, size in KB) and a three-column
+write-off (`date name reason`, no path at all). A row it cannot map keeps nulls
+and is counted under `rows_without_source`, and `bytes_exact: false` says a
+total leans on a KB figure. `quarantine-list` reports `formats`,
+`by_action` and `rows_without_source` for exactly that reason.
+
     ~/.local/state/nexuslink/hudfix.log
 
 One JSON line per `plan` and per `run`, refusals included:
@@ -185,7 +193,7 @@ exit 2; `run` refuses `--fixture`).
 ## Self-checks
 
     python3 nexuslink.hud/v5/feeds/hudfix.py --self-check          # 88 checks
-    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 127 checks
+    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 132 checks
 
 Both build their tree under `$TMPDIR`, drive the real CLI as a subprocess, and
 assert the tree digest before and after every plan, the exit code of every
