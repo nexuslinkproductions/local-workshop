@@ -44,6 +44,10 @@ Safety, in code
   run time, before anything is signalled or restarted.
 * ``system.restart-shell`` without ``--confirm`` exits 2. State-changing runs in
   fixture mode refuse with exit 0: a fixture is a recording, not a host.
+* Every state-changing action has a dry run: ``--plan`` prints the exact argv
+  and changes nothing, and ``--dry-run`` is an alias for it.
+* The crash quarantine writes each MANIFEST row atomically before it moves the
+  file, so a report never leaves the live directory without its row on disk.
 * Nothing is restarted or moved by ``--self-check``.
 
 Fixture layout
@@ -343,6 +347,32 @@ def write_json_atomic(path, payload):
         raise
 
 
+def write_manifest(path, rows):
+    """Rewrite the quarantine MANIFEST atomically: temp file, fsync, os.replace.
+
+    The caller writes the row before it moves the file, so the manifest is the
+    write-ahead record of every move. When the row cannot reach the disk this
+    raises OSError and the caller must not move anything.
+    """
+    target = os.path.expanduser(str(path))
+    parent = os.path.dirname(target) or "."
+    os.makedirs(parent, exist_ok=True)
+    stamp = "%s.%d.tmp" % (target, os.getpid())
+    try:
+        with open(stamp, "w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False, sort_keys=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(stamp, target)
+    except BaseException:
+        try:
+            os.unlink(stamp)
+        except OSError:
+            pass
+        raise
+
+
 def run_cmd(argv, timeout=COMMAND_TIMEOUT_S):
     """Run an argv list with no shell. Returns rc/out/err/timed_out, never raises."""
     if not argv or argv[0] not in ALLOWED_EXECUTABLES:
@@ -521,6 +551,39 @@ class Fixture(object):
     def now_epoch(self):
         value = self.meta().get("now")
         return epoch_from_iso(value) if isinstance(value, str) else None
+
+
+def json_shape(data):
+    """Human word for a JSON value's type, for malformed-input messages."""
+    if isinstance(data, dict):
+        return "an object"
+    if isinstance(data, list):
+        return "an array"
+    if isinstance(data, bool):
+        return "a boolean"
+    if isinstance(data, str):
+        return "a string"
+    if isinstance(data, (int, float)):
+        return "a number"
+    if data is None:
+        return "null"
+    return type(data).__name__
+
+
+def fixture_object(source, name, required=True):
+    """A fixture JSON file that must hold an object. Any other shape -> Malformed.
+
+    A recording is untrusted input like any other. ``[]`` in uptime.json, or
+    ``[1]`` in journalctl-last.json, must answer malformed (ok false, exit 0)
+    instead of raising AttributeError from a bare ``.get``.
+    """
+    data = source.json(name, required=required)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise Malformed("fixture %s must hold a JSON object, got %s"
+                        % (name, json_shape(data)))
+    return data
 
 
 def mode_now(ctx):
@@ -887,12 +950,16 @@ def parse_cgroup_unit(raw):
 
 
 def parse_boottime(raw):
-    match = re.search(r"sec\s*=\s*(\d+)", raw or "")
+    if not isinstance(raw, str):
+        return None
+    match = re.search(r"sec\s*=\s*(\d+)", raw)
     return int(match.group(1)) if match else None
 
 
 def parse_uptime_text(raw):
-    body = raw or ""
+    if not isinstance(raw, str):
+        return None
+    body = raw
     match = re.search(r"up\s+(\d+)\s+days?,\s*(\d+):(\d+)", body)
     if match:
         return int(match.group(1)) * 86400 + int(match.group(2)) * 3600 + int(match.group(3)) * 60
@@ -906,7 +973,9 @@ def parse_uptime_text(raw):
 
 
 def parse_loadavg(raw):
-    match = re.search(r"\{?\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}?", raw or "")
+    if not isinstance(raw, str):
+        return None
+    match = re.search(r"\{?\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\}?", raw)
     if not match:
         return None
     try:
@@ -1024,8 +1093,9 @@ def systemctl_units(ctx):
             "systemctl is Linux-only; this host is %s. Record a capture and use --fixture."
             % platform_name())
     if ctx.mode == "fixture":
-        data = ctx.fixture_source().json("systemctl-failed.json")
-        last_log = ctx.fixture_source().json("journalctl-last.json", required=False) or {}
+        source = ctx.fixture_source()
+        data = source.json("systemctl-failed.json")
+        last_log = fixture_object(source, "journalctl-last.json", required=False)
         units = parse_systemctl_units(data)
         reasons = {}
     else:
@@ -1341,7 +1411,7 @@ def uptime_read(ctx):
     boot_at = None
     source = None
     if ctx.mode == "fixture":
-        data = ctx.fixture_source().json("uptime.json")
+        data = fixture_object(ctx.fixture_source(), "uptime.json")
         boot = parse_boottime(data.get("kern_boottime"))
         source = "kern.boottime" if boot else None
         cold_start = mode_now(ctx) or 0.0
@@ -1392,7 +1462,8 @@ def uptime_read(ctx):
         "boot_at": boot_at,
         "read_from": source,
         "reasons": reasons,
-        "note": "keys match F1 mac_link (mac.uptime_s, mac.uptime_human)",
+        "note": "leaf names match F1 mac_link (uptime_s, uptime_human); F1 nests them under mac, "
+                "this payload keeps them at the top level",
     }
     if uptime_s is None:
         payload["ok"] = False
@@ -1408,7 +1479,7 @@ def load_read(ctx):
         return cached
     reasons = {}
     if ctx.mode == "fixture":
-        data = ctx.fixture_source().json("uptime.json")
+        data = fixture_object(ctx.fixture_source(), "uptime.json")
         avg = parse_loadavg(data.get("vm_loadavg"))
         cores = integer(data.get("ncpu"))
         source = "vm.loadavg"
@@ -1457,7 +1528,8 @@ def load_read(ctx):
         "cores": cores,
         "read_from": source,
         "reasons": reasons,
-        "note": "keys match F1 mac_link (mac.load.avg, mac.load.load1_frac, mac.load.cores)",
+        "note": "leaf names match F1 mac_link (avg, load1_frac, cores); F1 nests them under "
+                "mac.load, this payload keeps them at the top level",
     }
     if avg is None:
         payload["ok"] = False
@@ -1497,7 +1569,8 @@ def protected_refusal(ctx, target, label, why):
         "effect": "refused: nothing was signalled",
         "refusals": refusal_list(),
         "protected_check": {"verdict": "protected", "rule": label, "why": why},
-        "notes": ["the guard runs on the live argument line at plan and at run time"],
+        "notes": ["the guard runs on the live argument line and on the supervisor label "
+                  "or unit, at plan and at run time"],
     }
     return refusal_payload(ctx, "system.restart-shell", "reversible", "protected",
                            "the target resolves to the %s" % label, plan=plan)
@@ -1541,7 +1614,9 @@ def resolve_shell_target(ctx, table=None):
                 "pid %s is not in the process table" % ctx.target)
         target = {"name": process_name(row["args"]), "pid": row["pid"], "ppid": row["ppid"],
                   "args": text(row["args"], 300)}
-        hit = protected_hit(target)
+        # Match against the whole argument line. A long interpreter invocation
+        # can carry the token past the 300 characters kept for display.
+        hit = protected_hit({"name": target["name"], "args": row["args"]})
         if hit:
             return None, protected_refusal(ctx, target, hit[0], hit[1])
         if not is_hud_shell(target["args"] or ""):
@@ -1565,10 +1640,35 @@ def resolve_shell_target(ctx, table=None):
     row = matches[0]
     target = {"name": process_name(row["args"]), "pid": row["pid"], "ppid": row["ppid"],
               "args": text(row["args"], 300)}
-    hit = protected_hit(target)
+    hit = protected_hit({"name": target["name"], "args": row["args"]})
     if hit:
         return None, protected_refusal(ctx, target, hit[0], hit[1])
     return target, None
+
+
+def supervise(ctx, target, kind, name):
+    """Build the supervisor record, but only after its own name passes the guard.
+
+    A launchd label or a systemd unit is the name the restart command carries,
+    so the label can hold a protected rule even when the target's argv looks
+    like a plain shell (for example ai.hermes.gateway-keeper). The guard runs
+    here, before the command is built, and both plan and run reach the
+    supervisor through this function, so both check it.
+    """
+    hit = protected_hit({"name": name, "args": name})
+    if hit:
+        annotated = dict(target)
+        annotated["supervisor"] = kind
+        annotated["supervisor_name"] = name
+        return None, protected_refusal(ctx, annotated, hit[0], hit[1])
+    if kind == "systemd-user":
+        record = {"kind": kind, "unit": name,
+                  "command": ["systemctl", "--user", "restart", name]}
+    else:
+        record = {"kind": kind, "label": name,
+                  "command": ["launchctl", "kickstart", "-k",
+                              "gui/%d/%s" % (os.getuid(), name)]}
+    return record, None
 
 
 def supervisor_for(target, ctx):
@@ -1583,17 +1683,14 @@ def supervisor_for(target, ctx):
                 return None, refusal_payload(
                     ctx, "system.restart-shell", "reversible", "no_supervisor",
                     "unit %s runs in the system slice; restarting it would need root" % unit)
-            return {"kind": "systemd-user", "unit": unit,
-                    "command": ["systemctl", "--user", "restart", unit]}, None
+            return supervise(ctx, target, "systemd-user", unit)
         raw = ctx.fixture_source().text("launchctl-list.txt", required=False)
         if raw:
             jobs, _ = parse_launchctl_list(raw)
             for job in jobs:
                 if job.get("pid") == target["pid"] and job.get("label"):
                     label = job["label"]
-                    return {"kind": "launchd", "label": label,
-                            "command": ["launchctl", "kickstart", "-k",
-                                        "gui/%d/%s" % (os.getuid(), label)]}, None
+                    return supervise(ctx, target, "launchd", label)
         return None, None
     if platform_name() == "linux":
         path = "/proc/%d/cgroup" % target["pid"]
@@ -1609,8 +1706,7 @@ def supervisor_for(target, ctx):
                 ctx, "system.restart-shell", "reversible", "no_supervisor",
                 "unit %s runs in the system slice; restarting it would need root, which "
                 "the HUD does not get" % unit)
-        return {"kind": "systemd-user", "unit": unit,
-                "command": ["systemctl", "--user", "restart", unit]}, None
+        return supervise(ctx, target, "systemd-user", unit)
     if platform_name() == "macos":
         result = run_cmd(["launchctl", "list"], timeout=10.0)
         if result["rc"] != 0:
@@ -1622,9 +1718,7 @@ def supervisor_for(target, ctx):
         for job in jobs:
             if job.get("pid") == target["pid"] and job.get("label"):
                 label = job["label"]
-                return {"kind": "launchd", "label": label,
-                        "command": ["launchctl", "kickstart", "-k",
-                                    "gui/%d/%s" % (os.getuid(), label)]}, None
+                return supervise(ctx, target, "launchd", label)
     return None, None
 
 
@@ -1948,21 +2042,14 @@ def quarantine_run(ctx):
     manifest = os.path.join(destination, "MANIFEST.jsonl")
     os.makedirs(destination, exist_ok=True)
     rows = []
+    log = []
     moved_bytes = 0
+    manifest_errors = 0
     for report in plan["items"]:
         src = os.path.join(directory, report["name"])
         dst = os.path.join(destination, report["name"])
         size = report.get("bytes")
         digest = sha256_file(src)
-        try:
-            os.replace(src, dst)
-        except OSError:
-            try:
-                shutil.move(src, dst)
-            except OSError as exc:
-                rows.append({"name": report["name"], "moved": False,
-                             "reason": exc.strerror or str(exc)})
-                continue
         row = {
             "ts": iso_now(),
             "action": "system.crash-quarantine",
@@ -1975,15 +2062,58 @@ def quarantine_run(ctx):
             "crash_date": report.get("date"),
             "age_days": report.get("age_days"),
             "older_than_days": ctx.older_than_days,
-            "moved": True,
+            "moved": False,
+            "state": "pending",
         }
-        with open(manifest, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=False) + "\n")
+        # Write-ahead: the row reaches the disk before the file leaves the
+        # reports directory, and a row that cannot be written blocks the move.
+        log.append(row)
+        try:
+            write_manifest(manifest, log)
+        except OSError as exc:
+            log.pop()
+            manifest_errors += 1
+            rows.append({"name": report["name"], "moved": False,
+                         "reason": "MANIFEST row was not written: %s"
+                                   % (exc.strerror or str(exc))})
+            continue
+        try:
+            os.replace(src, dst)
+        except OSError:
+            try:
+                shutil.move(src, dst)
+            except OSError as exc:
+                row["state"] = "failed"
+                row["reason"] = exc.strerror or str(exc)
+                try:
+                    write_manifest(manifest, log)
+                except OSError:
+                    manifest_errors += 1
+                rows.append({"name": report["name"], "moved": False,
+                             "reason": row["reason"]})
+                continue
+        row["moved"] = True
+        row["state"] = "moved"
+        try:
+            write_manifest(manifest, log)
+        except OSError as exc:
+            manifest_errors += 1
+            row["reason"] = ("the report moved but its MANIFEST state update failed: %s"
+                             % (exc.strerror or str(exc)))
         rows.append(row)
         moved_bytes += size or 0
     moved = [row for row in rows if row.get("moved")]
+    ok = len(moved) == len(rows) and manifest_errors == 0
+    if ok:
+        reason = None
+    elif manifest_errors and not moved:
+        reason = "no report was moved: its MANIFEST row could not be written"
+    elif manifest_errors:
+        reason = "some files could not be moved or their MANIFEST rows could not be written"
+    else:
+        reason = "some files could not be moved"
     return {
-        "ok": len(moved) == len(rows),
+        "ok": ok,
         "source": SOURCE,
         "mode": ctx.mode,
         "generated_at": iso_now(),
@@ -1992,12 +2122,13 @@ def quarantine_run(ctx):
         "applied": True,
         "moved": len(moved),
         "failed": len(rows) - len(moved),
+        "manifest_errors": manifest_errors,
         "bytes": moved_bytes,
         "destination": tilde(destination),
         "manifest": tilde(manifest),
         "rows": rows,
         "undo": "move each row's dst back to src",
-        "reason": None if len(moved) == len(rows) else "some files could not be moved",
+        "reason": reason,
     }
 
 
@@ -2073,7 +2204,8 @@ def uptime_plan(ctx):
             "items": [],
             "bytes": 0,
             "effect": "reads only; nothing changes",
-            "notes": ["keys reuse F1 mac_link: mac.uptime_s, mac.uptime_human"],
+            "notes": ["leaf names reuse F1 mac_link (uptime_s, uptime_human); F1 nests them "
+                      "under mac, this plan keeps them at the top level"],
         },
     }
 
@@ -2098,7 +2230,8 @@ def load_plan(ctx):
             "items": [],
             "bytes": 0,
             "effect": "reads only; nothing changes",
-            "notes": ["keys reuse F1 mac_link: mac.load.avg, mac.load.load1_frac, mac.load.cores"],
+            "notes": ["leaf names reuse F1 mac_link (avg, load1_frac, cores); F1 nests them "
+                      "under mac.load, this plan keeps them at the top level"],
         },
     }
 
@@ -2130,10 +2263,10 @@ _SPECS = (
      "Restart PipeWire and WirePlumber (Linux); the Mac has no non-root equivalent.",
      restart_audio_plan, restart_audio_run),
     ("system.uptime", "read", False,
-     "Host uptime, reusing F1 mac_link's key names.",
+     "Host uptime; the leaf key names match F1 mac_link.",
      uptime_plan, uptime_run),
     ("system.load", "read", False,
-     "Load average and cores, reusing F1 mac_link's key names.",
+     "Load average and cores; the leaf key names match F1 mac_link.",
      load_plan, load_run),
 )
 
@@ -2165,8 +2298,9 @@ def _cli(argv):
         prog="hudfix_system.py",
         description="HUD maintenance engine: system actions (F8f).")
     parser.add_argument("--action", metavar="NAME", help="one key from ACTIONS")
-    parser.add_argument("--plan", action="store_true",
-                        help="print the dry-run plan; never changes state")
+    parser.add_argument("--plan", "--dry-run", action="store_true", dest="plan",
+                        help="print the dry-run plan; never changes state "
+                             "(--dry-run is an alias for --plan)")
     parser.add_argument("--list", action="store_true", help="list actions and their classes")
     parser.add_argument("--self-check", action="store_true", help="run the proof suite")
     add_ctx_args(parser)
@@ -2309,6 +2443,7 @@ def self_check():
     temp_root = None
     decoys = []
     try:
+        temp_root = tempfile.mkdtemp(prefix="hudfix-selftest-")
         # 1. the table itself
         print("-- table")
         check.equal(len(ACTIONS), 9, "nine actions are registered")
@@ -2428,9 +2563,84 @@ def self_check():
         check.equal(missing_payload.get("reason"), "fixture_missing",
                     "missing fixture path says fixture_missing")
 
+        # 4b. the cache entry lives exactly 10 s; recent-errors has a 60 s override
+        # (D4a). cache_read and cache_store take a clock, so no host call is needed.
+        print("-- cache interval")
+        cache_ctx = Ctx(state_dir=os.path.join(temp_root, "cache"), now=1000000.0)
+        cache_store(cache_ctx, "system.failed-jobs",
+                    {"ok": True, "source": SOURCE, "action": "system.failed-jobs"}, 1000000.0)
+        inside = cache_read(cache_ctx, "system.failed-jobs", 1000009.9)
+        check.ok(isinstance(inside, dict) and inside.get("cached") is True,
+                 "an entry 9.9 s old is a cache hit", inside)
+        check.equal(inside.get("cache_age_s") if isinstance(inside, dict) else None, 9.9,
+                    "the hit reports cache_age_s 9.9")
+        check.equal(cache_read(cache_ctx, "system.failed-jobs", 1000010.0), None,
+                    "an entry at exactly 10.0 s is a cache miss")
+        cache_store(cache_ctx, "system.recent-errors",
+                    {"ok": True, "source": SOURCE, "action": "system.recent-errors"}, 1000000.0)
+        check.ok(isinstance(cache_read(cache_ctx, "system.recent-errors", 1000059.9), dict),
+                 "recent-errors is still a hit at 59.9 s (60 s override)")
+        check.equal(cache_read(cache_ctx, "system.recent-errors", 1000060.0), None,
+                    "recent-errors expires at exactly 60.0 s")
+
+        # 4c. malformed or empty fixture input is an answer (ok false, exit 0),
+        # never a crash. This is the case D1 slipped through.
+        print("-- malformed input")
+        empty_dir = os.path.join(temp_root, "empty-fixture")
+        os.makedirs(empty_dir)
+        for name in ("system.units", "system.failed-jobs", "system.recent-errors",
+                     "system.crash-reports", "system.uptime", "system.load"):
+            payload, code = _cli(["--action", name, "--fixture", empty_dir, "--json"])
+            check.equal(code, 0, "%s on an empty fixture directory exits 0" % name)
+            check.ok(payload.get("ok") is False and bool(payload.get("reason")),
+                     "%s on an empty fixture directory says ok false with a reason" % name,
+                     payload.get("reason"))
+
+        bad_json = os.path.join(temp_root, "bad-json")
+        shutil.copytree(fixture, bad_json)
+        with open(os.path.join(bad_json, "uptime.json"), "w", encoding="utf-8") as handle:
+            handle.write('{"kern_boottime": ')
+        for name in ("system.uptime", "system.load"):
+            payload, code = _cli(["--action", name, "--fixture", bad_json, "--json"])
+            check.equal(code, 0, "%s on malformed JSON exits 0" % name)
+            check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                     "%s on malformed JSON says malformed" % name, payload.get("kind"))
+
+        array_json = os.path.join(temp_root, "array-json")
+        shutil.copytree(fixture, array_json)
+        with open(os.path.join(array_json, "uptime.json"), "w", encoding="utf-8") as handle:
+            handle.write("[]\n")
+        for name in ("system.uptime", "system.load"):
+            payload, code = _cli(["--action", name, "--fixture", array_json, "--json"])
+            check.equal(code, 0, "%s on an array-shaped uptime.json exits 0" % name)
+            check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                     "%s on an array-shaped uptime.json says malformed" % name,
+                     payload.get("kind"))
+
+        units_array = os.path.join(temp_root, "units-array")
+        shutil.copytree(fixture, units_array)
+        with open(os.path.join(units_array, "journalctl-last.json"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("[1]\n")
+        payload, code = _cli(["--action", "system.units", "--fixture", units_array, "--json"])
+        check.equal(code, 0, "units with an array-shaped journalctl-last.json exits 0")
+        check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                 "units with an array-shaped journalctl-last.json says malformed",
+                 payload.get("kind"))
+
+        units_object = os.path.join(temp_root, "units-object")
+        shutil.copytree(fixture, units_object)
+        with open(os.path.join(units_object, "systemctl-failed.json"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("{}\n")
+        payload, code = _cli(["--action", "system.units", "--fixture", units_object, "--json"])
+        check.equal(code, 0, "units with an object-shaped systemctl-failed.json exits 0")
+        check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                 "units with an object-shaped systemctl-failed.json says malformed",
+                 payload.get("kind"))
+
         # 5. quarantine: fake report -> MANIFEST row, original gone
         print("-- quarantine")
-        temp_root = tempfile.mkdtemp(prefix="hudfix-selftest-")
         reports_dir = os.path.join(temp_root, "reports")
         state_dir = os.path.join(temp_root, "state")
         os.makedirs(reports_dir)
@@ -2495,6 +2705,44 @@ def self_check():
             "--reports-dir", reports_dir, "--state-dir", state_dir, "--json"])
         check.equal(missing_days_code, 2, "quarantine without --older-than-days exits 2")
 
+        # 5b. write-ahead: when the MANIFEST row cannot land, the report does not move (D2)
+        print("-- quarantine write-ahead")
+        fail_root = os.path.join(temp_root, "manifest-failure")
+        fail_reports = os.path.join(fail_root, "reports")
+        fail_state = os.path.join(fail_root, "state")
+        os.makedirs(fail_reports)
+        os.makedirs(fail_state)
+        fail_stamp = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=90)
+        fail_name = "FakeCrash-%s.ips" % fail_stamp.strftime("%Y-%m-%d-%H%M%S")
+        fail_path = os.path.join(fail_reports, fail_name)
+        with open(fail_path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"app_name": "fake", "bug_type": "309",
+                                     "timestamp": fail_stamp.strftime(
+                                         "%Y-%m-%d %H:%M:%S.00 +0000")}) + "\n")
+        real_write_manifest = globals()["write_manifest"]
+
+        def failing_write_manifest(path, rows_snapshot):
+            raise OSError(28, "No space left on device (injected)")
+
+        globals()["write_manifest"] = failing_write_manifest
+        try:
+            payload, code = _cli(["--action", "system.crash-quarantine", "--confirm",
+                                  "--older-than-days", "30", "--reports-dir", fail_reports,
+                                  "--state-dir", fail_state, "--json"])
+        finally:
+            globals()["write_manifest"] = real_write_manifest
+        check.equal(code, 0, "an unwritable MANIFEST is an answer, not a crash")
+        check.ok(payload.get("ok") is False, "an unwritable MANIFEST says ok false",
+                 payload.get("ok"))
+        check.equal(payload.get("moved"), 0, "no report moves without its MANIFEST row")
+        check.ok(payload.get("manifest_errors") == 1,
+                 "the answer counts the MANIFEST failure", payload.get("manifest_errors"))
+        check.ok(os.path.exists(fail_path), "the report is still in the reports directory")
+        failed_manifests = []
+        for fail_dir, _dirs, files in os.walk(os.path.join(fail_state, "quarantine")):
+            failed_manifests.extend(name for name in files if name == "MANIFEST.jsonl")
+        check.equal(len(failed_manifests), 0, "no MANIFEST file was left behind")
+
         # 6. restart-shell: no confirm -> exit 2; protected pid -> refusal
         print("-- restart guards")
         decoy = _spawn_decoy("quickshell")
@@ -2540,6 +2788,49 @@ def self_check():
         check.ok(not is_hud_shell("/repo/nexuslink.hud/v5/feeds/hudfix_system.py --action x"),
                  "a path containing nexuslink.hud is not a HUD shell")
 
+        # 6b. the supervisor's own name is guarded too, not just the process (D3)
+        print("-- supervisor guard")
+        label_gap = os.path.join(temp_root, "label-gap")
+        shutil.copytree(fixture, label_gap)
+        os.unlink(os.path.join(label_gap, "cgroup.txt"))
+        with open(os.path.join(label_gap, "launchctl-list.txt"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("PID\tStatus\tLabel\n2506443\t0\tai.hermes.gateway-keeper\n")
+        payload, code = _cli(["--action", "system.restart-shell", "--plan",
+                              "--fixture", label_gap, "--json"])
+        check.equal(code, 0, "a protected launchd label refuses with exit 0")
+        check.equal(payload.get("reason"), "protected",
+                    "a launchd label naming the gateway is refused as protected")
+        check.equal(payload.get("plan", {}).get("protected_check", {}).get("rule"), "gateway",
+                    "the label refusal names the gateway rule")
+        check.equal(payload.get("plan", {}).get("command"), None,
+                    "the label refusal builds no kickstart command")
+        benign_label = os.path.join(temp_root, "label-benign")
+        shutil.copytree(fixture, benign_label)
+        os.unlink(os.path.join(benign_label, "cgroup.txt"))
+        with open(os.path.join(benign_label, "launchctl-list.txt"), "w",
+                  encoding="utf-8") as handle:
+            handle.write("PID\tStatus\tLabel\n2506443\t0\tcom.nexuslink.hud.shell\n")
+        payload, code = _cli(["--action", "system.restart-shell", "--plan",
+                              "--fixture", benign_label, "--json"])
+        check.equal(code, 0, "a plain launchd label plans with exit 0")
+        check.ok(payload.get("ok") is True and payload.get("plan", {}).get("command"),
+                 "a plain launchd label produces the kickstart command",
+                 payload.get("reason"))
+        benign_command = ((payload.get("plan") or {}).get("command") or [])
+        check.equal(benign_command[-1:], ["gui/%d/com.nexuslink.hud.shell" % os.getuid()],
+                    "the kickstart command names the label")
+        unit_gap = os.path.join(temp_root, "unit-gap")
+        shutil.copytree(fixture, unit_gap)
+        with open(os.path.join(unit_gap, "cgroup.txt"), "w", encoding="utf-8") as handle:
+            handle.write("0::/user.slice/user-1000.slice/user@1000.service/app.slice/"
+                         "hermes-gateway.service\n")
+        payload, code = _cli(["--action", "system.restart-shell", "--plan",
+                              "--fixture", unit_gap, "--json"])
+        check.equal(code, 0, "a protected systemd unit name refuses with exit 0")
+        check.equal(payload.get("reason"), "protected",
+                    "a systemd unit naming the gateway is refused as protected")
+
         # 7. plans exist for every action, are read-only where they claim to be
         print("-- plans")
         for name, spec in ACTIONS.items():
@@ -2570,6 +2861,11 @@ def self_check():
                     "restart-shell names the systemd unit from the cgroup fixture")
         check.equal(shell_plan["command"][:3], ["systemctl", "--user", "restart"],
                     "restart-shell restarts through the supervisor")
+        plan_text = _run_json(["--action", "system.restart-shell", "--plan",
+                               "--fixture", fixture, "--json"])[2]
+        dry_text = _run_json(["--action", "system.restart-shell", "--dry-run",
+                              "--fixture", fixture, "--json"])[2]
+        check.equal(dry_text, plan_text, "--dry-run prints the same plan as --plan")
 
         # 8. platform honesty
         print("-- host honesty")
