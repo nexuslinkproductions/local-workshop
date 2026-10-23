@@ -2,7 +2,7 @@
   "recorded_at": "2026-10-23T00:16:00Z",
   "host": "mac",
   "recorded_on": "synthetic: the same host with the LAN, DNS and the tunnel all down",
-  "sanitised": "Built by hand from the healthy capture so every check has one failing input.",
+  "sanitised": "Built by hand from the healthy capture so every check has one failing input. LAN addresses are from the documentation range 192.0.2.0/24 and every ether address is a locally administered documentation value 02:00:5e:10:00:xx.",
   "tailnet_gateway": "100.100.0.1",
   "dns_probe": {
     "name": "example.com",
@@ -21,12 +21,12 @@
     "Peer": {}
   },
   "commands": {
-    "ping_gateway": "PING 192.168.0.1 (192.168.0.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\n\n--- 192.168.0.1 ping statistics ---\n3 packets transmitted, 0 packets received, 100.0% packet loss\n",
+    "ping_gateway": "PING 192.0.2.1 (192.0.2.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\n\n--- 192.0.2.1 ping statistics ---\n3 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_tailnet_gateway": "PING 100.100.0.1 (100.100.0.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\nRequest timeout for icmp_seq 3\nRequest timeout for icmp_seq 4\n\n--- 100.100.0.1 ping statistics ---\n5 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_public": "PING 1.1.1.1 (1.1.1.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\n\n--- 1.1.1.1 ping statistics ---\n3 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_jitter": "PING 1.1.1.1 (1.1.1.1): 56 data bytes\n\n--- 1.1.1.1 ping statistics ---\n20 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "netstat_route": "Routing tables\n\nInternet:\nDestination        Gateway            Flags               Netif Expire\ndefault            link#15            UCSIg             bridge0      !\ndefault            link#25            UCSIg               utun4      !\n",
-    "ifconfig": "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384\n\tinet 127.0.0.1 netmask 0xff000000\nen0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether 00:00:00:00:00:00\n\tstatus: inactive\n",
+    "ifconfig": "lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384\n\tinet 127.0.0.1 netmask 0xff000000\nen0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\tether 02:00:5e:10:00:00\n\tstatus: inactive\n",
     "scutil_dns": "DNS configuration\n\nresolver #1\n  search domain[0] : local\n  nameserver[0] : 127.0.0.1\n  flags    : Request A records\n  reach    : 0x00000000 (Not Reachable)\n"
   }
 }

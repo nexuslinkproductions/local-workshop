@@ -917,11 +917,13 @@ def resolve_tailnet_gateway(ctx, fixture=None):
 # --------------------------------------------------------------------------
 
 def envelope(action, ctx, source, **fields):
-    """The one payload constructor. Every success carries ``generated_at``.
+    """The one success constructor. Every payload carries ``generated_at``.
 
     Run, plan and dry-run payloads all come through here, so no emit site can
     skip the timestamp or the four identity keys: a plan is built by
     ``_plan_base`` on top of this, and ``_dry_run_payload`` copies the plan.
+    Errors come through ``error_payload``, the one error constructor, so an
+    ``ok: false`` answer cannot skip the stamp either.
     """
     payload = {
         "ok": True,
@@ -932,6 +934,21 @@ def envelope(action, ctx, source, **fields):
     }
     payload.update(fields)
     return payload
+
+
+def error_payload(reason, kind=None, **fields):
+    """The one error constructor: no ``ok: false`` answer can skip the stamp.
+
+    Argument failures, refusals, fixture problems and a caught crash all emit
+    exactly this object, so ``generated_at`` is on every envelope, success or
+    error, as the feeds brief requires.
+    """
+    payload = {"ok": False, "generated_at": utc_now_iso(), "reason": reason}
+    if kind is not None:
+        payload["kind"] = kind
+    payload.update(fields)
+    return payload
+
 
 
 def _source(ctx):
@@ -972,7 +989,7 @@ def _dry_run_payload(plan):
 
 
 def _refusal(reason, kind="not_this_host"):
-    return {"ok": False, "reason": reason, "kind": kind}
+    return error_payload(reason, kind)
 
 
 def _cache_hit_payload(data, age):
@@ -1399,9 +1416,6 @@ def run_route(ctx=None, confirm=None):
     missing = [name for name, text in (("netstat", netstat_text),
                                        ("ifconfig", ifconfig_text),
                                        ("scutil --dns", dns_text)) if not text]
-    if len(missing) == 3:
-        return {"ok": False, "reason": "no route data: %s unreadable" % ", ".join(missing),
-                "kind": "missing"}
 
     interfaces = parse_interfaces(ifconfig_text or "")
     routes = parse_default_routes(netstat_text or "")
@@ -1417,28 +1431,75 @@ def run_route(ctx=None, confirm=None):
             tailscale_ips = [ip for ip in ips if isinstance(ip, str)]
     tunnel = tunnel_of(interfaces, tailscale_ips)
 
+    # A field that was not measured is null with a reason, never a quiet zero,
+    # and the envelope only claims success when at least one measurement landed.
+    default_route = {
+        "gateway": gateway,
+        "interface": gateway_iface,
+        "reason": None if gateway else ("netstat unreadable" if not netstat_text
+                                        else "no usable default route row in netstat"),
+    }
+    tunnel_block = tunnel or {
+        "interface": None, "address": None, "up": False, "running": False,
+        "reason": "no utun carrying a Tailscale address",
+    }
+    dns_block = dict(dns)
+    if not dns_block["servers"]:
+        dns_block["reason"] = ("scutil --dns unreadable" if not dns_text
+                               else "no nameserver in scutil --dns")
+    interfaces_block = {
+        "count": len(interfaces),
+        "tunnel_candidates": sorted(name for name, iface in interfaces.items()
+                                    if any(in_tailnet(entry["address"])
+                                           for entry in iface["inet"])),
+    }
+    if not interfaces:
+        interfaces_block["reason"] = ("ifconfig unreadable" if not ifconfig_text
+                                      else "no interface in ifconfig")
+
+    measured = {
+        "default_route": gateway is not None,
+        "tunnel": tunnel is not None,
+        "dns": bool(dns_block["servers"]),
+        "interfaces": bool(interfaces),
+    }
+    unmeasured = {}
+    if not measured["default_route"]:
+        unmeasured["default_route"] = default_route["reason"]
+    if not measured["tunnel"]:
+        unmeasured["tunnel"] = tunnel_block["reason"]
+    if not measured["dns"]:
+        unmeasured["dns"] = dns_block["reason"]
+    if not measured["interfaces"]:
+        unmeasured["interfaces"] = interfaces_block["reason"]
+
     payload = envelope(
         "network.route", ctx, source,
         host=host_label,
         cached=False,
         cache_age_s=0.0,
         cache_ttl_s=CACHE_TTL_S,
-        default_route={"gateway": gateway, "interface": gateway_iface},
+        default_route=default_route,
         default_routes=routes,
-        tunnel=tunnel or {"interface": None, "address": None, "up": False,
-                          "running": False, "reason": "no utun carrying a Tailscale address"},
-        dns=dns,
-        interfaces=({"count": len(interfaces),
-                     "tunnel_candidates": sorted(name for name, iface in interfaces.items()
-                                                 if any(in_tailnet(entry["address"])
-                                                        for entry in iface["inet"]))}),
+        tunnel=tunnel_block,
+        dns=dns_block,
+        interfaces=interfaces_block,
+        measured=measured,
+        unmeasured=unmeasured,
         missing=missing,
         commands=list(trace),
     )
+    reason_list = "; ".join("%s: %s" % (name, reason)
+                            for name, reason in unmeasured.items())
+    if not any(measured.values()):
+        payload["ok"] = False
+        payload["kind"] = "missing"
+        payload["reason"] = "nothing measured: " + reason_list
+        return payload
     if gateway is None:
         payload["ok"] = False
-        payload["reason"] = "no usable default route in the netstat table"
         payload["kind"] = "missing"
+        payload["reason"] = "no usable default route: " + reason_list
         return payload
     written = cache_put(ctx, ROUTE_CACHE_NAME, key, payload)
     if written:
@@ -1537,8 +1598,12 @@ def run_flush_dns(ctx=None, confirm=None):
 # network.connectivity
 # --------------------------------------------------------------------------
 
-def _check(ok, reason=None, **evidence):
-    return {"ok": bool(ok), "reason": None if ok else (reason or "check failed"),
+def _check(ok, reason=None, measured=True, **evidence):
+    """One connectivity check. ``measured`` is false when there was no input
+    to measure at all (no capture, no probe, no status), which is different
+    from measuring a failure: a ping that timed out was measured."""
+    return {"ok": bool(ok), "measured": bool(measured),
+            "reason": None if ok else (reason or "check failed"),
             "evidence": evidence}
 
 
@@ -1680,10 +1745,10 @@ def run_connectivity(ctx=None, confirm=None):
     else:
         gateway_ping = None
     if gateway is None:
-        gateway_check = _check(False, "no default route", gateway=None)
+        gateway_check = _check(False, "no default route", measured=False, gateway=None)
     elif gateway_ping is None:
         gateway_check = _check(False, "no gateway ping capture in the fixture",
-                               gateway=gateway)
+                               measured=False, gateway=gateway)
     else:
         answered = gateway_ping.get("rtt_ms") is not None
         gateway_check = _check(
@@ -1703,7 +1768,7 @@ def run_connectivity(ctx=None, confirm=None):
         public_ping = entry
     if public_ping is None:
         public_check = _check(False, "no public ping capture in the fixture",
-                              host=PUBLIC_HOST)
+                              measured=False, host=PUBLIC_HOST)
     else:
         answered = public_ping.get("rtt_ms") is not None
         public_check = _check(
@@ -1713,8 +1778,17 @@ def run_connectivity(ctx=None, confirm=None):
 
     # dns resolves
     addresses = dns_result.get("addresses") or []
+    if fixture is None:
+        dns_measured = True
+    else:
+        probe_block = fixture.get("dns_probe")
+        dns_measured = isinstance(probe_block, dict) and any(
+            key in probe_block for key in ("addresses", "error", "elapsed_ms"))
     dns_check = _check(bool(addresses) and not dns_result.get("error"),
-                       dns_result.get("error") or "no address returned",
+                       dns_result.get("error") or ("no dns_probe in the fixture"
+                                                   if not dns_measured
+                                                   else "no address returned"),
+                       measured=dns_measured,
                        name=dns_name, addresses=addresses[:3],
                        count=len(addresses), elapsed_ms=dns_result.get("elapsed_ms"))
 
@@ -1730,7 +1804,7 @@ def run_connectivity(ctx=None, confirm=None):
     tunnel = tunnel_of(interfaces, tailscale_ips)
     if status is None:
         tunnel_check = _check(False, status_reason or "tailscale status unavailable",
-                              backend=None)
+                              measured=False, backend=None)
     elif backend not in (None, "Running"):
         tunnel_check = _check(False, "tailscale backend is %s" % backend,
                               backend=backend, address=None)
@@ -1752,6 +1826,8 @@ def run_connectivity(ctx=None, confirm=None):
         "tunnel_up": tunnel_check,
     }
     failed = [name for name, check in checks.items() if not check["ok"]]
+    measured = {name: check["measured"] for name, check in checks.items()}
+    unmeasured = [name for name, value in measured.items() if not value]
     payload = envelope(
         "network.connectivity", ctx, source,
         cached=False,
@@ -1760,10 +1836,20 @@ def run_connectivity(ctx=None, confirm=None):
         healthy=not failed,
         checks=checks,
         failed=failed,
+        measured=measured,
+        unmeasured=unmeasured,
         reason=None if not failed else "; ".join(
             "%s: %s" % (name, checks[name]["reason"]) for name in failed),
         commands=list(trace),
     )
+    if not any(measured.values()):
+        # Nothing was captured or probed: four false checks with reasons are an
+        # honest absence, not a successful answer.
+        payload["ok"] = False
+        payload["kind"] = "missing"
+        payload["reason"] = "nothing measured: " + "; ".join(
+            "%s: %s" % (name, checks[name]["reason"]) for name in unmeasured)
+        return payload
     written = cache_put(ctx, CONNECTIVITY_CACHE_NAME, key, payload)
     if written:
         payload["cache_path"] = written
@@ -1846,8 +1932,25 @@ def _count_class(name):
     return len([1 for entry in ACTIONS.values() if entry["class"] == name])
 
 
+class UsageProblem(Exception):
+    """An argument argparse cannot accept, carried to main as one JSON answer."""
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """argparse that raises instead of printing usage and dying.
+
+    The CLI contract is one JSON object on stdout for every argument failure,
+    exit 2; argparse's stock behaviour (usage on stderr, ``SystemExit``, no
+    stdout) breaks it for values it cannot bind, which is how
+    ``--timeout-scale -inf`` used to produce no answer at all.
+    """
+
+    def error(self, message):
+        raise UsageProblem(message)
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(
+    parser = JsonArgumentParser(
         prog=PROGRAM,
         description="hudfix network actions: latency, jitter, route, flush-dns, connectivity.")
     parser.add_argument("--list", action="store_true", help="every action with its class")
@@ -1866,11 +1969,34 @@ def build_parser():
     parser.add_argument("--target", metavar="HOST", help="override the jitter target")
     parser.add_argument("--dns-name", metavar="NAME", help="name used by the DNS check")
     parser.add_argument("--host", choices=("mac", "linux"), help="override host detection")
-    parser.add_argument("--timeout-scale", type=float, default=1.0, metavar="FACTOR",
+    parser.add_argument("--timeout-scale", type=str, default="1.0", metavar="FACTOR",
                         help="multiply every command timeout; a finite float from "
                              "%g to %g, default 1.0 (slow hosts)"
                              % (TIMEOUT_SCALE_MIN, TIMEOUT_SCALE_MAX))
     return parser
+
+
+def _normalise_argv(argv):
+    """Bind ``--timeout-scale VALUE`` as one token, whatever VALUE starts with.
+
+    argparse refuses to take ``-inf`` or ``-1`` as the value of a separate
+    option (it reads them as options), so the CLI would exit without an answer.
+    The value is validated in ``main`` either way; merging it into the ``=``
+    form lets the validator, not argparse, produce the refusal.
+    """
+    out = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--timeout-scale":
+            if index + 1 >= len(argv):
+                raise UsageProblem("--timeout-scale needs a value")
+            out.append("--timeout-scale=" + str(argv[index + 1]))
+            index += 2
+            continue
+        out.append(token)
+        index += 1
+    return out
 
 
 def ctx_from_args(args):
@@ -1901,13 +2027,22 @@ def print_json(payload, compact):
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    compact_hint = "--json" in raw
+
+    # argparse must never print usage instead of an answer: every argument
+    # failure is one JSON object on stdout and exit 2.
+    try:
+        args = build_parser().parse_args(_normalise_argv(raw))
+    except UsageProblem as exc:
+        print_json(error_payload(str(exc), "bad_argument"), compact_hint)
+        return 2
 
     # A bad scale is a bad argument: refuse it here, before any ctx exists or
     # any timeout is converted, so an absurd value cannot reach subprocess.
     scale, scale_reason = validate_timeout_scale(args.timeout_scale)
     if scale_reason is not None:
-        print_json({"ok": False, "reason": scale_reason, "kind": "bad_argument"}, args.json)
+        print_json(error_payload(scale_reason, "bad_argument"), args.json)
         return 2
     args.timeout_scale = scale
 
@@ -1916,8 +2051,8 @@ def main(argv=None):
 
     chosen = [flag for flag in (args.list, args.plan, args.run) if flag]
     if len(chosen) != 1:
-        print_json({"ok": False, "reason": "give exactly one of --list, --plan, --run, "
-                                           "--self-check"}, args.json)
+        print_json(error_payload("give exactly one of --list, --plan, --run, "
+                                 "--self-check", "bad_argument"), args.json)
         return 2
 
     ctx = ctx_from_args(args)
@@ -1928,13 +2063,13 @@ def main(argv=None):
 
     name = args.plan or args.run
     if name not in ACTIONS:
-        print_json({"ok": False, "reason": "unknown action %r" % name,
-                    "actions": sorted(ACTIONS)}, args.json)
+        print_json(error_payload("unknown action %r" % name, "bad_argument",
+                                 actions=sorted(ACTIONS)), args.json)
         return 2
 
     if _fixture_path(ctx) is not None and not Path(str(_fixture_path(ctx))).exists():
-        print_json({"ok": False, "reason": "fixture does not exist: %s"
-                    % display_path(_fixture_path(ctx)), "kind": "missing"}, args.json)
+        print_json(error_payload("fixture does not exist: %s"
+                                 % display_path(_fixture_path(ctx)), "missing"), args.json)
         return 2
 
     try:
@@ -1945,8 +2080,15 @@ def main(argv=None):
     except FixtureProblem as exc:
         # A named file that is missing is a usage error (exit 2). A file that
         # is there but unreadable or malformed is an answer: ok false, exit 0.
-        print_json({"ok": False, "reason": exc.reason, "kind": exc.kind}, args.json)
+        print_json(error_payload(exc.reason, exc.kind), args.json)
         return 2 if exc.kind == "missing" else 0
+    except (BrokenPipeError, KeyboardInterrupt):
+        raise
+    except Exception as exc:  # noqa: BLE001 - one JSON line, never a traceback
+        # A crash path still owes the caller one JSON object on stdout.
+        print_json(error_payload("%s: %s" % (type(exc).__name__, exc), "crash"),
+                   args.json)
+        return 1
 
     print_json(payload, args.json)
     if payload.get("ok") is False and payload.get("kind") == "not_this_host" and args.run:
@@ -2233,7 +2375,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
     def check_route_fixture():
         payload = run_route(fixture_ctx(healthy_path))
         assert_true(payload["ok"] is True, "route ok is false: %r" % payload.get("reason"))
-        assert_true(payload["default_route"]["gateway"] == "192.168.0.1",
+        assert_true(payload["default_route"]["gateway"] == "192.0.2.1",
                     "gateway %r" % payload["default_route"])
         assert_true(payload["default_route"]["interface"] == "en0",
                     "interface %r" % payload["default_route"])
@@ -2246,7 +2388,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         assert_true(payload["tunnel"]["up"] is True, "tunnel is not up")
         addresses = [server["address"] for server in payload["dns"]["servers"]]
         assert_true("100.100.100.100" in addresses, "no tailnet resolver: %r" % addresses)
-        assert_true("192.168.0.1" in addresses, "no LAN resolver: %r" % addresses)
+        assert_true("192.0.2.1" in addresses, "no LAN resolver: %r" % addresses)
         assert_true(payload["dns"]["tailnet_resolver"] is True, "tailnet_resolver false")
         assert_true("example-tailnet.ts.net" in payload["dns"]["search_domains"],
                     "search domains %r" % payload["dns"]["search_domains"])
@@ -2254,7 +2396,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                           if s["address"] == "100.100.100.100"][0]
         assert_true(tailnet_server["interface"] == "utun4",
                     "tailnet resolver interface %r" % tailnet_server)
-        return "default 192.168.0.1/en0, tunnel utun4 100.100.123.2, 4 DNS servers"
+        return "default 192.0.2.1/en0, tunnel utun4 100.100.123.2, 4 DNS servers"
 
     record("route_fixture", check_route_fixture)
 
@@ -2271,12 +2413,12 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             assert_true(check["ok"] is True, "%s is false on the healthy fixture: %r"
                         % (name, check["reason"]))
         evidence = payload["checks"]["gateway_reachable"]["evidence"]
-        assert_true(evidence["gateway"] == "192.168.0.1",
+        assert_true(evidence["gateway"] == "192.0.2.1",
                     "gateway evidence names %r, not the default route gateway"
                     % evidence.get("gateway"))
         assert_true(abs(evidence["rtt_ms"] - 32.86) < 0.02,
                     "gateway rtt %r is not the LAN gateway capture" % evidence.get("rtt_ms"))
-        return "4 of 4 true, gateway evidence 192.168.0.1 at 32.86 ms"
+        return "4 of 4 true, gateway evidence 192.0.2.1 at 32.86 ms"
 
     record("connectivity_healthy", check_connectivity_healthy)
 
@@ -2290,7 +2432,9 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         assert_true(sorted(payload["failed"]) == ["dns_resolves", "gateway_reachable",
                                                   "public_reachable", "tunnel_up"],
                     "failed list %r" % payload["failed"])
-        return "4 of 4 false, each with a reason, healthy false"
+        assert_true(any(payload["measured"].values()),
+                    "the down fixture measured nothing at all")
+        return "4 of 4 false, each with a reason, healthy false, 3 of 4 measured"
 
     record("connectivity_down", check_connectivity_down)
 
@@ -2324,8 +2468,8 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
 
         gateway_case = json.loads(json.dumps(base))
         gateway_case["commands"]["ping_gateway"] = (
-            "PING 192.168.0.1 (192.168.0.1): 56 data bytes\n"
-            "\n--- 192.168.0.1 ping statistics ---\n"
+            "PING 192.0.2.1 (192.0.2.1): 56 data bytes\n"
+            "\n--- 192.0.2.1 ping statistics ---\n"
             "3 packets transmitted, 0 packets received, 100.0% packet loss\n")
         path = temp_root / "gateway-down.json"
         path.write_text(json.dumps(gateway_case), encoding="utf-8")
@@ -2699,7 +2843,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             assert_true(scale is None and bool(reason),
                         "scale %r was accepted as %r" % (value, scale))
         refused_cli = []
-        for text in ("1000000", "inf", "nan", "-1"):
+        for text in ("1000000", "inf", "-inf", "nan", "-1", "abc"):
             out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
                                   "--run", "network.route", "--json",
                                   "--timeout-scale", text,
@@ -2717,6 +2861,9 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             assert_true(payload.get("ok") is False, "--timeout-scale %s is not ok:false" % text)
             assert_true(payload.get("kind") == "bad_argument",
                         "--timeout-scale %s kind %r" % (text, payload.get("kind")))
+            assert_true(isinstance(payload.get("generated_at"), str)
+                        and bool(stamp_re.match(payload["generated_at"])),
+                        "--timeout-scale %s has no generated_at" % text)
             assert_true("0.01" in (payload.get("reason") or ""),
                         "--timeout-scale %s reason does not state the range: %r"
                         % (text, payload.get("reason")))
@@ -2803,6 +2950,145 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                 % (len(stamped), len(refused_cli), ", ".join(parity), issued, issued))
 
     record("payload_contract", check_payload_contract)
+
+    # 20. the committed fixtures carry no real identifiers: documentation MACs
+    #     and documentation LAN ranges only, with the record counts unchanged.
+    def check_fixture_sanitised():
+        mac_re = re.compile(
+            r"(?<![0-9A-Fa-f:])[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}(?![0-9A-Fa-f:])")
+        dotted_re = re.compile(
+            r"(?<![0-9A-Fa-f.])[0-9A-Fa-f]{2}(?:\.[0-9A-Fa-f]{2}){5}(?![0-9A-Fa-f.])")
+        private_re = re.compile(r"192\.168\.|10\.[0-9]+\.|172\.(?:1[6-9]|2[0-9]|3[01])\.")
+        doc_re = re.compile(r"192\.0\.2\.|198\.51\.100\.|203\.0\.113\.")
+        mac_count = 0
+        for path in (healthy_path, down_path):
+            text = path.read_text(encoding="utf-8")
+            for mac in mac_re.findall(text):
+                assert_true(mac.startswith("02:00:5e:10:"),
+                            "%s keeps a non-documentation MAC %r" % (path.name, mac))
+            for mac in dotted_re.findall(text):
+                assert_true(mac.startswith("02.00.5e."),
+                            "%s keeps a non-documentation MAC %r" % (path.name, mac))
+            found = private_re.search(text)
+            assert_true(found is None,
+                        "%s keeps a private LAN address: %r"
+                        % (path.name, found.group(0) if found else None))
+            mac_count += len(mac_re.findall(text))
+        healthy = healthy_path.read_text(encoding="utf-8")
+        assert_true(doc_re.search(healthy), "the healthy fixture has no documentation LAN")
+        for needle in ("192.168.0.", "192.168.2.", "192.168.3.",
+                       "2001:4bb8", "fd9e:", "fd8d:"):
+            assert_true(needle not in healthy
+                        and needle not in down_path.read_text(encoding="utf-8"),
+                        "a recording keeps the real identifier %r" % needle)
+        data = json.loads(healthy)
+        assert_true(len(data["commands"]) == 7,
+                    "command capture count changed: %d" % len(data["commands"]))
+        assert_true(len(parse_interfaces(data["commands"]["ifconfig"])) == 25,
+                    "interface record count changed")
+        assert_true(len(peers_of(data["tailscale"])) == 2, "peer record count changed")
+        assert_true(len(parse_default_routes(data["commands"]["netstat_route"])) == 4,
+                    "default route record count changed")
+        return ("2 fixtures, %d MAC-shaped values all in 02:00:5e:10 / 02.00.5e, "
+                "no private LAN, 7 captures, 25 interfaces, 2 peers, 4 default rows"
+                % mac_count)
+
+    record("fixture_sanitised", check_fixture_sanitised)
+
+    # 21. a read that measured nothing is an error answer, not ok:true with
+    #     four false checks; every unmeasured field is null with a reason.
+    def check_null_measurements():
+        empty = temp_root / "null-measurements.json"
+        empty.write_text(json.dumps({"host": "mac", "commands": {}}), encoding="utf-8")
+
+        route = run_route(fixture_ctx(empty))
+        assert_true(route["ok"] is False, "a route read with nothing measured is ok:true")
+        assert_true(route["kind"] == "missing", "route kind %r" % route.get("kind"))
+        assert_true(not any(route["measured"].values()), "route claims a measurement")
+        assert_true(set(route["unmeasured"]) == {"default_route", "tunnel", "dns",
+                                                 "interfaces"},
+                    "route unmeasured %r" % sorted(route["unmeasured"]))
+        assert_true(route["default_route"]["gateway"] is None
+                    and bool(route["default_route"]["reason"]),
+                    "default_route is not null with a reason: %r" % route["default_route"])
+        assert_true(route["tunnel"]["address"] is None and bool(route["tunnel"]["reason"]),
+                    "tunnel is not null with a reason: %r" % route["tunnel"])
+        assert_true(route["dns"]["servers"] == [] and bool(route["dns"]["reason"]),
+                    "dns is not empty with a reason: %r" % route["dns"])
+        assert_true(route["interfaces"]["count"] == 0
+                    and bool(route["interfaces"]["reason"]),
+                    "interfaces is not empty with a reason: %r" % route["interfaces"])
+        assert_true("nothing measured" in route["reason"],
+                    "route reason %r" % route["reason"])
+
+        conn = run_connectivity(fixture_ctx(empty))
+        assert_true(conn["ok"] is False,
+                    "a connectivity read with nothing measured is ok:true")
+        assert_true(conn["kind"] == "missing", "connectivity kind %r" % conn.get("kind"))
+        assert_true(not any(conn["measured"].values()),
+                    "connectivity claims a measurement")
+        for name, check in conn["checks"].items():
+            assert_true(check["measured"] is False, "%s claims measured" % name)
+            assert_true(check["ok"] is False and bool(check["reason"]),
+                        "%s has no reason" % name)
+        assert_true("nothing measured" in conn["reason"],
+                    "connectivity reason %r" % conn["reason"])
+
+        # a measurement that reports failure is still a measurement: the down
+        # fixture stays ok:true with healthy false
+        down = run_connectivity(fixture_ctx(down_path))
+        assert_true(down["ok"] is True and down["healthy"] is False,
+                    "the down fixture is no longer an ok answer")
+        assert_true(any(down["measured"].values()), "the down fixture measured nothing")
+        return ("route 0/4 and connectivity 0/4 measured -> ok false with a reason "
+                "list; down fixture measured and ok true, healthy false")
+
+    record("null_measurements", check_null_measurements)
+
+    # 22. every error answer, in-process and CLI, carries generated_at, and
+    #     every argument failure is one JSON line on stdout with exit 2.
+    def check_error_stamps():
+        stamp_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+        def stamped(payload, label):
+            value = payload.get("generated_at")
+            assert_true(isinstance(value, str) and bool(stamp_re.match(value)),
+                        "%s has no UTC ISO generated_at: %r" % (label, value))
+            assert_true(payload.get("ok") is False, "%s is not ok:false" % label)
+            assert_true(bool(payload.get("reason")), "%s has no reason" % label)
+
+        stamped(_refusal("host refusal"), "_refusal")
+        stamped(error_payload("boom", "malformed"), "error_payload")
+        empty = temp_root / "stamp-empty.json"
+        empty.write_text(json.dumps({"host": "mac", "commands": {}}), encoding="utf-8")
+        stamped(run_route(fixture_ctx(empty)), "route nothing measured")
+        stamped(run_connectivity(fixture_ctx(empty)), "connectivity nothing measured")
+        stamped(run_flush_dns(fixture_ctx(healthy_path)), "flush-dns fixture refusal")
+
+        bad = temp_root / "stamp-bad.json"
+        bad.write_text("{not json", encoding="utf-8")
+        cases = [
+            (["--fixture", str(bad), "--run", "network.latency", "--json"], 0),
+            (["--plan", "network.nope", "--json"], 2),
+            (["--run", "network.route", "--json", "--timeout-scale", "abc"], 2),
+            (["--run", "network.route", "--json", "--timeout-scale", "-inf"], 2),
+            (["--run", "network.route", "--json", "--timeout-scale", "inf"], 2),
+        ]
+        for argv, code in cases:
+            out = subprocess.run([sys.executable, str(Path(__file__).resolve())] + argv,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            body = out.stdout.decode("utf-8")
+            stderr = out.stderr.decode("utf-8")
+            assert_true(out.returncode == code,
+                        "%r exit %d, expected %d" % (argv, out.returncode, code))
+            assert_true(body.count("\n") == 1,
+                        "%r printed %d lines on stdout" % (argv, body.count("\n")))
+            assert_true("Traceback" not in stderr, "%r raised: %s" % (argv, stderr))
+            stamped(json.loads(body), " ".join(argv))
+        return ("5 in-process errors stamped, 5 CLI errors one JSON line each "
+                "at the documented exit code")
+
+    record("error_stamps", check_error_stamps)
 
     failed = [check for check in checks if not check["ok"]]
     payload = {

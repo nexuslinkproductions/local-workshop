@@ -23,18 +23,22 @@ asserted in the self-check rather than promised in prose.
 | `network.flush-dns` | safe | macOS `dscacheutil -flushcache` then `killall -HUP mDNSResponder`; Linux `resolvectl flush-caches` | under 1 s | none |
 | `network.connectivity` | read | four checks: gateway reachable (the default route gateway, pinged), public reachable, DNS resolves, tunnel up | about 5 s | 10 s |
 
-Every successful payload carries `ok`, `generated_at` (UTC ISO), `source`
-(`live` or `fixture`), `action` and `class`, a plan and a dry run included: all
-three are built by one envelope constructor, so no emit site can skip the
-timestamp. A run payload lists `commands` as `{argv, exit}` entries, a plan
-lists `{argv, why}`, both in run order and both naming the same argv sequence.
-The run's list is the trace `_run` recorded for that operation, so it cannot
-omit a command the run issued, the `tailscale status --json` gateway
-resolution read included.
-Error answers are smaller on purpose: a refusal or a failed fixture read is
-`ok: false` with `reason` and `kind` and nothing else, and an unknown action is
-`ok: false` with `reason` and `actions`. A read that did run but measured
-nothing keeps the envelope and adds `ok: false` with a `reason`.
+Every payload, success or error, carries `ok` and `generated_at` (UTC ISO).
+Successes also carry `source` (`live` or `fixture`), `action` and `class`, a
+plan and a dry run included: all three are built by one envelope constructor,
+so no emit site can skip the timestamp. Errors are built by one error
+constructor, so an `ok: false` answer cannot skip it either, and that includes
+the CLI's own argument failures. A run payload lists `commands` as
+`{argv, exit}` entries, a plan lists `{argv, why}`, both in run order and both
+naming the same argv sequence. The run's list is the trace `_run` recorded for
+that operation, so it cannot omit a command the run issued, the
+`tailscale status --json` gateway resolution read included.
+An error answer is `ok: false` with `generated_at`, `reason` and a `kind` where
+one applies (`bad_argument`, `malformed`, `unreadable`, `missing`,
+`not_this_host`, `crash`); an unknown action also lists `actions`. Refusals,
+malformed fixture reads and argument failures all carry the stamp. A read that
+did run but measured nothing keeps the envelope: each unmeasured field is
+`null` with its own `reason`, `ok` is `false`, and `reason` lists every gap.
 
 ### Latency: what "tailnet gateway" means
 
@@ -93,8 +97,20 @@ as such (`tailnet: true`).
 
 Live collection needs `netstat`, `ifconfig` and `scutil`, so `network.route`
 and `network.connectivity` refuse to run live off macOS with
-`{"ok": false, "kind": "not_this_host"}` (exit 0 from `plan`, exit 2 from
-`run`), and they answer normally from a fixture on any host.
+
+    {"ok": false, "generated_at": "2026-10-23T04:00:00Z",
+     "reason": "...", "kind": "not_this_host"}
+
+(exit 0 from `plan`, exit 2 from `run`), and they answer normally from a
+fixture on any host.
+
+A capture that yields nothing is an honest absence, not a success. `measured`
+lists which fields (route) or checks (connectivity) landed and `unmeasured`
+names each gap with its reason; the unmeasured value itself is `null` (or an
+empty list) with a `reason` beside it. The envelope is `ok: true` only when at
+least one measurement succeeded, and otherwise `ok: false` with the reason
+list. A measurement that reports failure still counts: the down fixture's four
+false checks keep `ok: true` and `healthy: false`, because every capture exists.
 `network.flush-dns` has a real Linux path (`resolvectl flush-caches`). Its
 Linux command is the linux-only part; the action itself is not `linux_only`,
 because the macOS path is the one the HUD uses.
@@ -125,11 +141,16 @@ no test can flush a real cache.
 accepted range is a finite float from 0.01 to 3600; anything else, NaN and the
 infinities included, is a bad argument:
 
-    {"ok": false, "reason": "--timeout-scale must be between 0.01 and 3600, got 1e+06",
+    {"ok": false, "generated_at": "2026-10-23T04:00:00Z",
+     "reason": "--timeout-scale must be between 0.01 and 3600, got 1e+06",
      "kind": "bad_argument"}
 
 on stdout, exit 2, refused before a context is built and before any timeout is
-computed. The cap is not decoration: 1000000 times a 10 s base overflows the
+computed. `--timeout-scale abc`, `-inf` and a missing value take the same path:
+argparse cannot bind them on its own, so the CLI binds the pair itself and the
+validator answers with one JSON object on stdout and exit 2. No argument
+failure prints usage on stdout, and none exits without an answer.
+The cap is not decoration: 1000000 times a 10 s base overflows the
 poll timeout inside `subprocess.run` (an `OverflowError` traceback, exit 1), and
 `inf` cannot be converted to an integer at all, so both used to escape the
 "exit 2 only for bad arguments" rule.
@@ -177,9 +198,10 @@ from another target.
 A fixture the caller names has to exist: a missing file, or a directory without
 `network.json`, is a usage error and exit 2. A file that is there but
 unreadable, not JSON, or not an object at the top level is an answer like any
-other: `{"ok": false, "reason": "fixture is not JSON: ...", "kind":
-"malformed"}` (or `"unreadable"`) on stdout with exit 0, and no fall back to
-live. The error shape is `ok`, `reason` and `kind`.
+other: `{"ok": false, "generated_at": "...", "reason": "fixture is not JSON:
+...", "kind": "malformed"}` (or `"unreadable"`) on stdout with exit 0, and no
+fall back to live. The error shape is `ok`, `generated_at`, `reason` and
+`kind`.
 
 Connectivity booleans are computed from those inputs, never read as booleans:
 the self-check flips one input at a time (empty DNS answer, stopped backend,
@@ -194,10 +216,15 @@ two fixture runs, and the self-check asserts that for latency and jitter
 `v5/fixtures/network.json` is a real capture from this MacBook (2026-10-23),
 sanitised: tailnet IPv4 addresses are `100.100.x`, tailnet IPv6 addresses are
 `fd00::x`, node host names are `node-mac`, `node-linux` and `node-old-mac`, the
-tailnet DNS name is `example-tailnet.ts.net`, ether addresses are zeroed and the
-owner's name is removed. The LAN gateway and the bridge addresses are as
-recorded. `ping_gateway` is a separate capture of the default route gateway
-(192.168.0.1), which is what the connectivity gateway check reads.
+tailnet DNS name is `example-tailnet.ts.net`, every ether address is a locally
+administered documentation value `02:00:5e:10:00:xx`, every LAN address comes
+from the documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`,
+`203.0.113.0/24`), the public IPv6 prefix is `2001:db8::/32`, and the owner's
+name is removed. Record counts and the shape of every capture are unchanged, so
+the fixture still exercises every parser path. `ping_gateway` is a separate
+capture of the default route gateway (`192.0.2.1`), which is what the
+connectivity gateway check reads. The self-check greps both fixtures and fails
+if a real MAC or private LAN address comes back.
 `v5/fixtures/network_down.json` is the same host with the LAN, DNS and tunnel
 down, built by hand so every check has one failing input.
 
@@ -213,8 +240,11 @@ Re-record:
     tailscale status --json                > tailscale.json
 
 then paste the texts into the `commands` object under the matching keys and the
-tailscale fields into `tailscale`, and replace the tailnet addresses, the node
-host names and the owner's name before committing.
+tailscale fields into `tailscale`, and sanitise before committing: replace the
+tailnet addresses, the node host names, the owner's name, every MAC with
+`02:00:5e:10:00:xx`, every LAN address with one from `192.0.2.0/24`,
+`198.51.100.0/24` or `203.0.113.0/24`, and the public IPv6 prefix with
+`2001:db8::/32`. Keep the record counts; the self-check enforces all of it.
 
 ## Contract for F8a
 
@@ -245,7 +275,7 @@ by hand with a value outside that range, or with NaN, leaves the base alone.
 
     python3 nexuslink.hud/v5/feeds/hudfix_network.py --self-check
 
-exit 0 and 19 checks, each named in the JSON: the action table and classes; the
+exit 0 and 22 checks, each named in the JSON: the action table and classes; the
 binary allowlist over fixture plans, live plans and real calls; the CLI
 contract (`--list --json` is one line, unknown action exit 2); a missing named
 fixture is exit 2 while three malformed files are ok false with exit 0; latency
@@ -259,11 +289,16 @@ creating no file and ignoring a `--cache-path` it was handed; `flush-dns`
 calling neither the runner nor `subprocess` in a plan or a dry run; the host
 refusals; no absolute home path; five plans leaving the state dir byte
 identical; `--timeout-scale 0.25` reaching every command timeout while the
-default 1.0 leaves the base numbers alone; and the payload contract: a stamp on
+default 1.0 leaves the base numbers alone; the payload contract: a stamp on
 every plan, dry run, run and `--list`, the stated scale range refused at both
-ends by the validator and at the CLI (exit 2, no traceback), and `commands`
-equal to the runner's call count and argv for latency (3) and connectivity (5),
-with `cached_from` carrying all of them.
+ends by the validator and at the CLI (exit 2, no traceback, one JSON line, six
+values including `abc` and `-inf`), and `commands` equal to the runner's call
+count and argv for latency (3) and connectivity (5), with `cached_from`
+carrying all of them; the two committed fixtures sanitised to documentation
+MACs and LAN ranges with their record counts intact; a route or connectivity
+read with nothing measured reported as `ok: false` with every gap named and a
+reason, while the measured-but-failing down fixture stays `ok: true`; and every
+error answer, in-process and CLI, carrying `generated_at`.
 
 ## Not offered, and why
 
