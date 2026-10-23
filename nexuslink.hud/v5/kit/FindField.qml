@@ -35,40 +35,38 @@ Item {
     // 20 px. The s3 focus page grows the pill to 900 on a 2560 canvas; 560 is
     // the deck-scale version of the same move. Text sits at Tokens.sizeBody
     // (26, the ramp token nearest the s3 28) inset Tokens.sp4 (34) rather than
-    // s3's 78, because the search glyph that needed the 78 is gone. Tokens
-    // missing for this component are requested in the PR body: fieldHeight,
-    // fieldRestWidth, fieldActiveWidth, chipHeight.
-    readonly property int fieldHeight: 68
-    readonly property int fieldRestWidth: 380
-    readonly property int fieldActiveWidth: 560
+    // s3's 78, because the search glyph that needed the 78 is gone. Every number
+    // below is a Tokens read (findFieldHeight, findFieldRestWidth,
+    // findFieldActiveWidth, findChipHeight, sp3, sp4, findRestDotBand).
+    readonly property int fieldHeight: Tokens.findFieldHeight
+    readonly property int fieldRestWidth: Tokens.findFieldRestWidth
+    readonly property int fieldActiveWidth: Tokens.findFieldActiveWidth
     readonly property int fieldInset: Tokens.sp4                 // 34, text inset
     readonly property int chipsTop: fieldHeight + Tokens.sp3     // 89
-    readonly property int chipHeight: 50
+    readonly property int chipHeight: Tokens.findChipHeight
     // Right band the five rest dots occupy (s3: right 30, pitch 22).
-    readonly property int restDotBand: 128
+    readonly property int restDotBand: Tokens.findRestDotBand
 
-    // ---- local design values ----------------------------------------------
-    // Design numbers that no token carries yet. Each one is a named readonly
-    // property so the value has a single home, and each one is a token request
-    // in the PR body (capsuleFillAlpha, placeholderAlpha, caretWidth,
-    // caretRadius, caretGap, caretAlpha, restDotInset, restDotPitch,
-    // restDotSize, restDotChosenSize, restDotAlphaTop, restDotAlphaStep,
-    // chipHoverScale, chipRestOpacity). Caret height is Tokens.sp4 (34), so it
-    // reads the token directly instead of restating the number.
-    readonly property real capsuleFillAlpha: 0.10       // capsule ice fill
-    readonly property real placeholderAlpha: 0.60       // placeholder ink while the query is empty
-    readonly property int caretWidth: 3                 // caret bar width
-    readonly property int caretRadius: 2                // caret bar corner radius
-    readonly property int caretGap: 4                   // caret gap after the typed text
-    readonly property real caretAlpha: 0.9              // caret ink alpha
-    readonly property int restDotInset: 30              // rest dots, right inset from the capsule edge
-    readonly property int restDotPitch: 22              // rest dot cell size, so also the pitch
-    readonly property int restDotSize: 10               // rest dot diameter
-    readonly property int restDotChosenSize: 12         // chosen rest dot diameter, one size up
-    readonly property real restDotAlphaTop: 0.62        // ice alpha of the first rest dot
-    readonly property real restDotAlphaStep: 0.08       // alpha lost per rest dot
-    readonly property real chipHoverScale: 1.05         // filter word lift under the pointer
-    readonly property real chipRestOpacity: 0.55        // idle filter word alpha
+    // ---- design values, read from Tokens ----------------------------------
+    // Design numbers W6 measured on the s3 Find studies. They were local
+    // read-only properties with a token request each; I1 folded the request
+    // into kit/Tokens.qml, so the value lives there and this component keeps
+    // the same named properties for its own code and its probes. Caret height
+    // is Tokens.sp4 (34), so it reads the spacing token directly.
+    readonly property real capsuleFillAlpha: Tokens.capsuleFillAlpha
+    readonly property real placeholderAlpha: Tokens.placeholderAlpha
+    readonly property int caretWidth: Tokens.caretWidth
+    readonly property int caretRadius: Tokens.caretRadius
+    readonly property int caretGap: Tokens.caretGap
+    readonly property real caretAlpha: Tokens.caretAlpha
+    readonly property int restDotInset: Tokens.restDotInset
+    readonly property int restDotPitch: Tokens.restDotPitch
+    readonly property int restDotSize: Tokens.restDotSize
+    readonly property int restDotChosenSize: Tokens.restDotChosenSize
+    readonly property real restDotAlphaTop: Tokens.restDotAlphaTop
+    readonly property real restDotAlphaStep: Tokens.restDotAlphaStep
+    readonly property real chipHoverScale: Tokens.chipHoverScale
+    readonly property real chipRestOpacity: Tokens.chipRestOpacity
 
     // The component keeps the active footprint at all times so a parent layout
     // never shifts when the field wakes: the capsule is centred, top aligned,
@@ -89,7 +87,7 @@ Item {
     // another). An OutBack curve with the same durations and overshoot gives
     // the identical feel with a value a verifier can reproduce at any frame
     // rate. Trace in the PR body.
-    readonly property real expandOvershoot: 1.15   // OutBack parameter, peak 1.04871
+    readonly property real expandOvershoot: Motion.curveOvershoot5   // OutBack parameter, peak 1.04871
 
     property real fieldWidth: fieldRestWidth
 

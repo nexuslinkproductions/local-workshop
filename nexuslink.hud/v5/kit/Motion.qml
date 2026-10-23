@@ -106,6 +106,17 @@ QtObject {
         "panel": [0.22, 0.61, 0.36, 1.0],
         "accel": [0.4, 0.0, 0.7, 0.2]
     })
+    // The 6-value form, requested by W3 (PulseRing, LocalOrb). Qt 6.12
+    // evaluates a 4-value bezierCurve as LINEAR (measured, V3 probe: the value
+    // was 220 of 1000 at 225 ms), so any BezierSpline consumer needs six
+    // numbers. This is curveInOut with [1.0, 1.0] closing the spline, so no
+    // component has to append the pair itself.
+    readonly property var curveInOut6: [curveInOut[0], curveInOut[1],
+                                        curveInOut[2], curveInOut[3], 1.0, 1.0]
+    // OutBack `easing.overshoot` parameter for the approved 5 percent band:
+    // peak = 1 + 0.04871 (requested by W6 FindField, which used the literal
+    // 1.15). The expand spring's own 5.00 percent lives in expandOvershoot.
+    readonly property real curveOvershoot5: 1.15
 
     // ---- perspective -----------------------------------------------------
     // stageIn entry box from motion.json: the stage arrives from the lower left
