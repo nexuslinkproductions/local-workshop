@@ -1,0 +1,3 @@
+{"__REALTIME_TIMESTAMP": "1792711200000000", "PRIORITY": "3", "MESSAGE": "Failed to start PipeWire Multimedia Service.", "_SYSTEMD_UNIT": "pipewire.service", "SYSLOG_IDENTIFIER": "systemd", "_PID": "1832"}
+{"__REALTIME_TIMESTAMP": "1792711500000000", "PRIORITY": "4", "MESSAGE": "pw.context: can't load module: module-jackdbus-detect not found", "_SYSTEMD_UNIT": "wireplumber.service", "SYSLOG_IDENTIFIER": "wireplumber", "_PID": "1904"}
+{"__REALTIME_TIMESTAMP": "1792711800000000", "PRIORITY": "3", "MESSAGE": "quickshell: QML Type Tokens unavailable", "_SYSTEMD_UNIT": "nexuslink-hud.service", "SYSLOG_IDENTIFIER": "quickshell", "_PID": "2506443"}

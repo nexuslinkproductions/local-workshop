@@ -1,0 +1,64 @@
+#!/bin/sh
+# _stub - the one stub behind every name in stubs/NAMES, plus xdg-open, yuri,
+# playerctl and ssh. deckmain-shell.sh symlinks each command name to this file
+# in its private bin dir, so $0 is the command name.
+#
+# Every call appends ONE line to $DECKMAIN_STUB_LOG:
+#     <name><TAB><arg1><TAB><arg2>...
+# and exits 0. Exceptions: "yuri search" prints a small JSON array, other yuri
+# calls print a short usage text, and ssh refuses (exit 255) so no feed reaches
+# a live Mac from the test shell.
+name=$(basename -- "$0")
+tab=$(printf '\t')
+line=$name
+for a in "$@"; do
+    a=$(printf '%s' "$a" | tr '\n' ' ')
+    line="$line$tab$a"
+done
+printf '%s\n' "$line" >> "${DECKMAIN_STUB_LOG:-/dev/null}"
+
+case $name in
+    yuri)
+        case ${1:-} in
+            search)
+                # e2e hook: a query equal to DECKMAIN_STUB_SLOW_QUERY is answered late
+                # (DECKMAIN_STUB_SLOW_SECS, default 2) with a STALE row, to prove a
+                # superseded search never shows.
+                if [ -n "${DECKMAIN_STUB_SLOW_QUERY:-}" ] && [ "${2:-}" = "$DECKMAIN_STUB_SLOW_QUERY" ]; then
+                    if [ -n "${DECKMAIN_STUB_SLOW_ESCAPE:-}" ]; then
+                        # e2e hook (find watchdog): the wait runs in its own session, outside
+                        # yuri's group, and keeps stdout open. find.py blocks on that pipe past
+                        # its own timeout. The child logs its pid for the census.
+                        setsid sh -c 'printf "yuri-escape\tpid=%s\n" "$$" >> "$1"; exec sleep "$2"' sh "${DECKMAIN_STUB_LOG:-/dev/null}" "${DECKMAIN_STUB_SLOW_SECS:-2}" &
+                        exit 0
+                    fi
+                    sleep "${DECKMAIN_STUB_SLOW_SECS:-2}"
+                    printf '%s\n' '[{"title":"STALE slow result","path":"/tmp/stale-slow.txt","kind":"file","score":0.1}]'
+                    exit 0
+                fi
+                if [ -n "${DECKMAIN_STUB_YURI_ROWS:-}" ]; then
+                    # e2e hook: DECKMAIN_STUB_YURI_ROWS=N answers with N numbered rows.
+                    rows=""
+                    k=1
+                    while [ "$k" -le "$DECKMAIN_STUB_YURI_ROWS" ]; do
+                        [ "$k" -gt 1 ] && rows="$rows,"
+                        rows="$rows{\"title\":\"Stub row $k\",\"path\":\"/tmp/stub-row-$k.txt\",\"kind\":\"file\",\"score\":0.5}"
+                        k=$((k + 1))
+                    done
+                    printf '%s\n' "[$rows]"
+                    exit 0
+                fi
+                printf '%s\n' '[{"title":"Stub result one","path":"/tmp/stub-one.txt","kind":"file","score":0.9},{"title":"Stub result two","path":"/tmp/stub-two.txt","kind":"file","score":0.5}]'
+                ;;
+            *)
+                printf '%s\n' 'usage: yuri [--help] <command> [args]' 'stub: no index and no search backend in the test shell'
+                ;;
+        esac
+        exit 0
+        ;;
+    ssh)
+        echo 'ssh: stub refuses (the test shell has no path to a peer)' >&2
+        exit 255
+        ;;
+esac
+exit 0

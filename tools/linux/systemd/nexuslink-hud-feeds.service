@@ -1,0 +1,26 @@
+[Unit]
+Description=NexusLink HUD feed supervisor (v5 readers to runtime snapshots)
+Documentation=file://%h/hud-wt/main-live/tools/linux/FEED-MODEL.md
+After=default.target
+
+[Service]
+Type=simple
+# Repo location. Default is the worktree on this box. Override with a drop-in:
+#   systemctl --user edit nexuslink-hud-feeds.service
+#   [Service]
+#   Environment=NEXUSLINK_REPO=/path/to/repo
+Environment=NEXUSLINK_REPO=%h/hud-wt/main-live
+ExecStart=/usr/bin/python3 ${NEXUSLINK_REPO}/nexuslink.hud/v5/feeds/supervisor.py
+# Snapshots and the heartbeat land in $XDG_RUNTIME_DIR/nexuslink-hud/feeds/
+RuntimeDirectory=nexuslink-hud
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=10%
+Restart=on-failure
+RestartSec=5
+# SIGTERM stops the loop; in-flight readers are SIGKILLed by the supervisor
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

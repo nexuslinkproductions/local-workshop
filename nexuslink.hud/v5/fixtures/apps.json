@@ -1,0 +1,28 @@
+{
+  "_note": "Synthetic sample launch counts for the v5 state matrix; no usage data behind them.",
+  "default": [
+    { "slug": "hermes", "label": "Hermes", "launchCount": 34, "kind": "app" },
+    { "slug": "devin", "label": "Devin", "launchCount": 21, "kind": "app" },
+    { "slug": "files", "label": "Files", "launchCount": 18, "kind": "app" },
+    { "slug": "terminal", "label": "Terminal", "launchCount": 57, "kind": "app" },
+    { "slug": "chrome", "label": "Chrome", "launchCount": 26, "kind": "app" },
+    { "slug": "discord", "label": "Discord", "launchCount": 12, "kind": "app" },
+    { "slug": "x", "label": "X", "launchCount": 9, "kind": "app" },
+    { "slug": "youtube", "label": "YouTube", "launchCount": 14, "kind": "app" },
+    { "slug": "whatsapp", "label": "WhatsApp", "launchCount": 11, "kind": "app" }
+  ],
+  "all": [
+    { "slug": "hermes", "label": "Hermes", "launchCount": 34 },
+    { "slug": "terminal", "label": "Terminal", "launchCount": 57 },
+    { "slug": "chrome", "label": "Chrome", "launchCount": 26 },
+    { "slug": "devin", "label": "Devin", "launchCount": 21 },
+    { "slug": "files", "label": "Files", "launchCount": 18 },
+    { "slug": "spotify", "label": "Spotify", "launchCount": 16 },
+    { "slug": "youtube", "label": "YouTube", "launchCount": 14 },
+    { "slug": "discord", "label": "Discord", "launchCount": 12 },
+    { "slug": "whatsapp", "label": "WhatsApp", "launchCount": 11 },
+    { "slug": "x", "label": "X", "launchCount": 9 },
+    { "slug": "obsidian", "label": "Obsidian", "launchCount": 7 }
+  ],
+  "arcRaiders": { "slug": "arc-raiders", "label": "Arc Raiders", "launchCount": 6 }
+}

@@ -1,0 +1,27 @@
+# omarchy-* commands named in nexuslink.hud/v4 and v5. deckmain-shell.sh also stubs
+# every omarchy-* file it finds in /usr/share/omarchy/bin (read-only listing).
+omarchy-shell
+omarchy-launch-tui
+omarchy-menu
+omarchy-menu-keybindings
+omarchy-capture-screenshot
+omarchy-capture-screenrecording
+omarchy-capture-text
+omarchy-theme-bg-next
+omarchy-theme-bg-switcher
+omarchy-launch-terminal
+omarchy-launch-nautilus
+omarchy-launch-browser
+omarchy-powerprofiles-set
+omarchy-audio-output-switch
+omarchy-audio-source-switch
+omarchy-audio-output-volume
+omarchy-audio-input-mute
+omarchy-system-lock
+omarchy-version
+omarchy-update
+omarchy-toggle-idle
+omarchy-restart-wifi
+omarchy-restart-bluetooth
+omarchy-restart-audio
+omarchy-reminder

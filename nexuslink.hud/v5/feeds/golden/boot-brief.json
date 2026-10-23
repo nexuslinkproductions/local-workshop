@@ -1,0 +1,76 @@
+{
+  "ok": true,
+  "generated_at": "2026-10-22T23:00:00Z",
+  "source": "fixture",
+  "since": "2026-10-22T22:43:20Z",
+  "since_source": "boot",
+  "state": "fixture",
+  "source_as_of": null,
+  "stale_age_s": null,
+  "ttl_s": null,
+  "fleet": {
+    "finished": 3,
+    "blocked": 2,
+    "failed": 1,
+    "still_running": 2
+  },
+  "highlights": [
+    {
+      "id": "t_fx1002",
+      "title": "HUD v5 W4 ICONS: one stroke set, IconTile ring",
+      "status": "done",
+      "assignee": "yamato",
+      "at": "2026-10-22T22:58:00Z"
+    },
+    {
+      "id": "t_fx1001",
+      "title": "HUD v5 W3 GAUGES: dot arcs, battery and load rings",
+      "status": "done",
+      "assignee": "kakashi",
+      "at": "2026-10-22T22:53:20Z"
+    },
+    {
+      "id": "t_fx1003",
+      "title": "HUD v5 W6 FIND: dot search glyph and typed tiles",
+      "status": "done",
+      "assignee": "levi",
+      "at": "2026-10-22T22:50:00Z"
+    }
+  ],
+  "needs_me": [
+    {
+      "id": "t_fx1006",
+      "title": "CANVAS-PORT: Lilly frontend into the root canvas",
+      "status": "blocked"
+    },
+    {
+      "id": "t_fx1011",
+      "title": "B repair 1: post-navigation bindings, mobile footer",
+      "status": "blocked"
+    },
+    {
+      "id": "t_fx9001",
+      "title": "Linux: install bridge-digest after review",
+      "status": "blocked"
+    }
+  ],
+  "slack": {
+    "available": false,
+    "unread": null,
+    "reason": "auth.test ok, conversations.list ok (8 channels), conversations.info unread_count null for a bot token: Slack returns it only for the calling user's own membership, so no read-only unread count is available on this host"
+  },
+  "digest": {
+    "available": true,
+    "reason": "digest fixture",
+    "generated_at": "2026-10-23T00:40:00Z",
+    "blocked": 1,
+    "stalled": 1,
+    "dead_events": 2,
+    "source": "fixture"
+  },
+  "phrasing": "While the screen was off the Mac fleet finished {fleet.finished} card(s) since {since}; {fleet.blocked} blocked, {fleet.failed} failed and {fleet.still_running} are still running. {needs_me.#} card(s) need you. Slack unread: available={slack.available} ({slack.reason}). Digest: available={digest.available} ({digest.reason}).",
+  "board": {
+    "source": "fixture",
+    "cards": 11
+  }
+}
