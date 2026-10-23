@@ -21,10 +21,11 @@ Contract version: 1, 2026-10-23.
   `--dry-run` and `--no-write` suppress it. Nothing else writes it, ever.
 - A `--fixture` run writes it only when the caller names `--state-dir` or
   `--flag-file`, and it reads the flag only from that same named path. It never
-  reads the live flag, so a fixture snapshot cannot inherit a host value. When
-  the named file already records a gaming run, its `since` is kept: the run
-  started then, and a fixture tick is the next tick of that same run. Otherwise
-  `since` is the moment of that run.
+  reads the live flag, so a fixture snapshot cannot inherit a host value. `since`
+  in a fixture run comes from the fixture, never from a clock: `pause_heavy.since`
+  first, then a top-level `now`, and `null` with reason `fixture has no since`
+  when the fixture names neither. A named flag file only receives that value; a
+  `since` it already held is not carried over.
 
 ## The fields
 
@@ -32,7 +33,7 @@ Contract version: 1, 2026-10-23.
 |---|---|---|
 | `gaming` | boolean | a game process was running at the last controller tick |
 | `pause_heavy` | boolean | today always equal to `gaming`; this is the one field a dispatcher reads |
-| `since` | ISO 8601 UTC string, or `null` | first tick of the current gaming run, held stable across ticks; `null` when `gaming` is false |
+| `since` | ISO 8601 UTC string, or `null` | first tick of the current gaming run, held stable across ticks; `null` when `gaming` is false. Live run: the moment the run started, or the `since` the flag file already holds for a running game. `--fixture` run: the fixture's `pause_heavy.since` or top-level `now`, `null` when it names neither |
 | `updated_at` | ISO 8601 UTC string | when this evaluation ran; changes every tick |
 
 Example, game running:
@@ -55,6 +56,13 @@ Example, no game:
 
 `since` is not rewritten on every poll: it marks the moment the run started, so a
 dispatcher can report "paused for 23 minutes" without bookkeeping of its own.
+
+In `--fixture` mode `generated_at` is the only timestamp the status object takes
+from a clock. `pause_heavy.since` is the fixture's `pause_heavy.since` or, failing
+that, its top-level `now`; with neither it is `null` and the pause block's
+`reason` says `fixture has no since`. `net.measured_at` is the fixture's
+`generated_at` or top-level `now`, and `null` when it names neither. Two fixture
+runs over the same fixture therefore differ only in `generated_at`.
 
 ## How often a dispatcher should read it
 
@@ -169,6 +177,12 @@ router or another public target inside the 10 s window is a miss. A round aimed
 at a dead target therefore reports that target's null with its own reason
 instead of inheriting the previous target's numbers.
 
+A `--fixture` run never reads the cache: the fixture carries its own net values,
+and a cached hit would make the second of two fixture runs differ from the first.
+It still writes a cache file when the caller names `--cache-file` or
+`--state-dir`, but a live run rejects that file because its stored source is
+`fixture`, not `live`.
+
 `--dry-run` runs no probe at all: the gateway is not discovered, neither target
 is pinged, the cache is neither read nor written, and both entries come back
 `null` with reason `dry-run`. `--no-net` does the same for `--status` with
@@ -182,7 +196,9 @@ optional and tolerated if partial:
 
 | Key | Shape |
 |---|---|
-| `generated_at` | ISO UTC string; the reported `measured_at` for the fixture's net block |
+| `generated_at` | ISO UTC string; the reported `measured_at` for the fixture's net block (a top-level `now` is used when it is absent) |
+| `now` | ISO UTC string; the fixture's snapshot time. Used for `net.measured_at`, and for `pause_heavy.since` when `pause_heavy.since` is absent |
+| `pause_heavy` | `{"since": "<ISO UTC>"}`; the moment the fixture's gaming run started, reported as `pause_heavy.since` |
 | `ptt_state` | `"dictation"` / `"game"` / `"on"` / `"off"` (a real state file wins over this) |
 | `mouse_profile` | string |
 | `pgrep` | `[{"pid": N, "command": "..."}]`, a list of strings, or `{"running": bool, "process": "..."}`; `[]` means "pgrep printed nothing" |

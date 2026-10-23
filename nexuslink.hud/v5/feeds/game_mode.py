@@ -38,7 +38,9 @@ writes and --dry-run suppresses writes and the network probe (both targets come
 back null with reason "dry-run"). A --fixture run writes neither and reads no
 host state unless the caller names --state-dir, --flag-file or --cache-file;
 --toggle --fixture keeps its documented ptt.state write. Nothing else is
-written. Contract: GAME_MODE_CONTRACT.md next to this file.
+written. In --fixture mode generated_at is the only live clock stamp: the
+pause-heavy since and net.measured_at come from the fixture or are null, never
+from the host clock. Contract: GAME_MODE_CONTRACT.md next to this file.
 
 Stdlib only, Python 3.9+.
 """
@@ -337,6 +339,43 @@ def load_fixture(path):
     return obj, None, None
 
 
+def fixture_string(fx, key):
+    """A non-empty string a fixture names under key, else None. Never invents one."""
+    if not isinstance(fx, dict):
+        return None
+    value = fx.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def fixture_block_string(fx, block, key):
+    """A non-empty string inside a fixture's object block, else None."""
+    if not isinstance(fx, dict):
+        return None
+    inner = fx.get(block)
+    if not isinstance(inner, dict):
+        return None
+    value = inner.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def fixture_since(fx):
+    """The gaming run start a fixture names: pause_heavy.since, else top-level now.
+
+    Fixture mode never reads a clock, so a fixture that names neither reports
+    since: null with a reason instead of a host timestamp.
+    """
+    return fixture_block_string(fx, "pause_heavy", "since") or fixture_string(fx, "now")
+
+
+def fixture_measured_at(fx):
+    """The snapshot time a fixture names: generated_at, else top-level now."""
+    return fixture_string(fx, "generated_at") or fixture_string(fx, "now")
+
+
 # --------------------------------------------------------------------------
 # ping parsing
 # --------------------------------------------------------------------------
@@ -546,7 +585,7 @@ def net_from_fixture(cfg, fx):
     pre_pub = pre.get("public") if isinstance(pre.get("public"), dict) else {}
 
     gateway_host, public_host = fixture_net_hosts(cfg, fx)
-    measured = fx.get("generated_at") if isinstance(fx.get("generated_at"), str) else utc_now_iso()
+    measured = fixture_measured_at(fx)
 
     out = {"measured_at": measured, "source": "fixture", "cached": False}
     for key, host, pre_entry in (("gateway", gateway_host, pre_gw),
@@ -597,7 +636,7 @@ def read_cache(cfg, source, gateway_host, public_host):
     if gateway.get("host") != gateway_host or public.get("host") != public_host:
         return None
     return {"gateway": gateway, "public": public,
-            "measured_at": obj.get("measured_at") or utc_now_iso(),
+            "measured_at": obj.get("measured_at") or (utc_now_iso() if source == "live" else None),
             "source": source, "cached": True}
 
 
@@ -621,7 +660,10 @@ def probe_net(cfg, fx=None):
         gateway_host, gateway_reason = discover_gateway()
 
     shared_cache = cache_persist_allowed(cfg)
-    if shared_cache:
+    if shared_cache and source == "live":
+        # A fixture carries its own net values, so it never reads the cache: a
+        # cached hit would make the second of two fixture runs differ from the
+        # first. Live probes keep the 10 s floor.
         cached = read_cache(cfg, source, gateway_host, public_host)
         if cached:
             return cached
@@ -632,8 +674,11 @@ def probe_net(cfg, fx=None):
         net = net_live(cfg, gateway_host, gateway_reason)
 
     if shared_cache and not cfg.dry_run and not cfg.no_write:
+        measured = net.get("measured_at")
+        if measured is None and source == "live":
+            measured = utc_now_iso()
         atomic_write_json(cfg.cache_file, {
-            "measured_at": net.get("measured_at") or utc_now_iso(),
+            "measured_at": measured,
             "ts": time.time(),
             "source": source,
             "gateway_host": gateway_host,
@@ -899,28 +944,40 @@ def read_mouse(cfg, fx):
 # the proposed pause-heavy flag
 # --------------------------------------------------------------------------
 
-def apply_flag(cfg, gaming, now_iso):
-    """Write ~/.local/state/nexuslink/game_mode.json atomically. Returns (obj, warning)."""
+def apply_flag(cfg, gaming, now_iso, fx=None):
+    """Write ~/.local/state/nexuslink/game_mode.json atomically.
+
+    Returns (obj, warning, since_reason). In fixture mode since comes from the
+    fixture (pause_heavy.since, else a top-level now) or is null with a reason;
+    the host clock never stamps it. Live mode keeps the start of a run the flag
+    file already records, and otherwise starts the run at now_iso.
+    """
     persist = flag_persist_allowed(cfg)
-    prev = read_json(cfg.flag_file)[0] if persist else None
+    fixture_mode = cfg.fixture is not None
+    prev = read_json(cfg.flag_file)[0] if (persist and not fixture_mode) else None
     since = None
+    since_reason = None
     if gaming:
-        if isinstance(prev, dict) and prev.get("gaming") is True and isinstance(prev.get("since"), str):
+        if fixture_mode:
+            since = fixture_since(fx)
+            if since is None:
+                since_reason = "fixture has no since"
+        elif isinstance(prev, dict) and prev.get("gaming") is True and isinstance(prev.get("since"), str):
             since = prev["since"]          # stable across ticks, not reset every poll
         else:
             since = now_iso
     obj = {"gaming": bool(gaming), "pause_heavy": bool(gaming),
            "since": since, "updated_at": now_iso}
     if not persist:
-        return obj, "pause-heavy flag not written: fixture mode, no --state-dir or --flag-file"
+        return obj, "pause-heavy flag not written: fixture mode, no --state-dir or --flag-file", since_reason
     if cfg.dry_run:
-        return obj, "pause-heavy flag not written (--dry-run)"
+        return obj, "pause-heavy flag not written (--dry-run)", since_reason
     if cfg.no_write:
-        return obj, "pause-heavy flag not written (--no-write)"
+        return obj, "pause-heavy flag not written (--no-write)", since_reason
     ok, err = atomic_write_json(cfg.flag_file, obj)
     if not ok:
-        return obj, tilde_text("pause-heavy flag write failed: %s" % err)
-    return obj, None
+        return obj, tilde_text("pause-heavy flag write failed: %s" % err), since_reason
+    return obj, None, since_reason
 
 
 # --------------------------------------------------------------------------
@@ -958,7 +1015,8 @@ def build_status(cfg):
     else:
         net = probe_net(cfg, fx)
 
-    flag, flag_warning = apply_flag(cfg, game.get("running") is True, now_iso)
+    flag, flag_warning, since_reason = apply_flag(
+        cfg, game.get("running") is True, now_iso, fx)
 
     reasons = []
     if game.get("running") is True and mode == "dictation":
@@ -1002,7 +1060,7 @@ def build_status(cfg):
         payload["needs_me_reason"] = "; ".join(reasons)
     payload["net"] = net
     payload["pause_heavy"] = {"flag": flag["pause_heavy"], "since": flag["since"],
-                              "reason": flag_reason}
+                              "reason": since_reason or flag_reason}
     payload["ptt"] = ptt_info
     if mouse is None:
         payload["mouse_profile_reason"] = mouse_source
@@ -1145,9 +1203,9 @@ def build_toggle(cfg):
             kind=ERR_UNAVAILABLE, source=source, action="toggle", before=before), 0
 
     gaming = game.get("running") is True
-    flag, flag_warning = apply_flag(cfg, gaming, now_iso)
+    flag, flag_warning, since_reason = apply_flag(cfg, gaming, now_iso, fx)
     result["pause_heavy"] = {"flag": flag["pause_heavy"], "since": flag["since"],
-                             "reason": "game running" if gaming else "no game process"}
+                             "reason": since_reason or ("game running" if gaming else "no game process")}
     result["game"] = game
     result["flag_file"] = display_path(cfg.flag_file)
     if flag_warning:
@@ -1257,6 +1315,15 @@ def _json_of(out):
         return None, str(e)
 
 
+def _iso_epoch(text):
+    """Seconds since the epoch for an ISO UTC stamp, or None. For freshness checks."""
+    try:
+        parsed = datetime.datetime.strptime(str(text), "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
 def _write(path, text, mode=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1297,11 +1364,13 @@ def run_self_check(script):
         "host": "linux",
         "ptt_state": "game",
         "mouse_profile": "gaming",
+        "pause_heavy": {"since": "2026-10-23T01:12:00Z"},
         "pgrep": [{"pid": 4821, "command": "PioneerGame.exe -vulkan"}],
         "hyprctl": [{"class": "PioneerGame", "title": "ARC Raiders", "pid": 4821}],
         "ping": {"gateway": PING_GATEWAY, "public": PING_PUBLIC},
         "toggle": {"exit_code": 0, "output": "dictation on"},
     }
+    fixture_since_value = base_fixture["pause_heavy"]["since"]
     game_fx = _write_json(tmp / "game.json", base_fixture)
 
     dictation_fx = _write_json(tmp / "dictation.json", {
@@ -1355,8 +1424,8 @@ def run_self_check(script):
     checks.eq("fixture net.public.jitter_ms", status.get("net", {}).get("public", {}).get("jitter_ms"), 0.71)
     checks.eq("fixture net.cached", status.get("net", {}).get("cached"), False)
     checks.eq("fixture pause_heavy.flag", status.get("pause_heavy", {}).get("flag"), True)
-    checks.true("fixture pause_heavy.since",
-                isinstance(status.get("pause_heavy", {}).get("since"), str))
+    checks.eq("fixture pause_heavy.since",
+              status.get("pause_heavy", {}).get("since"), fixture_since_value)
     checks.true("generated_at is UTC ISO",
                 re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", str(status.get("generated_at"))))
     checks.true("no absolute home path in output", home not in out, "home leaked")
@@ -1368,6 +1437,7 @@ def run_self_check(script):
     checks.eq("flag gaming", flag_obj.get("gaming"), True)
     checks.eq("flag pause_heavy", flag_obj.get("pause_heavy"), True)
     since_first = flag_obj.get("since")
+    checks.eq("flag since is the fixture since", since_first, fixture_since_value)
     checks.true("flag since ISO", re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$",
                                            str(since_first)) is not None)
 
@@ -1508,6 +1578,8 @@ def run_self_check(script):
     checks.eq("toggle ptt state written", ptt.read_text().strip(), "dictation")
     checks.eq("toggle keeps pause flag on a running game",
               toggled.get("pause_heavy", {}).get("flag"), True)
+    checks.eq("toggle keeps the fixture since",
+              toggled.get("pause_heavy", {}).get("since"), fixture_since_value)
 
     # 13. toggle on a Mac with no ptt-toggle and no fixture refuses, exit 0
     rc, refused, out_r, err_r = ok_json(["--toggle"] + common)
@@ -1547,6 +1619,23 @@ def run_self_check(script):
         checks.eq("live pgrep pause flag", live.get("pause_heavy", {}).get("flag"), True)
         checks.eq("live no-net reason", live.get("net", {}).get("gateway", {}).get("reason"),
                   "network probe skipped (--no-net)")
+
+        fresh_flag = tmp / "live-fresh-flag.json"
+        rc, fresh, out_fr, err_fr = ok_json(
+            ["--status", "--pattern", "PioneerGame", "--no-net",
+             "--flag-file", str(fresh_flag), "--ptt-state", str(tmp / "absent.state")])
+        fresh = fresh or {}
+        fresh_since = fresh.get("pause_heavy", {}).get("since")
+        checks.eq("live fresh since exit", rc, 0)
+        checks.eq("live fresh flag", fresh.get("pause_heavy", {}).get("flag"), True)
+        checks.true("live fresh since is ISO",
+                    re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$",
+                             str(fresh_since)) is not None, str(fresh_since))
+        checks.true("live fresh since is the host clock now",
+                    abs((_iso_epoch(fresh_since) or 0.0) - time.time()) <= 120.0,
+                    str(fresh_since))
+        fresh_obj = json.loads(fresh_flag.read_text(encoding="utf-8")) if fresh_flag.exists() else {}
+        checks.eq("live fresh flag file since", fresh_obj.get("since"), fresh_since)
     finally:
         decoy.terminate()
         try:
@@ -1624,9 +1713,8 @@ def run_self_check(script):
     rc, decoy, out_de, err_de = ok_json(["--status", "--fixture", str(game_fx)], env=decoy_env)
     checks.eq("purity decoy exit", rc, 0)
     decoy = decoy or {}
-    checks.true("purity ignores the host flag",
-                decoy.get("pause_heavy", {}).get("since") != "2020-01-01T00:00:00Z",
-                str(decoy.get("pause_heavy")))
+    checks.eq("purity ignores the host flag",
+              decoy.get("pause_heavy", {}).get("since"), fixture_since_value)
     checks.true("purity ignores the host cache",
                 decoy.get("net", {}).get("gateway", {}).get("host") != "10.9.9.9",
                 str(decoy.get("net", {}).get("gateway")))
@@ -1666,6 +1754,8 @@ def run_self_check(script):
     shipped_fx, shipped_err = read_json(shipped)
     shipped_ping = (shipped_fx or {}).get("ping") if isinstance(shipped_fx, dict) else None
     checks.true("shipped fixture parses", isinstance(shipped_ping, dict), str(shipped_err))
+    checks.true("shipped fixture names a gaming since",
+                fixture_since(shipped_fx) is not None, str(shipped_fx)[:120])
     for key in ("gateway", "public"):
         text = (shipped_ping or {}).get(key) if isinstance(shipped_ping, dict) else None
         times = [float(value) for value in re.findall(r"time[=<]([\d.]+)\s*ms", text or "")]
@@ -1752,7 +1842,7 @@ def run_self_check(script):
     checks.eq("zero-byte fixture kind", (zero or {}).get("kind"), "missing")
     checks.true("zero-byte fixture reason", "empty" in str((zero or {}).get("reason")), str(zero))
 
-    # 26. a named flag file that already records a gaming run keeps its since
+    # 26. a fixture run takes since from the fixture, never from the named flag file
     prior_flag = _write_json(tmp / "prior-flag.json", {
         "gaming": True, "pause_heavy": True, "since": "2020-01-01T00:00:00Z",
         "updated_at": "2020-01-01T00:00:00Z"})
@@ -1760,12 +1850,64 @@ def run_self_check(script):
         ["--status", "--fixture", str(game_fx), "--flag-file", str(prior_flag),
          "--cache-file", str(tmp / "prior-cache.json"), "--ptt-state", str(ptt)])
     checks.eq("named flag exit", rc, 0)
-    checks.eq("named flag keeps its since",
-              (prior or {}).get("pause_heavy", {}).get("since"), "2020-01-01T00:00:00Z")
+    checks.eq("named flag uses the fixture since",
+              (prior or {}).get("pause_heavy", {}).get("since"), fixture_since_value)
     prior_obj = json.loads(prior_flag.read_text(encoding="utf-8"))
-    checks.eq("named flag file keeps its since", prior_obj.get("since"), "2020-01-01T00:00:00Z")
+    checks.eq("named flag file takes the fixture since",
+              prior_obj.get("since"), fixture_since_value)
     checks.true("named flag updated_at moved",
                 prior_obj.get("updated_at") != "2020-01-01T00:00:00Z", str(prior_obj))
+
+    # 27. fixture mode stamps no host clock into since or measured_at
+    no_since_fixture = json.loads(json.dumps(base_fixture))
+    no_since_fixture.pop("pause_heavy", None)
+    no_since_fx = _write_json(tmp / "no-since.json", no_since_fixture)
+
+    def strip_clock(payload):
+        body = json.loads(json.dumps(payload or {}))
+        body.pop("generated_at", None)
+        return body
+
+    rc, det_a, out_da, err_da = ok_json(
+        ["--status", "--fixture", str(game_fx), "--state-dir", str(tmp / "det-state"),
+         "--ptt-state", str(tmp / "det.state")])
+    time.sleep(1.1)
+    rc2, det_b, out_db, err_db = ok_json(
+        ["--status", "--fixture", str(game_fx), "--state-dir", str(tmp / "det-state"),
+         "--ptt-state", str(tmp / "det.state")])
+    checks.eq("fixture since first exit", rc, 0)
+    checks.eq("fixture since second exit", rc2, 0)
+    checks.eq("fixture since is the fixture value",
+              (det_a or {}).get("pause_heavy", {}).get("since"), fixture_since_value)
+    checks.eq("fixture runs read no net cache",
+              (det_b or {}).get("net", {}).get("cached"), False)
+    checks.eq("two fixture runs identical apart from generated_at",
+              strip_clock(det_a), strip_clock(det_b))
+
+    rc, det_c, out_dc, err_dc = ok_json(["--status", "--fixture", str(no_since_fx)])
+    time.sleep(1.1)
+    rc2, det_d, out_dd, err_dd = ok_json(["--status", "--fixture", str(no_since_fx)])
+    checks.eq("no-since fixture first exit", rc, 0)
+    checks.eq("no-since fixture second exit", rc2, 0)
+    checks.eq("no-since fixture since null",
+              (det_c or {}).get("pause_heavy", {}).get("since"), None)
+    checks.eq("no-since fixture reason",
+              (det_c or {}).get("pause_heavy", {}).get("reason"), "fixture has no since")
+    checks.eq("two no-since runs identical apart from generated_at",
+              strip_clock(det_c), strip_clock(det_d))
+
+    bare_fx = _write_json(tmp / "bare.json", {
+        "ptt_state": "game",
+        "pgrep": [{"pid": 1, "command": "PioneerGame"}]})
+    rc, bare, out_bf, err_bf = ok_json(["--status", "--fixture", str(bare_fx)])
+    bare = bare or {}
+    checks.eq("bare fixture exit", rc, 0)
+    checks.eq("bare fixture measured_at null",
+              bare.get("net", {}).get("measured_at"), None)
+    checks.true("bare fixture names its missing net data",
+                "fixture has no ping data" in str(
+                    bare.get("net", {}).get("gateway", {}).get("reason")),
+                str(bare.get("net")))
 
     print("\nfixtures and state under %s" % tmp)
     code = checks.summary()
