@@ -76,10 +76,19 @@ Item {
         animate: root.animate
         speed: root.speed
         breathSkew: 0.4
-        // 1.45, not C2's 1.28: the ice accent carries less luminance than the
-        // acid one, and this holds the band coverage at the acid build's 0.0623
-        // (measured: 0.0619 at 1.28, 0.0624 at 1.45). See docs/knot-iou.md.
-        gain: 1.45
+        // Brightness: C2's dot colour at `gain` 1.45 clipped most of the near
+        // side to white (rest bright-pixel V 0.831 against s2's 0.609). The
+        // field now runs between brightFloor 0.72 and brightTop 0.86 at gain
+        // 1.0, which is the s2 range: measured rest bright-pixel mean RGB
+        // (108,150,161), V 0.632, against s2's (93,137,151) and V 0.609.
+        // dotRadius carries the 0.35-luminance core that the dimmer dots lose
+        // to the shader's anti-aliasing ramp: 0.0092 unit = 2.13 px against a
+        // 4.41 px lattice pitch, so the disc still sits inside its cell. See
+        // docs/knot-iou.md.
+        gain: 1.0
+        brightFloor: 0.72
+        brightTop: 0.86
+        dotRadius: 0.0092
         sdfSource: "assets/swarm-knot-sdf-s2.png"
         assemble: root.assembling ? root.assembleProgress : 1.0
     }

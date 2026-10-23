@@ -33,6 +33,14 @@ import QtQuick
 //               channel, so the knot assembles from scattered points. At 1 the
 //               branch is skipped and the rest frame is untouched.
 //   gain        dot brightness multiplier, default C2's 1.28.
+//   brightFloor dot brightness at depth 0, default 0.55 (C2's floor): the dim
+//               end of the depth shading, in units of `gain`.
+//   brightTop   dot brightness at depth 1, default 1.0. Lowering the pair dims
+//               the whole dot field without touching its geometry, so the dot
+//               radius, pitch and stipple (and therefore the silhouette) stay.
+//   dotRadius   dot radius in units, default 0.0086 (C2's disc). Only the
+//               thresholded footprint of the field depends on it; the lattice
+//               pitch and stipple, and so the dot count, are unchanged.
 //   breathSkew  where in the cycle the ambient motion turns around: 0.5 is the
 //               symmetric sine C2 shipped, 0.4 is 40% out / 60% back.
 Item {
@@ -48,6 +56,9 @@ Item {
     property url sdfSource: "assets/swarm-knot-sdf.png"
     property real assemble: 1.0
     property real gain: 1.28
+    property real brightFloor: 0.55
+    property real brightTop: 1.0
+    property real dotRadius: 0.0086
     property real breathSkew: 0.5
 
     // 33 ms is 30.3 Hz: inside the 24 to 30 Hz band the build plan asks for.
@@ -124,7 +135,7 @@ Item {
         // reads as discrete points with dark gaps (cell fill 0.37 against s2's
         // 0.36) instead of the touching square tiles a 0.0115 radius produced
         // at the old 0.01617 pitch (disc 1.42 x pitch).
-        property real u_dotR: 0.0086
+        property real u_dotR: root.dotRadius
         property real u_pitch: 0.01907400
         property real u_rTube: 0.05640288
         property real u_rRing: 0.01277046
@@ -140,5 +151,7 @@ Item {
         property real u_activity: root.activity
         property real u_stipple: 0.94
         property real u_assemble: root.assemble
+        property real u_brightFloor: root.brightFloor
+        property real u_brightTop: root.brightTop
     }
 }

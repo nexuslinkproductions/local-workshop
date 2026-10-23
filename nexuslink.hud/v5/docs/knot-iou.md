@@ -1,12 +1,18 @@
 # Knot silhouette against s2 (W1)
 
-Status 2026-10-23, repair round 1: **`Knot.qml` ships with the trace fitted to s2,
-and the gate is the executive's ruling R2: `band_iou >= 0.72` and
-`silhouette_iou_blur6 >= 0.53`, both on the 540 s2 knot crop.** The written 0.90
-is out of reach for a dot-field render of this reference: no ring-free render can
-score above 0.8656 here, and the dot fill costs the rest (below), so chasing 0.90
-would mean thickening dots into tiles, which the visual law forbids. The
-deviation is recorded here per R2.
+Status 2026-10-23, repair round 2 (executive round-3 ruling): **`Knot.qml` ships
+with the trace fitted to s2, and the gate is the executive's ruling R2:
+`band_iou >= 0.72` and `silhouette_iou_blur6 >= 0.53`, both on the 540 s2 knot
+crop.** The written 0.90 is out of reach for a dot-field render of this
+reference: no ring-free render can score above 0.8656 here, and the dot fill
+costs the rest (below), so chasing 0.90 would mean thickening dots into tiles,
+which the visual law forbids. The deviation is recorded here per R2.
+
+Round 2 adds one measured change to the render: the rest dot field is dimmer.
+It read V 0.831 against s2's 0.609 with C2's dot colour at `gain` 1.45, which
+clipped most of the near side to white; it now reads V 0.632 with the brightness
+run between two shader uniforms (Palette, below). The trace, the bake, the
+scatter, the dot pitch and the stipple are unchanged.
 
 Every number below is reproduced by one script, `tools/knot-iou.py`, with the
 commands at the end.
@@ -15,13 +21,13 @@ commands at the end.
 
 | what | value |
 |---|---|
-| gate: `band_iou` at rest | **0.7218** (bar 0.72) |
-| gate: `silhouette_iou_blur6` at rest | **0.5346** (bar 0.53) |
+| gate: `band_iou` at rest | **0.7304** (bar 0.72) |
+| gate: `silhouette_iou_blur6` at rest | **0.5338** (bar 0.53) |
 | shipped asset's own level set vs the s2 crop band | 0.8149 |
 | the most any ring-free render can score on this crop | 0.8656 |
 | render at rest vs its own trace | 0.8276 |
-| dot coverage at rest | 0.0623 against the reference's 0.1153 |
-| bright-pixel mean RGB at rest (luminance > 0.35) | (155,203,211), 96% azure/ice, 0% lime |
+| dot coverage at rest | 0.0673 against the reference's 0.1153 |
+| bright-pixel mean at rest (luminance > 0.35, 14,473 px) | RGB (109,151,161), V **0.632**; B >= G > R 100.0%; hue 170-230 deg 100.0%; lime 0.0% |
 | rest vs `assembling: true, assembleProgress 1.0` | 0 of 291,600 crop px differ |
 
 ## Reference and crop
@@ -124,38 +130,63 @@ draw them, and
 is the highest `band_iou` any ring-free Knot can reach against this crop, even if
 its still reproduced the traced band exactly, pixel for pixel.
 
-The render lands at 0.7218, so the rest of the gap is the renderer, not the
+The render lands at 0.7304, so the rest of the gap is the renderer, not the
 geometry (render vs its own trace: 0.8276). Two measured causes, both bounded by
 the visual law:
 
 1. **No glow means sparse dots.** s2's dots carry a soft halo, so its band reads
-   58% covered at the meter's threshold. Swarm draws hard round discs at a 0.45
-   pitch ratio (C2's repair: discrete points with dark gaps). At 0.45 the discs
-   cover 33% of the band at 0.10, so the closed band comes out about 1.2 px
-   narrower per side than the geometry.
+   58% covered at the meter's threshold. Swarm draws hard round discs at a 0.48
+   pitch ratio (C2's repair: discrete points with dark gaps). At that ratio the
+   discs cover a third of the band at 0.10, so the closed band comes out about
+   1.2 px narrower per side than the geometry.
 2. **The lobe tips.** The band is 40 px wide at the top lobe's apex, but the
    tube's height above the plane goes to zero as the band narrows, so the dots at
    the tips are the dimmest and the first to fall under the threshold.
 
 Ruling R2 therefore sets the gate at **0.72 band and 0.53 blur6**, which this
-build meets at 0.7218 / 0.5346. Do not chase 0.90 by thickening dots into tiles.
+build meets at 0.7304 / 0.5338. Do not chase 0.90 by thickening dots into tiles.
 
-## Palette (R3)
+## Palette (R3) and dot brightness (E-4)
 
 s2's knot is azure to ice; `Tokens.acid` is a state colour, not the rest colour.
-`Knot.accent` now defaults to **`Tokens.ice` (#8fd8e8)**, and the shader's depth
-mix darkens the far dots toward azure (0.72 x) and lifts the cores toward white,
+`Knot.accent` defaults to **`Tokens.ice` (#8fd8e8)**, and the shader's depth mix
+darkens the far dots toward azure (0.72 x) and lifts the cores toward white,
 which is the s2 range. `accent` stays a property, so the integrator can push acid
 for a focus or assemble cue.
 
-Measured on the rest crop (pixels above 0.35 luminance): mean RGB **(155,203,211)**,
-96% of them with B >= G > R, **0% lime**. The s2 crop's own mean is (93,137,152)
-and the pre-repair build measured (178,202,59) with 88% lime.
+Bright pixels at rest (luminance > 0.35, 14,473 px), mean RGB **(109,151,161)**,
+**V 0.632**, **B >= G > R 100.0%**, **hue in the 170-230 degree window 100.0%**,
+**lime 0.0%**. The s2 crop reads (93,137,152), V 0.609, on its own 16,291 bright
+px: B >= G > R 94.8%, hue window 94.9%, and 3.1% lime, which is its ring. Both
+shares are reported because they are different meters: "azure/ice" is the
+B >= G > R share, and the hue window is the one that would catch a colour
+drifting out of s2's ramp. The pre-repair build measured 96.8% and 90.3%, so the
+old label "96% azure/ice" named neither cleanly. Lime is 0.0% under both.
 
-`Knot` drives Swarm's `gain` at **1.45** instead of C2's 1.28: the ice accent
-carries less luminance than acid, and 1.45 holds the band coverage at the acid
-build's 0.0623 (measured 0.0619 at 1.28, 0.0624 at 1.45). Swarm's default gain is
-untouched.
+Brightness (E-4): C2's dot colour at `gain` 1.45 clipped most of the near side to
+white, so the rest frame read **V 0.831** against s2's 0.609. The dot field now
+runs between two shader uniforms, **`brightFloor` 0.72 and `brightTop` 0.86, at
+`gain` 1.0**, i.e. the depth shading's two ends, both defaulted in `Swarm.qml` to
+C2's 0.55 / 1.0 so the shipped Swarm frame stays byte-identical. `dotRadius` is
+raised 0.0086 -> 0.0092 unit (1.99 -> 2.13 px, 0.48 x the 4.41 px pitch, still
+inside its cell) to carry the 0.35-luminance core that the dimmer dots lose to
+the shader's anti-aliasing ramp; `silhouette_iou_blur6` thresholds that core, so
+without it the gate drops to 0.5265.
+
+The measured ladder (rest crop, the same meters as the gate):
+
+    gain floor top  dotR    band_iou  blur6   bright V
+    1.45 0.55  1.00 0.0086  0.7218    0.5346  0.831   round 2
+    1.00 0.55  1.00 0.0086  0.7200    0.5295  0.678
+    1.00 0.70  0.80 0.0086  0.7210    0.5265  0.601
+    1.00 0.70  0.80 0.0092  0.7301    0.5314  0.610
+    1.00 0.72  0.86 0.0092  0.7304    0.5338  0.632   SHIPPED
+
+The price of the dimmer field is the dot footprint: coverage at 0.10 rises from
+0.0623 to **0.0673 (+8%)**, because the compensating radius widens the disc that
+the meter sees, and `band_iou` follows it up (the closed band is closer to s2's
+now). Dot pitch, stipple, dot count, scatter, trace and geometry are unchanged.
+Swarm's own defaults are untouched.
 
 ## Breath (R5, was F8)
 
@@ -177,7 +208,7 @@ traced band at a 5.5 px pitch and moves each one by a hashed offset of up to
 
 At 0 the marched surface is the scattered cloud, at 1 it is the traced tube, and
 the branch is skipped entirely at 1 so the rest frame is untouched. `R_SCATTER`
-is 0.010 unit = 2.3 px, the size of a settled dot (2.0 px).
+is 0.010 unit = 2.3 px, the size of a settled dot (2.1 px).
 
 Why a blend and not a per-dot displacement: a fragment of a raymarched surface
 only exists where the ray hits the surface, so a dot displaced further than its
@@ -191,25 +222,26 @@ Measured on the 540 crop (lit px at the 0.10 threshold, bbox, gate numbers):
 
 | state | lit px | bbox | `band_iou` | `blur6` |
 |---|---|---|---|---|
-| progress 0.0 | 14,644 | x 9..526, y 30..505 | 0.4225 | 0.4337 |
-| progress 0.3 | 20,602 | x 26..505, y 21..492 | 0.6886 | 0.5629 |
-| progress 0.6 | 21,221 | x 30..505, y 34..492 | 0.7374 | 0.5564 |
-| progress 1.0 | 18,181 | x 30..505, y 34..492 | 0.7218 | 0.5346 |
-| rest (`assembling: false`) | 18,181 | x 30..505, y 34..492 | 0.7218 | 0.5346 |
+| progress 0.0 | 15,855 | x 9..526, y 30..505 | 0.4242 | 0.4343 |
+| progress 0.3 | 22,271 | x 26..505, y 21..492 | 0.6968 | 0.5631 |
+| progress 0.6 | 22,882 | x 30..505, y 30..492 | 0.7423 | 0.5555 |
+| progress 1.0 | 19,637 | x 30..505, y 34..492 | 0.7304 | 0.5338 |
+| rest (`assembling: false`) | 19,637 | x 30..505, y 34..492 | 0.7304 | 0.5338 |
 
 At 0 the cloud is 28 px wider than the settled mark on each side and its `band_iou`
 is 0.42: the shape is not there yet. The intermediate states carry more lit px
 than rest because blending the two fields swells the surface before it settles;
-the count returns to 18,181 at 1.0. Rest and progress 1.0 are byte-identical
+the count returns to 19,637 at 1.0. Rest and progress 1.0 are byte-identical
 (0 of 291,600 crop px differ).
 
 ## Default Swarm frame (R1, was F2)
 
-The three properties W1 adds to `Swarm.qml` (`sdfSource`, `assemble`, `gain`) and
-`breathSkew` all default to the shipped values, the shader's assemble branch is
-skipped at `u_assemble = 1`, and the default asset is untouched. Proof, not
-assertion: `static/swarm-still.qml` rendered at 720x720 on `d0e9268` and on this
-head differs in **0 of 518,400 px** (max delta 0).
+The properties W1 adds to `Swarm.qml` (`sdfSource`, `assemble`, `gain`,
+`brightFloor`, `brightTop`, `dotRadius`) and `breathSkew` all default to the
+shipped values, the shader's assemble branch is skipped at `u_assemble = 1`, and
+the default asset is untouched. Proof, not assertion: `static/swarm-still.qml`
+rendered at 720x720 on `d0e9268` and on this head differs in **0 of 518,400 px**
+(max delta 0), and the two PNGs are byte-identical (sha256 `0004e8cf…`).
 
 ## Sweeps (run-2 build: acid accent, gain 1.28, each with `pxPerUnit` synced)
 
@@ -223,18 +255,19 @@ head differs in **0 of 518,400 px** (max delta 0).
     opening 7, offset 1     SHIPPED 0.7218   0.7539  0.5327
 
 These rows are the parameter sweep as measured before the palette change; the
-repair build's ice accent moves the shipped row to 0.7218 / 0.5346 (same band,
-better blur6). The 1 px silhouette offset is the measured compensation for the
-dot inset and is the reason the shipped row beats the other ring-free rows. Larger
-offsets lose, because dilating the silhouette also dilates the enclosed holes and
-the reference has none there. Gain 2.2 would add +0.0055 but brightens every dot
-toward solid; C2's 1.28 is kept as the Swarm default and `Knot` uses 1.45 for the
-ice accent. Opening 5 with offset 1 scores 0.004 higher than the shipped row but
-leaves the ring strip in the still, so it is not shipped.
+round-2 ice build moved the shipped row to 0.7218 / 0.5346, and the round-3
+brightness to 0.7304 / 0.5338 (see Palette). The 1 px silhouette offset is the
+measured compensation for the dot inset and is the reason the shipped row beats
+the other ring-free rows. Larger offsets lose, because dilating the silhouette
+also dilates the enclosed holes and the reference has none there. Gain 2.2 would
+add +0.0055 but brightens every dot toward solid; C2's 1.28 is kept as the Swarm
+default, and `Knot` now dims through `brightFloor` / `brightTop` rather than
+gain. Opening 5 with offset 1 scores 0.004 higher than the shipped row but leaves
+the ring strip in the still, so it is not shipped.
 
 ## Stills
 
-`docs/knot-stills/`, 2560x1440 deck frames and 540 crops, JPEG, 49-75 KB each:
+`docs/knot-stills/`, 2560x1440 deck frames and 540 crops, JPEG, 44-71 KB each:
 
 | state | deck | crop |
 |---|---|---|
@@ -244,14 +277,30 @@ leaves the ring strip in the still, so it is not shipped.
 | progress 0.6 | `docs/knot-stills/knot-a60-deck.jpg` | `docs/knot-stills/knot-a60-540.jpg` |
 | progress 1.0 | `docs/knot-stills/knot-a100-deck.jpg` | `docs/knot-stills/knot-a100-540.jpg` |
 
-Side by side for the R2 check (s2's crop left, the render's crop right, 1:1):
-`docs/knot-stills/knot-vs-s2.jpg`.
+Side by side, like for like (s2's 540 crop left, the render's 540 crop right, the
+same crop box, 1:1): `docs/knot-stills/knot-vs-s2.jpg`.
+
+Side by side against the reference the R2 ruling names,
+`hud-candidates/comp-r1/s2/s2-knot-frame.jpg`: `docs/knot-stills/knot-vs-s2-frame.jpg`.
+Both panels are 720x720 and the bright knot (luminance > 0.35) is **389 px wide =
+54.0% of the frame in each**. The s2 panel is that file as it ships. The render
+panel is `knot-rest-deck.jpg` cropped to 874x874 around the knot's bright bbox
+centre and resampled to 720 (0.824x), so the knot lands at the same size in the
+same-sized panel; its own deck frame has the knot at 476 px in 2560x1440. The
+reference frame carries s2's dotted ring and sits on black, the Knot has no ring
+by spec and sits on the deck's `#0a0f1c`.
 
 ## Reproduce
 
 From the worktree root, Python 3 with PIL only — **no numpy**; the tool is stdlib
-plus PIL and reproduces the previous numpy build's numbers exactly (the same
-input bakes the identical texture):
+plus PIL and reproduces the previous numpy build's **fit numbers** exactly: the
+same input gives band 50,416 px, strand half width 13.04 px, 231.16 px per unit,
+a 770.5 px Swarm and the 0.8149 level-set IoU. The texture it bakes is not the
+pre-scatter one: `trace` also writes the scatter channel into B, so the documented
+bake is `kit/assets/swarm-knot-sdf-s2.png` at sha256
+**`c7f17c93a74c6baa135a68bd5796d2ccfa7f186fd766d02022ad619f5262231e`**, byte for
+byte the committed asset. (The pre-scatter bake of `d7616bd` was `67df623f…`; its
+B channel is zero, so it cannot carry the assemble scatter.)
 
     # 1. bake the trace + scatter into the knot's own asset and print the fit
     /usr/bin/python3 tools/knot-iou.py trace \
@@ -283,9 +332,11 @@ default 2560x1440 deck frame; the 540 crop is taken at x=1010, y=280.
 - `nexuslink.hud/v5/kit/Knot.qml` (new, this card's)
 - `nexuslink.hud/v5/kit/assets/swarm-knot-sdf-s2.png` (new: R tube, B scatter;
   C2's `swarm-knot-sdf.png` is untouched)
-- `nexuslink.hud/v5/kit/Swarm.qml` — four added properties with shipped defaults:
-  `sdfSource`, `assemble`, `gain`, `breathSkew`
+- `nexuslink.hud/v5/kit/Swarm.qml` — seven added properties, all defaulted to the
+  shipped values: `sdfSource`, `assemble`, `gain`, `brightFloor`, `brightTop`,
+  `dotRadius`, `breathSkew`
 - `nexuslink.hud/v5/kit/shaders/swarm.frag` + `swarm.frag.qsb` (the assemble
-  blend, skipped at `u_assemble = 1`)
-- `nexuslink.hud/v5/docs/knot-stills/*` (evidence)
+  blend, skipped at `u_assemble = 1`; the dot brightness floor and top as
+  uniforms, defaulted 0.55 / 1.0)
+- `nexuslink.hud/v5/docs/knot-stills/*` (evidence, including both side-by-sides)
 - `tools/knot-iou.py`, this file

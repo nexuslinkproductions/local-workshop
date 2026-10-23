@@ -40,6 +40,8 @@ layout(std140, binding = 0) uniform buf {
     float u_activity;
     float u_stipple;
     float u_assemble;       // 1 = rest shape, 0 = fully scattered
+    float u_brightFloor;    // dot brightness at depth 0 (W1: Knot dims the field)
+    float u_brightTop;      // dot brightness at depth 1
 };
 
 layout(binding = 1) uniform sampler2D u_sdf;
@@ -183,8 +185,10 @@ void main()
     // A 0.55 floor keeps the far side of the tube visible as a dim dot field
     // while the near side still reads brighter; the old 0.30 floor put the far
     // dots under any sane threshold, which is why the field had to be tiled to
-    // score.
-    float bright = mix(0.55, 1.0, pow(depth, 1.6)) * mix(0.82, 1.10, hash13(cell + 31.0));
+    // score. Both ends are uniforms so a caller can dim the field without
+    // touching the dot geometry: the shipped defaults (0.55 / 1.0) reproduce the
+    // C2 frame exactly, and W1's Knot passes a lower pair for the s2 brightness.
+    float bright = mix(u_brightFloor, u_brightTop, pow(depth, 1.6)) * mix(0.82, 1.10, hash13(cell + 31.0));
     bright *= mix(1.0, 1.12, u_activity) * (1.0 - 0.55 * u_focus) * u_gain;
     vec3 col = mix(u_accent.rgb * 0.72, u_accent.rgb, depth);
     col = mix(col, vec3(1.0), pow(depth, 3.0) * 0.26);
