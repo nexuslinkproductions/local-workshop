@@ -39,6 +39,9 @@ Item {
     // point texture, see the header. A scene may swap the whole point set here.
     property url pointsSource: Qt.resolvedUrl("shaders/knot-points5.png")
 
+    // CALM (P4): the acid sparks follow the strand dimming (shaders/knot.vert DIM 0.85)
+    readonly property real sparkDim: 0.85
+
     readonly property int pointCount: 33000
     // texture layout, keep in sync with TEXEL_STRIDE / TEX_ROWS / TEX_WIDTH at
     // the top of shaders/knot.vert
@@ -151,8 +154,9 @@ Item {
             property real knotPx: root.knotPx
             property real uW: root.width
             property real uH: root.height
-            property vector4d uSparkCol: Qt.vector4d(modelData.rgb[0] / 255, modelData.rgb[1] / 255,
-                                                     modelData.rgb[2] / 255, 1.0)
+            property vector4d uSparkCol: Qt.vector4d(modelData.rgb[0] / 255 * root.sparkDim,
+                                                     modelData.rgb[1] / 255 * root.sparkDim,
+                                                     modelData.rgb[2] / 255 * root.sparkDim, 1.0)
             property vector4d uSparkGeom: Qt.vector4d(1.0, modelData.r, modelData.dx, modelData.dy)
         }
     }

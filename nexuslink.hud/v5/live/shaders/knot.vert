@@ -9,10 +9,9 @@
 // with an interpolated copy.
 //
 // Motion (KNOT-SPEC-R4, round 4: soft and gentle, plus the morph):
-//  A  global pose only: pitch 1.6 deg (71 s and 97 s), roll 1.6 deg
-//     (83 s and 113 s), NO yaw and no side to side translation, global
-//     scale pulse 0.8 percent peak to peak with a 7 s period
-//  B  three lobes breathing in thickness on their own clocks (9 / 11 / 13 s),
+//  A  global pose only: no sway (SWAY_DEG 0), NO yaw and no side to side
+//     translation, global scale pulse 0.8 percent peak to peak, 5.5 s period
+//  B  three lobes breathing in thickness on their own clocks (5.0 / 5.5 / 6.0 s),
 //     each with slow FM and a per point phase offset
 //  C  peristaltic wavefronts along the strand, one travelling gaussian bulge
 //     with a small trailing trough; loops are 11 and 15 s (ribbon) and 12 and
@@ -23,6 +22,11 @@
 //  F  five acid sparks gliding along the strands
 //  G  morph between the triquetra and two alternate forms, baked per point
 //     into knot-points4.png (texels 5..10), blended here
+//
+// CALM (Marcel, P4): no sway (SWAY_DEG 0), morph cycle 48 s wall with the
+// triquetra for 55 percent of it, lobes breathe in 5.0 / 5.5 / 6.0 s, local
+// motion 40 percent, output 15 percent dimmer (DIM). Breathing and morph run
+// on wall seconds (tw); the other clocks keep the 0.55 slow factor.
 //
 // Round 4 runs about 40 percent of the round 3 local motion, with longer
 // periods and wider windows, and the summed local term is soft limited at
@@ -92,11 +96,18 @@ const float CORE_P = 0.9;       // core alpha exponent (K3c 1.6 narrowed FWHM, e
 const float RAD_P = 3.0;        // radius falloff exponent (spec 3.0; K3c 4.5 dropped FWHM to 10.3)
 
 // morph schedule, mirrors MORPH_* in tools/linux/measure/knot/knot_port.py
-const float CYC = 60.0;           // full alternation cycle, s
-const float HOLD_A = 33.0;        // hold on the triquetra, s
-const float LEG = 12.0;           // one leg, s
-const float HOLD_B = 3.0;         // hold on the form, s
+// CALM (P4): wall seconds. Old (calm stopgap): CYC 60 on the 0.55 clock, i.e.
+// 109 s wall, HOLD_A 33 (55 percent), LEG 12, HOLD_B 3.
+const float CYC = 48.0;           // full alternation cycle, wall s (brief 36 to 60)
+const float HOLD_A = 26.4;        // hold on the triquetra, s (55 percent of CYC)
+const float LEG = 8.0;            // one leg, s
+const float HOLD_B = 5.6;         // hold on the form, s (2 LEG + HOLD_B + HOLD_A = CYC)
 const float STAGGER = 0.20;       // per point stagger, share of the leg
+
+// CALM (P4): sway, brightness and breathing
+const float SWAY_DEG = 0.0;       // pitch and roll amplitude, was 1.6 deg (no sway)
+const float DIM = 0.85;           // 15 percent dimmer than the calm stopgap
+const float BREATH_PULSE_S = 5.5; // global scale pulse period, wall s, was 7 (0.55 clock: 12.7 s)
 
 vec4 texAt(float i) {
     float px = mod(i, TEX_WIDTH);
@@ -177,7 +188,9 @@ vec3 curlA(vec3 p, float tt) {
 }
 
 void main() {
-    // CALM (Marcel 2026-10-23): slower clock, local motion 35 percent, brightness deviation 45 percent
+    // CALM (Marcel 2026-10-23): slower clock, brightness deviation 45 percent.
+    // P4: tw is wall time for the morph and the breathing; t is the slow clock.
+    float tw = t;
     float t = t * 0.55;
     // uN is the slice size, uOffset the first point of this slice (round 5)
     float c = floor(qt_MultiTexCoord0.x * (2.0 * uN) + 0.5);
@@ -214,11 +227,11 @@ void main() {
     if (uSparkGeom.x > 0.5) {
         const vec2 PIVOT_S = vec2(-4.780, 35.939);
         vec3 Ps = posDecode(t0, t1);
-        float brs = 0.5 - 0.5 * cos(TAU * t / 7.0);
+        float brs = breathAt(tw, 0.0, BREATH_PULSE_S);
         vec3 Qs = Ps * (1.0 + 0.008 * brs);
-        float pitS = radians(1.6) * (sin(TAU * t / 71.0 + 0.7)
+        float pitS = radians(SWAY_DEG) * (sin(TAU * t / 71.0 + 0.7)
                    + 0.5 * sin(TAU * t / 97.0 + 2.1)) / 1.5;
-        float rolS = radians(1.6) * (sin(TAU * t / 83.0 + 1.9)
+        float rolS = radians(SWAY_DEG) * (sin(TAU * t / 83.0 + 1.9)
                    + 0.5 * sin(TAU * t / 113.0 + 0.4)) / 1.5;
         float cpS = cos(pitS), spS = sin(pitS);
         float crS = cos(rolS), srS = sin(rolS);
@@ -271,7 +284,7 @@ void main() {
 
     // ---- G: morph, form of this cycle, then the per point weight ---------
     // cycle k is form 1 when k is even, form 2 when k is odd
-    float kcyc = floor(t / CYC);
+    float kcyc = floor(tw / CYC);
     float fsel = mod(kcyc, 2.0);
     vec4 t5 = texAt(base + 5.0);
     vec4 t6 = texAt(base + 6.0);
@@ -286,7 +299,7 @@ void main() {
     // frame for a dot whose two normals are nearly opposite
     if (dot(N3, Nform) < 0.0) Nform = -Nform;
 
-    float xm = morphX(t);
+    float xm = morphX(tw);
     // stagger: lobe 0 leads, lobe 2 trails, so the morph travels round the knot
     float hstag = (0.0 * w0 + 0.5 * w1 + 1.0 * w2) / wsum;
     float sm = smootherstep01((xm - STAGGER * hstag) / (1.0 - STAGGER));
@@ -305,25 +318,25 @@ void main() {
     vec3 dirW = length(dw) < 0.15 ? er : normalize(dw);
 
     // ---- A: quiet global pose, no yaw, 0.8 percent scale pulse ----------
-    float pitch = radians(1.6) * (sin(TAU * t / 71.0 + 0.7)
+    float pitch = radians(SWAY_DEG) * (sin(TAU * t / 71.0 + 0.7)
                 + 0.5 * sin(TAU * t / 97.0 + 2.1)) / 1.5;
-    float roll = radians(1.6) * (sin(TAU * t / 83.0 + 1.9)
+    float roll = radians(SWAY_DEG) * (sin(TAU * t / 83.0 + 1.9)
                + 0.5 * sin(TAU * t / 113.0 + 0.4)) / 1.5;
 
-    float br0 = 0.5 - 0.5 * cos(TAU * t / 7.0);
+    float br0 = breathAt(tw, 0.0, BREATH_PULSE_S);
     vec3 Q = Pm * (1.0 + 0.008 * br0);
 
     // ---- B: three lobes, each on its own clock (9 / 11 / 13 s) ----------
     // slow frequency modulation per lobe clock, plus a small deterministic
     // per point phase offset so a lobe does not pulse as one solid block
-    float fm0 = 0.06 * sin(TAU * t / 31.0) + 0.00;
-    float fm1 = 0.06 * sin(TAU * t / 38.0 + 2.0) + 0.00;
-    float fm2 = 0.06 * sin(TAU * t / 45.0 + 4.0) + 0.00;
+    float fm0 = 0.06 * sin(TAU * tw / 31.0) + 0.00;
+    float fm1 = 0.06 * sin(TAU * tw / 38.0 + 2.0) + 0.00;
+    float fm2 = 0.06 * sin(TAU * tw / 45.0 + 4.0) + 0.00;
     float pp = 0.035 * (fract(sin(pid * 12.9898) * 43758.5453) - 0.5);
 
-    float bl = (w0 * breathAt(t, 0.00 + fm0 + pp, 9.0)
-              + w1 * breathAt(t, 0.37 + fm1 + pp, 11.0)
-              + w2 * breathAt(t, 0.71 + fm2 + pp, 13.0)) / wsum;
+    float bl = (w0 * breathAt(tw, 0.00 + fm0 + pp, 5.0)
+              + w1 * breathAt(tw, 0.37 + fm1 + pp, 5.5)
+              + w2 * breathAt(tw, 0.71 + fm2 + pp, 6.0)) / wsum;
     float lb = 2.0 * bl - 1.0;
 
     // ---- C: peristaltic fronts along the strand (u) ---------------------
@@ -396,7 +409,7 @@ void main() {
     float lim = R * 0.04;
     float dl = length(dloc);
     dloc *= lim * (1.0 - exp(-dl / lim)) / max(dl, 1e-4);
-    dloc *= 0.35;
+    dloc *= 0.40;   // CALM (P4): local motion 40 percent, was 35
     Q += dloc;
 
     // ---- brightness and size from the same local terms ------------------
@@ -483,7 +496,7 @@ void main() {
     alpha *= mix(1.0, crowd, 0.9);
     // cap per dot so overlapping dots cannot add up to a clipped white patch;
     // the ring (cls 1) is a thin sparse circle, kept at 70 percent of the ribbon
-    alpha = min(alpha, ALPHA_CAP) * (cls < 0.5 ? 1.0 : 0.70);
+    alpha = min(alpha, ALPHA_CAP) * DIM * (cls < 0.5 ? 1.0 : 0.70);
     alpha = mix(alpha, 1.0, spark * 0.85 * (0.4 + 0.6 * f));
     if (vis < 0.01) alpha = 0.0;
 
