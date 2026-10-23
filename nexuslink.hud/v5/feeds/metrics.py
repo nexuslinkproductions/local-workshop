@@ -49,7 +49,14 @@ BLOCKS = ("host", "local_ai", "tokens_today", "screens", "windows", "kanban")
 
 
 def floats(value, limit=None):
-    """Coerce a list or a whitespace-separated string into floats."""
+    """Coerce a list or a whitespace-separated string into floats.
+
+    All or nothing: one non-finite element (NaN, Infinity, a string that is not
+    a number) makes the whole value ``None``. ``loadavg`` is a 1/5/15 minute
+    triple, so a dropped element would slide the 5 or 15 minute value into the
+    1 minute slot and ``load1_frac`` would report the wrong ratio. ``limit``
+    still trims a finite list to its first values.
+    """
     if isinstance(value, str):
         value = value.replace(",", " ").split()
     if not isinstance(value, (list, tuple)):
@@ -58,10 +65,10 @@ def floats(value, limit=None):
     for item in value:
         number = common.number(item)
         if number is None:
-            continue
+            return None
         out.append(round(number, 3))
-        if limit is not None and len(out) >= limit:
-            break
+    if limit is not None:
+        out = out[:limit]
     return out or None
 
 
@@ -89,12 +96,16 @@ def host_block(value, warnings):
     if not isinstance(value, dict):
         warnings.append("host block is not an object")
         return None
+    raw_avg = value.get("loadavg")
     block = {
         "name": common.text(value.get("name")) or common.text(value.get("hostname")),
         "cores": common.integer(value.get("cores")),
-        "loadavg": floats(value.get("loadavg"), limit=3),
+        "loadavg": floats(raw_avg, limit=3),
         "load1_frac": common.number(value.get("load1_frac")),
     }
+    if block["loadavg"] is None and raw_avg is not None:
+        # The triple was present and rejected: any stated ratio belongs to it.
+        block["load1_frac"] = None
     if block["load1_frac"] is None and block["loadavg"] and block["cores"]:
         block["load1_frac"] = round(block["loadavg"][0] / float(block["cores"]), 4)
     return block if any(item is not None for item in block.values()) else None
@@ -317,6 +328,16 @@ def self_check(args):
             bad.append(name)
             print("FAIL %s %s" % (name, detail))
 
+    def reject_constant(token):
+        raise ValueError("non-JSON constant %s" % token)
+
+    def strict(text):
+        try:
+            json.loads(text, parse_constant=reject_constant)
+            return True
+        except ValueError:
+            return False
+
     shipped = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "fixtures", "metrics.json")
     )
@@ -375,6 +396,94 @@ def self_check(args):
         set(payload.get("missing") or []) == {"local_ai", "tokens_today", "screens", "windows", "kanban"},
         str(payload.get("missing")),
     )
+
+    # --- a non-finite element nulls the whole loadavg triple (R6) -----------
+    # Slot position is the meaning: [Infinity, 4.45, 4.81] must never become
+    # [4.45, 4.81], where the 5 minute value would be reported as the 1 minute
+    # ratio. Same rule as the live path, which drops the whole triple.
+    def host_of(stdout_text):
+        parsed = json.loads(stdout_text) if stdout_text.strip() else None
+        return ((parsed or {}).get("metrics") or {}).get("host") or {}
+
+    def run_raw(name, body):
+        path = os.path.join(root, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        return _cli(["--fixture", path, "--json"])
+
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-first-inf.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [Infinity, 4.45, 4.81]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-first-inf-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-first-inf-strict-json", strict(stdout), stdout.strip()[:200])
+    check("loadavg-first-inf-list-null", host.get("loadavg") is None, str(host))
+    check("loadavg-first-inf-no-frac", host.get("load1_frac") is None, str(host))
+    check(
+        "loadavg-first-inf-keeps-counters",
+        host.get("name") == "box" and host.get("cores") == 12,
+        str(host),
+    )
+
+    # A stated ratio cannot outlive the triple it describes.
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-stated-frac.json",
+        '{"host": {"name": "box", "cores": 12,'
+        ' "loadavg": [Infinity, 4.45, 4.81], "load1_frac": 0.9}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-stated-frac-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check(
+        "loadavg-stated-frac-null",
+        host.get("loadavg") is None and host.get("load1_frac") is None,
+        str(host),
+    )
+
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-mid-inf.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [1.5, Infinity, 4.81]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-mid-inf-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-mid-inf-list-null", host.get("loadavg") is None, str(host))
+    check("loadavg-mid-inf-no-frac", host.get("load1_frac") is None, str(host))
+
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-string.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [1.5, "fast", 4.81]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-string-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-string-list-null", host.get("loadavg") is None, str(host))
+    check("loadavg-string-no-frac", host.get("load1_frac") is None, str(host))
+
+    # The whole list is validated, not just the first three slots.
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-tail-inf.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [1.5, 2.5, 3.5, Infinity]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-tail-inf-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-tail-inf-list-null", host.get("loadavg") is None, str(host))
+
+    # The fix is narrow: finite lists are kept, with the limit still applied.
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-finite-three.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [3.94, 4.45, 4.81]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-finite-three-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-finite-three-kept", host.get("loadavg") == [3.94, 4.45, 4.81], str(host))
+    check("loadavg-finite-three-frac", host.get("load1_frac") == 0.3283, str(host))
+
+    code, parsed, stdout, stderr = run_raw(
+        "loadavg-limit.json",
+        '{"host": {"name": "box", "cores": 12, "loadavg": [1.5, 2.5, 3.5, 4.5]}}',
+    )
+    host = host_of(stdout)
+    check("loadavg-limit-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("loadavg-limit-trims", host.get("loadavg") == [1.5, 2.5, 3.5], str(host))
 
     code, parsed, _, _ = run({"host": "not an object", "local_ai": {"model": "qwen"}})
     payload = parsed or {}

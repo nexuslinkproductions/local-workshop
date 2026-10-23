@@ -350,7 +350,15 @@ def pulse_period(stats):
 
 
 def finite_floats(value, limit=None):
-    """Coerce a list or a whitespace-separated string into finite floats."""
+    """Coerce a list or a whitespace-separated string into finite floats.
+
+    All or nothing: one non-finite element (NaN, Infinity, a string that is not
+    a number, a nested object) makes the whole value ``None``. The slot position
+    is the meaning in a load triple (1, 5 and 15 minutes), so dropping a bad
+    element would slide every later value into an earlier slot and report it as
+    the wrong thing. This matches the live path, where ``parse_ssh_facts`` drops
+    the whole triple. ``limit`` still trims a finite list to its first values.
+    """
     if isinstance(value, str):
         value = value.replace(",", " ").split()
     if not isinstance(value, (list, tuple)):
@@ -359,11 +367,21 @@ def finite_floats(value, limit=None):
     for item in value:
         number = common.number(item)
         if number is None:
-            continue
+            return None
         out.append(round(number, 3))
-        if limit is not None and len(out) >= limit:
-            break
+    if limit is not None:
+        out = out[:limit]
     return out or None
+
+
+def string_field(value):
+    """A text field: only a real string is text, never ``str(float)``.
+
+    ``common.text`` stringifies anything it is given, so a fixture carrying
+    ``{"state": NaN}`` used to publish ``"nan"``. ``state`` and ``rem`` are the
+    battery's word and clock, so a non-string is no value at all.
+    """
+    return common.text(value) if isinstance(value, str) else None
 
 
 def mac_block(value):
@@ -372,22 +390,29 @@ def mac_block(value):
     Same discipline as metrics.py: numbers through ``number``/``integer``,
     strings through ``text``, so a fixture carrying ``NaN``, ``Infinity`` or a
     string where a number belongs cannot reach the output (QML's JSON.parse
-    rejects those tokens). ``load1_frac`` is derived only from finite values
-    with a positive core count.
+    rejects those tokens). ``load`` is all or nothing: one non-finite element
+    nulls the triple rather than shifting the remaining values into earlier
+    slots. ``state`` and ``rem`` are text or null, never ``"nan"``/``"inf"``.
+    ``load1_frac`` is derived only from finite values with a positive core
+    count.
     """
     if not isinstance(value, dict):
         return None
-    load = finite_floats(value.get("load"), limit=3)
+    raw_load = value.get("load")
+    load = finite_floats(raw_load, limit=3)
     cores = common.integer(value.get("cores"))
     block = {
         "load": load,
         "load1_frac": common.number(value.get("load1_frac")),
         "cores": cores,
         "batt": common.integer(value.get("batt")),
-        "state": common.text(value.get("state")),
-        "rem": common.text(value.get("rem")),
+        "state": string_field(value.get("state")),
+        "rem": string_field(value.get("rem")),
         "up_min": common.integer(value.get("up_min")),
     }
+    if load is None and raw_load is not None:
+        # The triple was present and rejected: any stated ratio belongs to it.
+        block["load1_frac"] = None
     if block["load1_frac"] is None and load and cores and cores > 0:
         block["load1_frac"] = round(load[0] / float(cores), 4)
     return block if any(item is not None for item in block.values()) else None
@@ -846,16 +871,101 @@ def self_check(args):
     check("dirty-fixture-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
     check("dirty-fixture-strict-json", strict(stdout), stdout.strip()[:200])
     check(
-        "dirty-fixture-sanitised",
-        mac.get("load") == [3.94] and mac.get("batt") is None and mac.get("up_min") is None,
+        "dirty-fixture-load-dropped",
+        mac.get("load") is None and mac.get("batt") is None and mac.get("up_min") is None,
         str(mac),
     )
     check(
-        "dirty-fixture-typed",
-        mac.get("state") == "5" and mac.get("rem") == "0:43" and mac.get("cores") == 0,
+        "dirty-fixture-text-typed",
+        mac.get("state") is None and mac.get("rem") == "0:43" and mac.get("cores") == 0,
         str(mac),
     )
     check("dirty-fixture-zero-cores-no-frac", mac.get("load1_frac") is None, str(mac))
+
+    # --- a non-finite element nulls the whole load triple (R6) --------------
+    # Slot position is the meaning: [3.94, Infinity, 4.81] must never become
+    # [3.94, 4.81], where the 15 minute value would be read as the 5 minute one.
+    def mac_of(stdout_text):
+        parsed = json.loads(stdout_text) if stdout_text.strip() else None
+        return ((parsed or {}).get("link") or {}).get("mac") or {}
+
+    mid_inf = os.path.join(root, "load-mid-inf.json")
+    with open(mid_inf, "w", encoding="utf-8") as handle:
+        handle.write(
+            '{"ts": 1792703222, "route": "direct",'
+            ' "mac": {"load": [3.94, Infinity, 4.81], "cores": 12, "batt": 100}}'
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", mid_inf, "--json"])
+    mac = mac_of(stdout)
+    check("load-mid-inf-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("load-mid-inf-strict-json", strict(stdout), stdout.strip()[:200])
+    check("load-mid-inf-list-null", mac.get("load") is None, str(mac))
+    check("load-mid-inf-no-frac", mac.get("load1_frac") is None, str(mac))
+    check(
+        "load-mid-inf-keeps-counters",
+        mac.get("batt") == 100 and mac.get("cores") == 12,
+        str(mac),
+    )
+
+    first_inf = os.path.join(root, "load-first-inf.json")
+    with open(first_inf, "w", encoding="utf-8") as handle:
+        handle.write(
+            '{"ts": 1792703222, "route": "direct",'
+            ' "mac": {"load": [Infinity, 4.45, 4.81], "cores": 12, "batt": 100}}'
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", first_inf, "--json"])
+    mac = mac_of(stdout)
+    check("load-first-inf-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("load-first-inf-list-null", mac.get("load") is None, str(mac))
+    check("load-first-inf-no-frac", mac.get("load1_frac") is None, str(mac))
+
+    # A stated ratio cannot outlive the triple it describes.
+    stated_frac = os.path.join(root, "load-inf-stated-frac.json")
+    with open(stated_frac, "w", encoding="utf-8") as handle:
+        handle.write(
+            '{"ts": 1792703222, "mac": {"load": [3.94, Infinity, 4.81],'
+            ' "load1_frac": 0.9, "cores": 12, "batt": 100}}'
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", stated_frac, "--json"])
+    mac = mac_of(stdout)
+    check("load-inf-stated-frac-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check(
+        "load-inf-stated-frac-null",
+        mac.get("load") is None and mac.get("load1_frac") is None,
+        str(mac),
+    )
+
+    # The fix is narrow: a finite partial list still derives load1_frac.
+    short_load = os.path.join(root, "load-short.json")
+    with open(short_load, "w", encoding="utf-8") as handle:
+        handle.write('{"mac": {"load": [1.5], "cores": 4, "batt": 72}}')
+    code, parsed, stdout, stderr = _cli(["--fixture", short_load, "--json"])
+    mac = mac_of(stdout)
+    check("load-short-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("load-short-kept", mac.get("load") == [1.5], str(mac))
+    check("load-short-frac", mac.get("load1_frac") == 0.375, str(mac))
+
+    # --- state and rem are text or null, never str(nan/inf) (R7) -----------
+    text_fixture = os.path.join(root, "state-rem.json")
+    with open(text_fixture, "w", encoding="utf-8") as handle:
+        handle.write(
+            '{"ts": 1792703222, "route": "direct", "mac": {"load": [3.94, 4.45, 4.81],'
+            ' "cores": 12, "batt": 100, "state": NaN, "rem": Infinity}}'
+        )
+    code, parsed, stdout, stderr = _cli(["--fixture", text_fixture, "--json"])
+    mac = mac_of(stdout)
+    check("state-rem-nonstring-exit-0", code == 0, "exit=%s %s" % (code, stderr.strip()[:200]))
+    check("state-rem-nonstring-strict-json", strict(stdout), stdout.strip()[:200])
+    check(
+        "state-rem-nonstring-null",
+        mac.get("state") is None and mac.get("rem") is None,
+        str(mac),
+    )
+    check(
+        "state-rem-keeps-load",
+        mac.get("load") == [3.94, 4.45, 4.81] and mac.get("load1_frac") == 0.3283,
+        str(mac),
+    )
 
     # --- the live success envelope carries no absolute home path (R4) ------
     shims = os.path.join(root, "bin")

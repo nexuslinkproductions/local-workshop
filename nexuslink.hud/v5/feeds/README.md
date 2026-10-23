@@ -138,6 +138,13 @@ a warning instead of an exception.
 | `mac` | `{load[3], load1_frac, cores, batt, state, rem, up_min}` from the one ssh |
 | `peers` | `[{name, on}]` for the tailnet |
 
+`mac.load` is all or nothing: one non-finite value in the triple (`NaN`,
+`Infinity`, a string that is not a number) makes `load` and `load1_frac` null,
+because the slot is the meaning — dropping the bad element would slide the 5 or
+15 minute value into the 1 minute slot. This is the same rule the live ssh path
+keeps: an unreadable load line drops the whole triple. `state` and `rem` are
+text or null; a non-string never becomes `"nan"`/`"inf"`.
+
 The ring buffer is the only file any reader writes:
 `~/.local/state/nexuslink/rtt.json`, `{"version": 1, "samples": [{"ts", "epoch",
 "ms", "route"}]}`, newest last, trimmed to `--ring-cap`, written atomically via a
@@ -180,7 +187,10 @@ still yields `load1_frac` (`loadavg[0] / cores`). Derived values added here:
 
 Junk inside a block (a screen without an id, a non-string window, a token count
 that is not a number) is dropped with a `warnings` entry rather than failing the
-whole payload: the HUD dims one gauge, not the deck.
+whole payload: the HUD dims one gauge, not the deck. `loadavg` is the exception:
+one non-finite element nulls the whole triple (and `load1_frac` with it), so a
+5 or 15 minute value can never be reported as the 1 minute ratio. A finite
+partial list still works.
 
 ## What is not here
 
