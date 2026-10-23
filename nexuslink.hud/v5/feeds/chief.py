@@ -19,6 +19,11 @@ Payload (``--status``)::
      "running": true, "model": "ornith-chief-v3", "vram_gb": 10.75,
      "tokens_per_s": 41.6, "metrics_age_s": 0.4}
 
+``--fixture`` reads no clock: ``metrics_age_s`` and ``stale`` are null,
+``metrics_age_reason`` says why, and ``snapshot_ts`` carries the fixture's own
+``ts`` as UTC ISO. An age is a fact about this host's clock, not about the
+snapshot, so a fixture run never claims one.
+
 ``--on`` / ``--off`` run ``chief-on`` / ``chief-off`` when they are on this host,
 else exit 2 with ``{"ok": false, "reason": "chief-on not on this host"}`` and
 change nothing. Both tools support ``--dry-run`` upstream; this wrapper's
@@ -278,7 +283,10 @@ def metrics_path(args):
 
 
 def resolve_tool(name, args):
-    """chief-on / chief-off: --bin-dir, then PATH, then the lab's bin/."""
+    """chief-on / chief-off: --bin-dir when given is the only directory searched.
+
+    Without --bin-dir the lookup is PATH, then ~/.local/bin, then the lab's bin/.
+    """
     explicit_dir = getattr(args, "bin_dir", None)
     if explicit_dir is not None:
         if not explicit_dir:
@@ -313,7 +321,7 @@ def metrics_payload(data, age_s):
     queue = number(data.get("queue"))
     if queue is not None:
         payload["queue"] = int(queue)
-    payload["stale"] = age_s is not None and age_s > STALE_AFTER_S
+    payload["stale"] = (age_s > STALE_AFTER_S) if age_s is not None else None
     return payload
 
 
@@ -363,10 +371,15 @@ def fixture_status(args):
     data = read_json(args.fixture, "chief fixture")
     if not isinstance(data, dict):
         raise Malformed("chief fixture at %s is not a JSON object" % tilde(args.fixture))
-    stamp = number(data.get("ts"))
-    age = max(0.0, time.time() - stamp) if stamp is not None else None
-    payload = metrics_payload(data, age)
+    # Fixture purity: no clock is read here. An age is a fact about this host's
+    # clock, not about the snapshot, so it is null with a reason instead. The
+    # snapshot's own ts is in the fixture, so it is echoed as UTC ISO.
+    payload = metrics_payload(data, None)
     payload["source"] = "fixture"
+    payload["metrics_age_s"] = None
+    payload["stale"] = None
+    payload["metrics_age_reason"] = "fixture mode reads no clock; age and stale are not measured"
+    payload["snapshot_ts"] = iso(number(data.get("ts")))
     return payload
 
 
@@ -431,7 +444,7 @@ def act(args):
                 "%s failed (exit %d): %s" % (name, rc, text(err) or text(out) or "no output"),
                 action=verb,
                 exit_code=rc,
-                command=tool,
+                command=tilde(tool),
             ),
             EXIT_PROGRAMMING,
         )
@@ -440,7 +453,7 @@ def act(args):
         "live",
         action=verb,
         exit_code=rc,
-        command=tool,
+        command=tilde(tool),
         stdout=text(out, 400),
     )
     after = None
@@ -496,28 +509,70 @@ def self_check(args):
     )
 
     # The committed fixture is part of the contract, so check it as shipped.
+    try:
+        with open(shipped, encoding="utf-8") as handle:
+            shipped_data = json.load(handle)
+    except (OSError, ValueError):
+        shipped_data = {}
+    if not isinstance(shipped_data, dict):
+        shipped_data = {}
     rc, payload, _, err = _run_child(["--status", "--fixture", shipped, "--json"])
+    shipped_payload = payload if isinstance(payload, dict) else {}
     ok = (
         rc == 0 and isinstance(payload, dict) and payload.get("ok") is True
         and payload.get("source") == "fixture"
         and isinstance(payload.get("running"), bool)
-        and set(["running", "model", "vram_gb", "tokens_per_s", "metrics_age_s"]).issubset(payload)
-        and isinstance(payload.get("metrics_age_s"), float)
+        and set(["running", "model", "vram_gb", "tokens_per_s", "metrics_age_s", "stale"]).issubset(payload)
+        and payload.get("metrics_age_s") is None
+        and payload.get("stale") is None
+        and isinstance(payload.get("metrics_age_reason"), str)
+        and payload.get("snapshot_ts") == iso(number(shipped_data.get("ts")))
         and str(payload.get("generated_at", "")).endswith("Z")
     )
-    check("shipped fixture --status shape", ok, "rc=%s err=%r" % (rc, err[-200:]))
+    check("shipped fixture --status shape (no clock-derived age)", ok, "rc=%s err=%r" % (rc, err[-200:]))
+
+    # Fixture purity, clock half: the same fixture read with the clock moved
+    # 1000 s forward is identical except the generated_at stamp.
+    fixture_args = argparse.Namespace(fixture=shipped)
+    clock_real = time.time
+    before = fixture_status(fixture_args)
+    try:
+        time.time = lambda: clock_real() + 1000.0
+        after = fixture_status(fixture_args)
+    finally:
+        time.time = clock_real
+    before.pop("generated_at", None)
+    after.pop("generated_at", None)
+    check(
+        "fixture mode reads no clock (1000 s apart is identical)",
+        before == after and before.get("metrics_age_s") is None and before.get("stale") is None,
+        "before=%r after=%r" % (before, after),
+    )
+
+    # Fixture purity, host half: an empty HOME gives the same answer.
+    blank_home = os.path.join(root, "blank-home")
+    os.makedirs(blank_home, exist_ok=True)
+    blank_env = dict(os.environ)
+    blank_env["HOME"] = blank_home
+    rc, payload, _, _ = _run_child(["--status", "--fixture", shipped, "--json"], env=blank_env)
+    left = dict(shipped_payload)
+    right = dict(payload) if isinstance(payload, dict) else {}
+    left.pop("generated_at", None)
+    right.pop("generated_at", None)
+    check(
+        "fixture mode reads no host state (empty HOME, same answer)",
+        rc == 0 and left == right and bool(left),
+        "rc=%s left=%r right=%r" % (rc, left, right),
+    )
 
     # vram conversion is real arithmetic, not a copied field
-    try:
-        shipped_used = float(json.load(open(shipped, encoding="utf-8")).get("vram_used_mib"))
-    except (OSError, ValueError, TypeError):
-        shipped_used = None
+    shipped_used = number(shipped_data.get("vram_used_mib"))
     check(
         "vram_used_mib -> vram_gb",
-        shipped_used is not None and isinstance(payload, dict)
-        and isinstance(payload.get("vram_gb"), float)
-        and payload["vram_gb"] == round(shipped_used / MIB_PER_GB, 2),
-        "payload=%r used=%r" % (payload, shipped_used),
+        shipped_used is not None and isinstance(shipped_payload, dict)
+        and isinstance(shipped_payload.get("vram_gb"), float)
+        and shipped_payload["vram_gb"] == round(shipped_used / MIB_PER_GB, 2),
+        "payload=%r used=%r" % (shipped_payload, shipped_used),
     )
 
     # idle metrics: no model -> running false, nothing invented
@@ -616,6 +671,43 @@ def self_check(args):
         "rc=%s payload=%r log=%r" % (rc, payload, invoked),
     )
 
+    # An executed action shortens the tool path: no absolute home path in the
+    # payload, as the README promises. The child gets its own HOME under the
+    # temp root, so the check writes nothing into the real home directory.
+    fake_home = os.path.join(root, "fake-home")
+    fake_bin = os.path.join(fake_home, "bin")
+    os.makedirs(fake_bin, exist_ok=True)
+    home_env = dict(os.environ)
+    home_env["HOME"] = fake_home
+    for name, body in (("chief-on", "#!/bin/sh\nexit 0\n"), ("chief-off", "#!/bin/sh\nexit 3\n")):
+        tool = os.path.join(fake_bin, name)
+        with open(tool, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.chmod(tool, 0o755)
+    rc, payload, _, _ = _run_child(
+        ["--on", "--json", "--bin-dir", fake_bin, "--metrics", os.path.join(root, "no-metrics.json")],
+        env=home_env,
+    )
+    blob = json.dumps(payload or {})
+    check(
+        "an executed action shows the tool path shortened",
+        rc == 0 and isinstance(payload, dict) and payload.get("ok") is True
+        and payload.get("command") == "~/bin/chief-on" and fake_home not in blob,
+        "rc=%s payload=%r" % (rc, payload),
+    )
+
+    rc, payload, _, _ = _run_child(
+        ["--off", "--json", "--bin-dir", fake_bin, "--metrics", os.path.join(root, "no-metrics.json")],
+        env=home_env,
+    )
+    blob = json.dumps(payload or {})
+    check(
+        "a failed action shows the tool path shortened",
+        rc == 2 and isinstance(payload, dict) and payload.get("ok") is False
+        and payload.get("command") == "~/bin/chief-off" and fake_home not in blob,
+        "rc=%s payload=%r" % (rc, payload),
+    )
+
     # cache: two status reads inside 10 s, the second one served from the cache
     live_metrics = os.path.join(root, "metrics.json")
     with open(live_metrics, "w", encoding="utf-8") as handle:
@@ -673,16 +765,32 @@ def self_check(args):
         "changed=%r" % (changed,),
     )
 
-    # a live metrics file with an old ts still reports its real age, flagged stale
+    # A fixture whose ts is ten minutes old still claims no age: fixture mode
+    # reads no clock, so it can call the snapshot neither fresh nor stale.
+    stale_fixture = os.path.join(root, "stale-fixture.json")
+    with open(stale_fixture, "w", encoding="utf-8") as handle:
+        json.dump({"ts": time.time() - 600, "model": "ornith-chief-v3",
+                   "tokens_per_s": 41.6, "vram_used_mib": 11012, "vram_total_mib": 12288}, handle)
+    rc, payload, _, _ = _run_child(["--status", "--json", "--fixture", stale_fixture])
+    check(
+        "an old fixture ts is still no age in fixture mode",
+        rc == 0 and isinstance(payload, dict) and payload.get("metrics_age_s") is None
+        and payload.get("stale") is None and isinstance(payload.get("snapshot_ts"), str),
+        "payload=%r" % (payload,),
+    )
+
+    # The live path is where an age comes from: a metrics file whose mtime is
+    # ten minutes old reports that age and stale:true.
     old = os.path.join(root, "old.json")
     with open(old, "w", encoding="utf-8") as handle:
         json.dump({"ts": time.time() - 600, "model": "ornith-chief-v3",
                    "tokens_per_s": 41.6, "vram_used_mib": 11012, "vram_total_mib": 12288}, handle)
-    rc, payload, _, _ = _run_child(["--status", "--json", "--fixture", old])
+    os.utime(old, (time.time() - 600, time.time() - 600))
+    rc, payload, _, _ = _run_child(["--status", "--json", "--metrics", old, "--no-cache"])
     check(
-        "old snapshot reports a real age and stale:true",
+        "a live metrics file ten minutes old reports a real age and stale:true",
         rc == 0 and isinstance(payload, dict) and payload.get("stale") is True
-        and (payload.get("metrics_age_s") or 0) >= 600,
+        and (payload.get("metrics_age_s") or 0) >= 599,
         "payload=%r" % (payload,),
     )
 
@@ -708,7 +816,7 @@ def build_parser():
     parser.add_argument("--metrics", metavar="PATH", default=DEFAULT_METRICS,
                         help="metrics file (default %s)" % DEFAULT_METRICS)
     parser.add_argument("--bin-dir", metavar="DIR", default=None,
-                        help="directory holding chief-on/chief-off (default: PATH, then the lab's bin/)")
+                        help="directory holding chief-on/chief-off; when given it is the only directory searched (default: PATH, then ~/.local/bin, then the lab's bin/)")
     parser.add_argument("--cache", metavar="PATH", default=DEFAULT_CACHE, help="cache file (default %s)" % DEFAULT_CACHE)
     parser.add_argument("--no-cache", action="store_true", help="ignore and do not write the cache")
     parser.add_argument("--self-check", action="store_true", help="run the built-in checks and exit")

@@ -24,7 +24,7 @@ Payload (``--status``)::
      "last": [{"file": "~/calls/20261022-1812-review/call.wav",
                "started_at": "2026-10-22T16:12:03Z", "duration_s": 1812.4}]}
 
-Actions (``--start [LABEL]``, ``--stop``) call the real binary when it is on
+Actions (``--start LABEL``, ``--stop``) call the real binary when it is on
 this host. When it is not, they print
 ``{"ok": false, "reason": "callcap not on this host"}`` and exit 2, having
 changed nothing. Stopping while a recording is live is destructive -- it ends a
@@ -906,7 +906,8 @@ def build_parser():
         description="callcap bridge for the v5 HUD (status, start, stop)"
     )
     parser.add_argument("--status", action="store_true", help="print the current capture state")
-    parser.add_argument("--start", metavar="LABEL", default=None, help="start a recording (default label: hud)")
+    parser.add_argument("--start", metavar="LABEL", default=None,
+                        help="start a recording; LABEL is required and is the capture label")
     parser.add_argument("--stop", action="store_true", help="stop the running recording")
     parser.add_argument("--confirm", metavar="TOKEN", default=None, help="required for --stop while recording; the token is 'stop'")
     parser.add_argument("--dry-run", action="store_true", help="print the command instead of running it")
