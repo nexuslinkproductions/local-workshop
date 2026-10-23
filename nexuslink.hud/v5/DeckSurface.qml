@@ -20,7 +20,7 @@ import NexusHud.V5 1.0
 //   storage   centre (2133.5, goldenY2)                   - lower golden band
 //   launcher  1400x312 at (1064, 996), tiles on the row y 1200, bottom right
 //   find      pill box 560 wide, right-aligned to the safe margin (1904, 180)
-//   clock     96 px numerals, centred at x 1280, y 96
+//   clock     100 px Light numerals, centred at x 1280, y 96
 //
 // AMENDMENTS THIS LAYOUT OBEYS (MAIN-SCREEN-BUILD.md, binding, they win over s2)
 // * "the knot is the one round hero ... at most one more round element on
@@ -36,8 +36,11 @@ import NexusHud.V5 1.0
 //   16.7 percent and LOCAL/FIND at 83.4 percent (thirdX1 / 2), leaving 471 px
 //   between the crew orb's edge and the knot's edge and 1.5 knot radii (405 px)
 //   clear around the knot centre.
-// * "CLOCK TOO BIG ... about 96 px numerals" - Tokens.sizeClock is 168, so the
-//   deck passes 96 to Clock.pixelSize instead of the token.
+// * "CLOCK TOO BIG ... about 96 px numerals" was amended twice: first to 135,
+//   then Marcel called 135 too big and asked for about 100 px thin numerals.
+//   Tokens.sizeClock (168) is the s1 ramp size; the deck clock reads
+//   Tokens.sizeClockDeck (100) at Tokens.weightLight, so the token carries the
+//   deck value instead of a literal in this file.
 //
 // FOCUS (PS5-menu style: every widget expands into its deeper view)
 // One string, `focusId`, is the whole focus manager: "" is rest, otherwise one
@@ -166,8 +169,8 @@ Item {
     readonly property real tileRowY: launcherY + launcherH - 108   // arcBottomInset
     // Find is a full-deck overlay in absolute coordinates (s3-find-results.png):
     // the rest pill at 1960, 338; the open pill at 830, 226, 900 wide.
-    // Clock: 96 px numerals per the amendment, not Tokens.sizeClock (168).
-    readonly property int clockSize: 96
+    // Clock: 100 px Light numerals (Tokens.sizeClockDeck), not the 168 px ramp.
+    readonly property int clockSize: Tokens.sizeClockDeck
     readonly property real clockY: Tokens.safeMargin
 
     // ---- focus rects ------------------------------------------------------
@@ -254,6 +257,7 @@ Item {
     // that build that path (deck-shot.sh, deck-audit.py, deck-trace.py) mirror
     // v5/fonts to <imports>/NexusHud/fonts. tests/i1/DeckAudit.qml fails the
     // audit if a painted Text carries the fallback advance rather than Satoshi's.
+    FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["300"]) }
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["400"]) }
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["500"]) }
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["700"]) }
@@ -652,7 +656,7 @@ Item {
             y: deck.clockY
             time: deck.clockText
             pixelSize: deck.clockSize
-            weight: Tokens.weightRegular
+            weight: Tokens.weightLight
         }
 
         DeckLabel {

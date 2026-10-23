@@ -104,7 +104,9 @@ QtObject {
     // Satoshi. One family string: measured on Qt 6.12.0 on this Mac, four
     // FontLoaders over the four faces all report name "Satoshi", Qt.fontFamilies()
     // holds only "Satoshi", and weight selects the face (advance width of "HHHHH"
-    // at 68 px: 400 239.69, 500 245.47, 700 252.27, 900 259.69). The name tables
+    // at 68 px: 400 239.69, 500 245.47, 700 252.27, 900 259.69). Satoshi Light
+    // (300) ships as fonts/Satoshi-Light.ttf and resolves the same way, through
+    // the file, not through a family name. The name tables
     // do declare the style-linked families "Satoshi Medium" and "Satoshi Black"
     // as nameID 1, but they do NOT resolve in Qt: a TextMetrics on either one
     // measures the same as a bogus family name, and Qt logs "Replace uses of
@@ -112,11 +114,13 @@ QtObject {
     readonly property string fontFamily: "Satoshi"
     readonly property string fontFamilyFallback: "sans-serif"
     readonly property var fontFiles: ({
+        "300": "fonts/Satoshi-Light.ttf",
         "400": "fonts/Satoshi-Regular.ttf",
         "500": "fonts/Satoshi-Medium.ttf",
         "700": "fonts/Satoshi-Bold.ttf",
         "900": "fonts/Satoshi-Black.ttf"
     })
+    readonly property int weightLight: 300
     readonly property int weightRegular: 400
     readonly property int weightMedium: 500
     readonly property int weightBold: 700
@@ -132,6 +136,9 @@ QtObject {
     readonly property int sizeHero: 68
     readonly property int sizeReadout: 110
     readonly property int sizeClock: 168
+    // Deck clock size: Marcel asked for about 100 px thin numerals on B, which
+    // overrides the older 96 px amendment note and the 135 suggestion.
+    readonly property int sizeClockDeck: 100
     readonly property var ramp: [16, 20, 26, 44, 68, 110, 168]
     // Tracking in em (s1: .26em on labels, .04em on names, .01em on the clock).
     readonly property real trackLabel: 0.26

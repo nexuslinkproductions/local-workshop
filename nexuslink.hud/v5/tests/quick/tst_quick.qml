@@ -90,6 +90,7 @@ TestCase {
         var rest = g.ink
         compare(rest, Tokens.ice, "rest ink is ice")
         mouseMove(a, 28, 28)
+        wait(50)
         verify(a.containsMouse, "pointer over the apps target")
         compare(g.hovered, true)
         compare(g.ink, Tokens.white, "hover ink is white")

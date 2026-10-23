@@ -79,9 +79,11 @@ Item {
     // The clock is a readout, not a surface: only the glyphs paint.
     opacity: valid ? 1.0 : 0.45
 
-    // Satoshi: four faces under ../fonts, all report family "Satoshi"; weight
-    // selects the face. Loading them here keeps the component self-contained
-    // for stills and for the integrator's first mount.
+    // Satoshi: five faces under ../fonts, all report family "Satoshi"; weight
+    // selects the face (Regular is the component default; DeckSurface passes
+    // Tokens.weightLight for the deck clock). Loading them here keeps the
+    // component self-contained for stills and for the integrator's first mount.
+    FontLoader { source: Qt.resolvedUrl("../fonts/Satoshi-Light.ttf") }
     FontLoader { source: Qt.resolvedUrl("../fonts/Satoshi-Regular.ttf") }
     FontLoader { source: Qt.resolvedUrl("../fonts/Satoshi-Medium.ttf") }
     FontLoader { source: Qt.resolvedUrl("../fonts/Satoshi-Bold.ttf") }

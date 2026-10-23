@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Linux stand-in for the one macOS `sips` call deck-layout.py makes.
+
+deck-layout.py runs exactly:
+
+    sips -s format bmp <in.png> --out <out.bmp>
+
+and then parses the BMP itself (24 or 32 bit, bottom-up or top-down). This
+shim implements only that shape: PNG (any mode PIL reads) -> 24 bit BMP.
+Anything else exits 64 with a message, so a gate that grows a new sips call
+fails loudly instead of silently measuring the wrong thing.
+"""
+import sys
+
+USAGE = "usage: sips -s format bmp <in.png> --out <out.bmp>"
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(USAGE, file=sys.stderr)
+        return 0 if args else 64
+    fmt = None
+    src = None
+    out = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-s" and i + 2 < len(args) and args[i + 1] == "format":
+            fmt = args[i + 2]
+            i += 3
+        elif a == "--out" and i + 1 < len(args):
+            out = args[i + 1]
+            i += 2
+        elif a.startswith("-"):
+            print("sips shim: unsupported option %s" % a, file=sys.stderr)
+            return 64
+        else:
+            src = a
+            i += 1
+    if fmt != "bmp" or not src or not out:
+        print("sips shim: only 'sips -s format bmp IN --out OUT' is supported", file=sys.stderr)
+        return 64
+    try:
+        from PIL import Image
+    except ImportError:
+        print("sips shim: python3 PIL (Pillow) is required", file=sys.stderr)
+        return 3
+    try:
+        im = Image.open(src)
+        im.load()
+    except Exception as exc:  # noqa: BLE001 - report any read failure as sips would
+        print("sips shim: cannot read %s: %s" % (src, exc), file=sys.stderr)
+        return 1
+    if im.mode not in ("RGB", "RGBA", "L", "P", "LA"):
+        im = im.convert("RGB")
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGB")
+    try:
+        im.save(out, format="BMP")
+    except Exception as exc:  # noqa: BLE001
+        print("sips shim: cannot write %s: %s" % (out, exc), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
