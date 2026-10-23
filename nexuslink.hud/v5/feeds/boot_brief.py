@@ -95,7 +95,9 @@ Facts, and what is honest about each one
   never invented and a missing or malformed one never raises. Fixture mode
   never reads the host digest: only a ``digest.json`` fixture (or an explicit
   ``--digest``) counts.
-* **Slack.** No probe, no network call. The first build sent GETs to
+* **Slack.** No probe, no network call, and no network import: this file has
+  no code that could reach a host, so the claim is a property of the reader
+  and not only of the run. The first build sent GETs to
   ``auth.test``, ``conversations.list`` and ``conversations.info``, which the
   feed contract forbids, and the answer was empty anyway: Slack returns
   ``unread_count`` only for the calling user's own membership, and a bot token
@@ -370,135 +372,7 @@ def unresolved_placeholders(template, payload):
     return [name for name in placeholders(template) if not lookup(payload, name)[0]]
 
 
-# ------------------------------------------------------------------ Slack probe
-def read_env_file(path):
-    values = {}
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, raw = line.partition("=")
-                values[key.strip()] = raw.strip().strip('"').strip("'")
-    except (OSError, ValueError):
-        return {}
-    return values
-
-
-def slack_call(token, method, timeout=6, **params):
-    """One read-only Slack Web API GET. Returns a dict; failures are dicts too."""
-    import urllib.parse
-    import urllib.request
-
-    url = "https://slack.com/api/%s" % method
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8", "replace"))
-    except Exception as exc:  # network, DNS, TLS, bad JSON: all answers, not crashes
-        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
-
-
-def probe_slack(env_path):
-    """Read-only unread probe. Never writes, never prints the token.
-
-    The live path no longer calls this (see ``LIVE_SLACK_REASON``): F4 must make
-    no network calls. It stays here, correct and exercised by ``--self-check``
-    with a stubbed ``slack_call``, for the day Marcel changes the contract. Every
-    reason is built from what each call actually answered.
-    """
-    env = read_env_file(env_path)
-    token = env.get("SLACK_BOT_TOKEN") or ""
-    if not token:
-        return {
-            "available": False,
-            "unread": None,
-            "reason": "no SLACK_BOT_TOKEN in hermes-slack profile on this host",
-        }
-
-    auth = slack_call(token, "auth.test")
-    if not auth.get("ok"):
-        return {
-            "available": False,
-            "unread": None,
-            "reason": "auth.test failed (%s)" % (auth.get("error") or "unknown"),
-        }
-
-    home = env.get("SLACK_HOME_CHANNEL") or ""
-    listing = slack_call(token, "conversations.list",
-                         types="public_channel,private_channel",
-                         exclude_archived="true", limit="200")
-    if listing.get("ok"):
-        channels = listing.get("channels") or []
-        listing_note = "conversations.list ok (%d channels)" % len(channels)
-    else:
-        channels = []
-        listing_note = "conversations.list failed (%s)" % (
-            listing.get("error") or "unknown")
-    if not home and channels:
-        home = channels[0].get("id") or ""
-    if not home:
-        return {
-            "available": False,
-            "unread": None,
-            "reason": "auth.test ok, %s, no home channel id to ask "
-                      "conversations.info about" % listing_note,
-        }
-
-    info = slack_call(token, "conversations.info", channel=home)
-    if not info.get("ok"):
-        return {
-            "available": False,
-            "unread": None,
-            "reason": "auth.test ok, %s, conversations.info failed (%s)"
-                      % (listing_note, info.get("error") or "unknown"),
-        }
-
-    channel = info.get("channel") or {}
-    if not isinstance(channel, dict):
-        channel = {}
-    if "unread_count" not in channel:
-        return {
-            "available": False,
-            "unread": None,
-            "reason": (
-                "auth.test ok, %s, conversations.info ok but the answer carries "
-                "no unread_count field at all, so the count is missing rather "
-                "than null" % listing_note
-            ),
-        }
-    raw_unread = channel.get("unread_count")
-    unread = integer(raw_unread)
-    if unread is None and raw_unread is not None:
-        return {
-            "available": False,
-            "unread": None,
-            "reason": (
-                "auth.test ok, %s, conversations.info ok but unread_count is "
-                "not a whole number (%r)" % (listing_note, text(raw_unread, limit=40))
-            ),
-        }
-    if unread is None:
-        return {
-            "available": False,
-            "unread": None,
-            "reason": (
-                "auth.test ok, %s, conversations.info ok but unread_count is "
-                "null for a bot token: Slack returns it only for the calling "
-                "user's own membership, so no read-only unread count is "
-                "available on this host" % listing_note
-            ),
-        }
-    return {
-        "available": True,
-        "unread": unread,
-        "reason": "auth.test ok, %s, conversations.info unread_count for the "
-                  "home channel" % listing_note,
-        "channel": text(channel.get("name")),
-    }
+# ------------------------------------------------------------------ Slack block
 
 
 def slack_from_fixture(path, reason_default):
@@ -1505,30 +1379,39 @@ def self_check():
     check("phrasing catches a spaced placeholder typo",
           spaced == [" fleet.finishd "], repr(spaced), report)
 
-    # 14. The live path makes no network calls, and Slack says why with the
+    # 14. No network code can come back unnoticed: the module's own imports are
+    #     held to an audited allowlist, so a reader that wires a client into this
+    #     file trips here before it ships. Slack still says why with the
     #     2026-10-23 finding as a fixed reason.
-    import urllib.request
-    real_urlopen = urllib.request.urlopen
-    network_attempts = []
+    import ast
 
-    def recording_urlopen(request, *args, **kwargs):
-        network_attempts.append(request)
-        raise AssertionError("network call attempted")
+    audited_modules = {"__future__", "argparse", "ast", "contextlib", "datetime",
+                       "io", "json", "os", "re", "shutil", "sqlite3", "subprocess",
+                       "sys", "tempfile"}
+    with open(os.path.abspath(__file__), "r", encoding="utf-8") as handle:
+        source_tree = ast.parse(handle.read())
+    imported_modules = set()
+    for node in ast.walk(source_tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module.split(".")[0])
+    unexpected_imports = sorted(imported_modules - audited_modules)
+    check("imports stay inside the audited allowlist", not unexpected_imports,
+          repr(unexpected_imports), report)
 
-    urllib.request.urlopen = recording_urlopen
-    try:
-        offnet = generate(argparse.Namespace(
-            board_fixture=None, digest_fixture=None, slack_fixture=None, digest=None,
-            now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
-            out=os.path.join(scratch, "offnet-out"), no_slack=False,
-            slack_env=DEFAULT_SLACK_ENV))
-    finally:
-        urllib.request.urlopen = real_urlopen
-    check("live path makes no network calls", not network_attempts,
-          repr(network_attempts), report)
+    offnet = generate(argparse.Namespace(
+        board_fixture=None, digest_fixture=None, slack_fixture=None, digest=None,
+        now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
+        out=os.path.join(scratch, "offnet-out"), no_slack=False,
+        slack_env=DEFAULT_SLACK_ENV))
     check("live slack reports the 2026-10-23 finding",
           offnet["slack"]["available"] is False
           and offnet["slack"]["reason"] == LIVE_SLACK_REASON,
+          repr(offnet["slack"]), report)
+    check("live slack block carries no unread count and no channel",
+          offnet["slack"] == {"available": False, "unread": None,
+                              "reason": LIVE_SLACK_REASON},
           repr(offnet["slack"]), report)
 
     # 15. Fixture mode reads no host state: digest and boot time are off limits.
@@ -1694,76 +1577,40 @@ def self_check():
           and all(value is None for value in bad["fleet"].values()),
           repr(bad.get("fleet")), report)
 
-    # 20. The Slack probe's reason says what each call answered, and it only
-    #     reads SLACK_BOT_TOKEN.
-    probe_env = os.path.join(scratch, "slack.env")
-    write_atomic(probe_env, "SLACK_BOT_TOKEN=xoxb-test\nSLACK_HOME_CHANNEL=C123\n")
-    user_env = os.path.join(scratch, "slack-user.env")
-    write_atomic(user_env, "SLACK_USER_TOKEN=xoxp-test\nSLACK_HOME_CHANNEL=C123\n")
-    real_slack_call = globals()["slack_call"]
+    # 20. The Slack block comes from a fixture or from the fixed reason. The
+    #     reader has no path that could ask Slack itself, so a fixture is the
+    #     only way an unread count enters the brief.
+    slack_hollow = os.path.join(scratch, "slack-hollow.json")
+    write_atomic(slack_hollow, json.dumps({"available": True, "unread": None}) + "\n")
+    hollow_block = slack_from_fixture(slack_hollow, "no slack fixture on this host")
+    check("slack fixture claiming available with no count is refused",
+          hollow_block["available"] is False
+          and "no integer unread count" in hollow_block["reason"],
+          repr(hollow_block), report)
 
-    def slack_stub_failed_info(token, method, timeout=6, **params):
-        if method == "auth.test":
-            return {"ok": True}
-        if method == "conversations.list":
-            return {"ok": True, "channels": [{"id": "C123"}]}
-        return {"ok": False, "error": "channel_not_found"}
+    slack_broken = os.path.join(scratch, "slack-broken.json")
+    write_atomic(slack_broken, "{not json\n")
+    broken_block = slack_from_fixture(slack_broken, "no slack fixture on this host")
+    check("slack fixture that does not parse is an absence",
+          broken_block["available"] is False
+          and "slack fixture" in broken_block["reason"],
+          repr(broken_block), report)
 
-    def slack_stub_null_unread(token, method, timeout=6, **params):
-        if method == "auth.test":
-            return {"ok": True}
-        if method == "conversations.list":
-            return {"ok": True, "channels": [{"id": "C123"}]}
-        return {"ok": True, "channel": {"id": "C123", "unread_count": None}}
+    no_fixture_block = slack_from_fixture(None, "no slack fixture on this host")
+    check("slack block without a fixture carries the given reason",
+          no_fixture_block == {"available": False, "unread": None,
+                               "reason": "no slack fixture on this host"},
+          repr(no_fixture_block), report)
 
-    def slack_stub_missing_unread(token, method, timeout=6, **params):
-        if method == "auth.test":
-            return {"ok": True}
-        if method == "conversations.list":
-            return {"ok": True, "channels": [{"id": "C123"}]}
-        return {"ok": True, "channel": {"id": "C123"}}
-
-    def slack_stub_ok(token, method, timeout=6, **params):
-        if method == "auth.test":
-            return {"ok": True}
-        if method == "conversations.list":
-            return {"ok": True, "channels": [{"id": "C123"}]}
-        return {"ok": True, "channel": {"id": "C123", "unread_count": 3,
-                                        "name": "hq"}}
-
-    try:
-        globals()["slack_call"] = slack_stub_failed_info
-        failed_info = probe_slack(probe_env)
-        globals()["slack_call"] = slack_stub_null_unread
-        null_unread = probe_slack(probe_env)
-        globals()["slack_call"] = slack_stub_missing_unread
-        missing_unread = probe_slack(probe_env)
-        globals()["slack_call"] = slack_stub_ok
-        user_only = probe_slack(user_env)
-        good = probe_slack(probe_env)
-    finally:
-        globals()["slack_call"] = real_slack_call
-    check("slack reason names a failed conversations.info",
-          failed_info["available"] is False
-          and "channel_not_found" in failed_info["reason"]
-          and "unread_count is null" not in failed_info["reason"],
-          repr(failed_info["reason"]), report)
-    check("slack reason says unread_count null only when it was null",
-          null_unread["available"] is False
-          and "unread_count is null" in null_unread["reason"],
-          repr(null_unread["reason"]), report)
-    check("slack reason says a missing field is missing, not null",
-          missing_unread["available"] is False
-          and "carries no unread_count field" in missing_unread["reason"]
-          and "unread_count is null" not in missing_unread["reason"],
-          repr(missing_unread["reason"]), report)
-    check("slack probe ignores SLACK_USER_TOKEN",
-          user_only["available"] is False
-          and "SLACK_BOT_TOKEN" in user_only["reason"],
-          repr(user_only["reason"]), report)
-    check("slack probe still answers when every call is ok",
-          good["available"] is True and good["unread"] == 3,
-          repr(good), report)
+    slack_absent = os.path.join(scratch, "slack-absent.json")
+    write_atomic(slack_absent, json.dumps({"available": False,
+                                           "reason": "fixture says no"}) + "\n")
+    absent_block = slack_from_fixture(slack_absent, "no slack fixture on this host")
+    check("fixture absence keeps its own reason",
+          absent_block["available"] is False
+          and absent_block["reason"] == "fixture says no"
+          and absent_block["reason"] != LIVE_SLACK_REASON,
+          repr(absent_block), report)
 
     # 21. Board DB: mode=ro while the WAL holds a committed row (immutable=1
     #     would miss it), and immutable=1 when there is no -wal file, because a
