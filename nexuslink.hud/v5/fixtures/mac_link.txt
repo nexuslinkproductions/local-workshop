@@ -1,0 +1,52 @@
+@@HOST
+NexusBook
+@@NOW
+1792710986
+@@BATT
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=27656291)	100%; charged; 0:00 remaining present: true
+@@LOAD
+{ 50.38 28.33 16.08 }
+@@CORES
+12
+@@UPTIME
+ 1:16  up 13 days,  4:46, 1 user, load averages: 50.38 28.33 16.08
+@@BOOTTIME
+{ sec = 1791570618, usec = 630071 } Fri Oct  9 20:30:18 2026
+@@MEMPRESSURE
+The system has 17179869184 (1048576 pages with a page size of 16384).
+System-wide memory free percentage: 41%
+@@MEMSTATUS
+2
+@@THERM
+Note: No thermal warning level has been recorded
+Note: No performance warning level has been recorded
+Note: No CPU power status has been recorded
+@@PING
+pong from omarchylink (100.104.64.3) via 192.168.0.112:41641 in 10ms
+@@KANBAN
+[
+  {
+    "id": "t_87db5cdb",
+    "title": "HUD v5 C2 SWARM SPIKE: 3 renderer options, qsb, stills vs s1, decision",
+    "assignee": "kakashi",
+    "status": "running",
+    "started_at": 1792708551
+  },
+  {
+    "id": "t_3836f685",
+    "title": "HUD v5 W5 LAUNCHER: LauncherArc, amended app set, apps.json",
+    "assignee": "tenten",
+    "status": "running",
+    "started_at": 1792710417
+  },
+  {
+    "id": "t_198999bb",
+    "title": "HUD main screen v5 (DP-2): lead, fleet build",
+    "assignee": "default",
+    "status": "running",
+    "started_at": 1792706325
+  }
+]
+@@DEVIN
+@@END
