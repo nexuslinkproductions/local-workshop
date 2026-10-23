@@ -1123,6 +1123,8 @@ Item {
                     MouseArea {
                         id: dragPad
                         anchors.fill: parent
+                        // v5 is the desktop itself, not a movable panel
+                        enabled: !(win.isCommand && hud.v5Enabled)
                         onPressed: m => win.dragPress(dragPad, deck, win.deckId, m.x, m.y)
                         onPositionChanged: m => win.dragMove(dragPad, deck, m.x, m.y)
                         onReleased: () => win.dragRelease(deck)
