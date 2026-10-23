@@ -31,6 +31,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 u_texInfo;         // x = cols, y = rows, z = kmax
     vec4 u_cellInfo;        // xy = cell origin, z = cell size
     vec2 u_cellN;
+    float u_stipple;        // keep share, hashed per dot (fragment tests it)
 };
 
 layout(binding = 1) uniform sampler2D u_pts;

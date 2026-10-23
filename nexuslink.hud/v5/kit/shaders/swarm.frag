@@ -148,17 +148,24 @@ void main()
     vec2 dc = project(centre, R) - px;
     float jr = hash13(cell + 17.0);
     float radius = u_dotR * mix(0.88, 1.12, jr) * u_pxPerUnit * u_camDist / max(u_camDist - vg.z, 0.05);
-    float aa = clamp(radius * 0.42, 0.45, 1.1);
-    float mask = 1.0 - smoothstep(radius - aa, radius + aa * 0.25, length(dc));
+    // A ~0.8 px transition: the disc stays solid out to most of its radius and
+    // the dot still gets a soft edge. A wider ramp (0.42) ate the core of a
+    // 3 px dot and made the whole field read as dim smear.
+    float aa = clamp(radius * 0.34, 0.45, 1.1);
+    float mask = 1.0 - smoothstep(radius - aa, radius + aa * 0.50, length(dc));
     if (mask <= 0.002) {
         fragColor = vec4(0.0);
         return;
     }
 
     float depth = clamp(facing * 0.55 + clamp(vg.z / max(u_rTube, 1e-4), -1.0, 1.0) * 0.45, 0.0, 1.0);
-    float bright = mix(0.30, 1.0, pow(depth, 1.6)) * mix(0.74, 1.14, hash13(cell + 31.0));
+    // A 0.55 floor keeps the far side of the tube visible as a dim dot field
+    // while the near side still reads brighter; the old 0.30 floor put the far
+    // dots under any sane threshold, which is why the field had to be tiled to
+    // score.
+    float bright = mix(0.55, 1.0, pow(depth, 1.6)) * mix(0.82, 1.10, hash13(cell + 31.0));
     bright *= mix(1.0, 1.12, u_activity) * (1.0 - 0.55 * u_focus) * u_gain;
-    vec3 col = mix(u_accent.rgb * 0.55, u_accent.rgb, depth);
-    col = mix(col, vec3(1.0), pow(depth, 3.0) * 0.30);
+    vec3 col = mix(u_accent.rgb * 0.72, u_accent.rgb, depth);
+    col = mix(col, vec3(1.0), pow(depth, 3.0) * 0.26);
     fragColor = vec4(col * bright * mask, mask);
 }

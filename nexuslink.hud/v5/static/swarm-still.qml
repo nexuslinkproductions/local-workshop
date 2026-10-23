@@ -2,8 +2,13 @@ import QtQuick
 import "../kit"
 
 // Static still of the shipped Swarm component at the s2 knot framing.
-// speed is pinned low so the breath stays at its start value and the still is
-// deterministic: the harness does not advance animations.
+//
+// `animate: false` holds the tick, and phase 0 is the pose the s2 knot frame is
+// scored at (yaw 0, tilt 0.0401, the same pose spike/options/a_knot.qml uses at
+// benchPhase 0), so a render of this file is directly comparable with the
+// numbers in docs/SWARM-DECISION.md.
+//
+// The harness resizes the root, so the same file renders 540, 720 or 1080.
 Item {
     id: root
     width: 720
@@ -12,8 +17,9 @@ Item {
 
     Swarm {
         anchors.centerIn: parent
-        size: 720
-        speed: 0.00001
+        size: Math.min(root.width, root.height)
+        phase: 0.0
+        animate: false
         accent: "#00c8f0"
     }
 }

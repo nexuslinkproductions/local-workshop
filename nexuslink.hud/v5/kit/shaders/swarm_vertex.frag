@@ -27,6 +27,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 u_texInfo;         // x = cols, y = rows, z = kmax
     vec4 u_cellInfo;
     vec2 u_cellN;
+    float u_stipple;        // share of lattice points kept, per-dot hash
 };
 
 layout(binding = 1) uniform sampler2D u_pts;
@@ -47,6 +48,15 @@ mat3 rotMat(float yaw, float tilt)
 bool dotAt(vec2 uv, mat3 R, inout vec3 bestCol, inout float bestDepth)
 {
     vec2 texel = (uv * u_texInfo.xy + 0.5) / u_texInfo.xy;
+    vec2 cell = floor(uv * u_texInfo.xy);
+    // Per-dot stipple. The shell is a dense cube-lattice sample: at orb size the
+    // dots land about one pitch apart and read as a mesh. Dropping a share of
+    // the lattice points by hash turns it back into discrete round points with
+    // dark gaps. Same idea as the knot's u_stipple, hashed per dot instead of
+    // per cell.
+    float keep = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453);
+    if (keep > u_stipple)
+        return false;
     vec4 t = texture(u_pts, texel);
     if (t.r > 0.996)
         return false;
@@ -56,8 +66,10 @@ bool dotAt(vec2 uv, mat3 R, inout vec3 bestCol, inout float bestDepth)
     vec2 c = vec2(u_size.x * 0.5 + v.xy.x * s, u_size.y * 0.5 - v.xy.y * s);
     float radius = max(0.45, u_dotR * s);
     float d = length(c - vScreen);
-    float aa = clamp(radius * 0.42, 0.45, 1.1);
-    float mask = 1.0 - smoothstep(radius - aa, radius + aa * 0.25, d);
+    // Same ~0.8 px transition as the knot shader: a 3 px dot needs a solid core
+    // or the whole field reads as dim smear instead of points.
+    float aa = clamp(radius * 0.34, 0.45, 1.1);
+    float mask = 1.0 - smoothstep(radius - aa, radius + aa * 0.50, d);
     if (mask <= 0.002)
         return false;
 
@@ -66,9 +78,9 @@ bool dotAt(vec2 uv, mat3 R, inout vec3 bestCol, inout float bestDepth)
         return false;
     bestDepth = v.z;
     float j = fract(sin(dot(uv * u_texInfo.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    float bright = mix(0.42, 1.0, depth * depth) * mix(0.74, 1.14, j);
+    float bright = mix(0.55, 1.0, depth * depth) * mix(0.82, 1.10, j);
     bright *= mix(1.0, 1.12, u_activity) * (1.0 - 0.55 * u_focus) * u_gain;
-    vec3 col = mix(u_accent.rgb * 0.55, u_accent.rgb, depth);
+    vec3 col = mix(u_accent.rgb * 0.72, u_accent.rgb, depth);
     col = mix(col, vec3(1.0), pow(depth, 4.0) * 0.22);
     bestCol = col * bright;
     return true;
