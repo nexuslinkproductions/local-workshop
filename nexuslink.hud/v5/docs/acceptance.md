@@ -282,10 +282,12 @@ Motion evidence for criterion 3 is in `motion.md`: the expand overshoot there is
 read off the curve's closed form plus a duration-stretched run of the same easing
 (`CrewOrb.transitions[0].animations[0]`, read live), because the offscreen frame
 clock here is 25 to 100 ms and cannot resolve a 347 ms curve's ~10 ms vertex.
-`deck-trace.py`'s exit status is that closed form, and only that: the
-frame-sampled runs are printed as a two-sided bound with their sample counts, so
-a frame landing off the vertex cannot fail a clean head (round 2 saw exactly that
-twice). Five consecutive runs on this head all exit 0.
+`deck-trace.py`'s exit status is that closed form (with the monotone return and
+the deck's drift and breath). The frame-sampled runs are printed as a two-sided
+bound with their sample counts, so a frame landing off the vertex cannot fail a
+clean head (round 2 saw exactly that twice); the one frame-side direction that
+does fail is the impossible one, a sample above the curve's maximum. Five
+consecutive runs on this head all exit 0.
 
 ## 6. What is deliberately not here
 
