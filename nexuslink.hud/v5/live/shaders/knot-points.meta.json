@@ -1,0 +1,25 @@
+{
+  "N": 4384,
+  "width": 2048,
+  "rows": 9,
+  "texels": 17536,
+  "range": [
+    -512.0,
+    512.0
+  ],
+  "quant": 63.9990234375,
+  "height": 900.0,
+  "classCounts": {
+    "0": 3894,
+    "1": 490
+  },
+  "sRange": [
+    0.0,
+    0.9984
+  ],
+  "qRange": [
+    0.0,
+    1.0
+  ],
+  "file": "/home/nexuslink/hud-wt/v5-live/nexuslink.hud/v5/live/shaders/knot-points.png"
+}

@@ -1,0 +1,105 @@
+{
+  "generated": "2026-10-23",
+  "note": "v5 launcher order, 11 tiles (5 + hero + 5). Source of names and commands: hud-candidates/comp-r1/s3/src/apps.json. Launches are real counts only (appuse). Chrome is the installed Chromium (chromium.desktop) with the Chrome mark. No October. Arc Raiders URL is verbatim from s3. Round 3: ARC Raiders (size feature) is the centre slot, the other ten split five left and five right in this order. OBS Studio (com.obsproject.Studio.desktop, 1 launch) added from the real appuse history; it is the pick of the old launcher MOST USED rule (AppGrid.qml: count desc, then name asc) between the two apps tied at one launch, OBS Studio before Spotify; Spotify was not added. Round 3: the OBS mark comes from simple-icons (CC0), same as the other brand marks; s5 may replace it.",
+  "apps": [
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "glyph": "hermes",
+      "launch": { "mode": "command", "argv": ["/home/nexuslink/.local/bin/hermes", "desktop", "--skip-build"] },
+      "launches": 3,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "devin",
+      "name": "Devin",
+      "glyph": "devin",
+      "launch": { "mode": "command", "argv": ["/opt/devin-desktop/devin-desktop"] },
+      "launches": 8,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "files",
+      "name": "Files",
+      "glyph": "files",
+      "launch": { "mode": "desktop", "id": "org.gnome.Nautilus.desktop" },
+      "launches": 2,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "terminal",
+      "name": "Terminal",
+      "glyph": "terminal",
+      "launch": { "mode": "desktop", "id": "foot.desktop" },
+      "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "chromium",
+      "name": "Chromium",
+      "glyph": "chrome",
+      "launch": { "mode": "desktop", "id": "chromium.desktop" },
+      "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "glyph": "discord",
+      "launch": { "mode": "command", "argv": ["omarchy-launch-webapp", "https://discord.com/channels/@me"] },
+      "launches": 3,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "x",
+      "name": "X",
+      "glyph": "x",
+      "launch": { "mode": "command", "argv": ["omarchy-launch-webapp", "https://x.com"] },
+      "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "glyph": "youtube",
+      "launch": { "mode": "command", "argv": ["omarchy-launch-webapp", "https://www.youtube.com"] },
+      "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "glyph": "whatsapp",
+      "launch": { "mode": "command", "argv": ["omarchy-launch-webapp", "https://web.whatsapp.com"] },
+      "launches": 0,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "obs",
+      "name": "OBS Studio",
+      "glyph": "obs",
+      "launch": { "mode": "desktop", "id": "com.obsproject.Studio.desktop" },
+      "launches": 1,
+      "running": false,
+      "size": "tile"
+    },
+    {
+      "id": "arc-raiders",
+      "name": "ARC Raiders",
+      "glyph": "arc-raiders",
+      "launch": { "mode": "url", "url": "heroic://launch?appName=20f01ab5e0fa4e798c6d58eeb8d86989&runner=legendary" },
+      "launches": 0,
+      "running": false,
+      "size": "feature"
+    }
+  ]
+}

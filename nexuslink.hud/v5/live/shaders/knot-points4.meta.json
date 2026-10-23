@@ -1,0 +1,138 @@
+{
+  "N": 4384,
+  "width": 2048,
+  "rows": 24,
+  "texels": 48224,
+  "stride": 11,
+  "range": [
+    -512.0,
+    512.0
+  ],
+  "quant": 63.9990234375,
+  "classCounts": {
+    "0": 3894,
+    "1": 490
+  },
+  "layout": "texel 11*i+0..4 identical to knot-points3.png; +5,+6 P1, +7 N1, +8,+9 P2, +10 N2",
+  "positionDecode": "v = (hi*256+lo)/65535*1024-512; t5=(x_hi,x_lo,y_hi) t6=(y_lo,z_hi,z_lo)",
+  "normalEncode": "(n*0.5+0.5)*255",
+  "seed": 4404,
+  "sha1": "bc15e19489e2ce0a15f97fc23524d64fd68a003f",
+  "file": "/home/nexuslink/hud-wt/v5-live/nexuslink.hud/v5/live/shaders/knot-points4.png",
+  "form1": {
+    "name": "lift",
+    "zLiftUnits": 140.0,
+    "periods": 3,
+    "phiRad": 3.036872898470133,
+    "phiDeg": 174.0,
+    "crossings": [
+      {
+        "u1": 0.13918768408929133,
+        "u2": 0.5451997523677351,
+        "xyGap": 0.6403124237432885
+      },
+      {
+        "u1": 0.2196108045384004,
+        "u2": 0.7926476591252636,
+        "xyGap": 0.6082762530298236
+      },
+      {
+        "u1": 0.4656212299872059,
+        "u2": 0.8716590463790286,
+        "xyGap": 0.9433981132056459
+      }
+    ],
+    "crossingDzSine": [
+      -1.2628621929877024,
+      1.5444923989741892,
+      -1.2628082488710253
+    ],
+    "crossingDzUnits": [
+      -233.60653143339044,
+      248.05717813718223,
+      -223.5815002175588
+    ],
+    "crossingOverUnder": "-+-",
+    "crossingAlternating": true,
+    "tiltXDeg": 20.0,
+    "tiltSign": "top (+y) leans away from the camera",
+    "tipPull": 0.09,
+    "ringZWaveUnits": 72.0,
+    "crossSection": "same (i0, f, x along U, side s along V) reused on the new frame",
+    "max": 236.4274000381762,
+    "mean": 108.50683160219472,
+    "p95": 219.93001545913916,
+    "maxPx": 141.8564400229057,
+    "meanPx": 65.10409896131684,
+    "p95Px": 131.95800927548348
+  },
+  "form2": {
+    "name": "bloom",
+    "groups": {
+      "0": {
+        "angleDeg": 14.0,
+        "sign": 1.0,
+        "axisTiltDeg": 20.0,
+        "axisAzDeg": 0.0,
+        "expand": 0.08,
+        "points": 730
+      },
+      "1": {
+        "angleDeg": 16.0,
+        "sign": -1.0,
+        "axisTiltDeg": 29.999999999999996,
+        "axisAzDeg": 59.99999999999999,
+        "expand": 0.088,
+        "points": 757
+      },
+      "2": {
+        "angleDeg": 18.0,
+        "sign": 1.0,
+        "axisTiltDeg": 40.0,
+        "axisAzDeg": 119.99999999999999,
+        "expand": 0.096,
+        "points": 719
+      },
+      "3": {
+        "angleDeg": 20.0,
+        "sign": -1.0,
+        "axisTiltDeg": 50.0,
+        "axisAzDeg": 180.0,
+        "expand": 0.10400000000000001,
+        "points": 740
+      },
+      "4": {
+        "angleDeg": 22.0,
+        "sign": 1.0,
+        "axisTiltDeg": 59.99999999999999,
+        "axisAzDeg": 239.99999999999997,
+        "expand": 0.112,
+        "points": 730
+      },
+      "5": {
+        "angleDeg": 24.000000000000004,
+        "sign": -1.0,
+        "axisTiltDeg": 70.0,
+        "axisAzDeg": 300.0,
+        "expand": 0.12,
+        "points": 708
+      }
+    },
+    "hash": "splitmix-style integer hash of the point index, seed 4404",
+    "radiusExpandPct": [
+      8.0,
+      12.0
+    ],
+    "angleDeg": [
+      14.0,
+      24.000000000000004
+    ],
+    "max": 236.74416868566442,
+    "mean": 88.25467525555078,
+    "p95": 157.17796153421125,
+    "maxPx": 142.04650121139863,
+    "meanPx": 52.952805153330466,
+    "p95Px": 94.30677692052674
+  },
+  "boundUnits": 240.0
+}
