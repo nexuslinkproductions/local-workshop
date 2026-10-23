@@ -71,6 +71,16 @@ Runnable alone, importing nothing from F8a:
 Exit codes: 0 data or honest absence, 1 an action ran and failed, 2 a refusal
 or a caller error. ``plan`` exits 0 even when it answers ``ok: false`` with a
 reason; absence is an answer, not a crash.
+
+Hostile input, same rule: a ``ps`` capture that is not exact UTF-8, a
+``caffeinate.pid`` that does not hold a positive pid (text, bytes, empty, JSON
+nested past 64 levels), or a ``maclink-status.json`` that is corrupt, a
+directory, or that deep answers ``ok: false`` with ``kind: "malformed"``, one
+JSON line, exit 0, and no traceback. The ``ps`` capture is refused rather than
+read because the command line is the kick-bot identity check; the run path
+never signals on that answer. ``--json`` prints exactly one compact JSON object
+on one line for every subcommand (``list``, ``plan``, ``run``); without it the
+same object is printed indented for a human.
 """
 
 from __future__ import annotations
@@ -167,6 +177,23 @@ class Refused(Exception):
 
 class DataProblem(Exception):
     """A source is missing or unreadable. An answer for plan, not a crash."""
+
+
+class Malformed(DataProblem):
+    """A capture this reader cannot read exactly: an answer, not a traceback.
+
+    Raised for a lossy byte capture, a pid file that does not hold a pid, a
+    status cache that is corrupt or a directory, and JSON nested past the depth
+    cap. The CLI turns it into ``ok: false`` with ``kind: "malformed"`` at exit
+    0, so a hostile host never crashes the reader.
+    """
+
+    def __init__(self, message, deep=False):
+        DataProblem.__init__(self, message)
+        self.deep = bool(deep)
+
+
+MAX_JSON_DEPTH = 64
 
 
 # --------------------------------------------------------------- small helpers
@@ -305,10 +332,14 @@ def log_path_for(ctx, override=None):
 
 
 def emit(payload, compact=False):
+    # A leading-underscore key is this module's own bookkeeping (for example the
+    # marker that a plan failed on a hostile capture, not on a corrupt board
+    # row). It never reaches stdout.
+    visible = dict((key, value) for key, value in payload.items() if not str(key).startswith("_"))
     if compact:
-        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        line = json.dumps(visible, ensure_ascii=False, separators=(",", ":"))
     else:
-        line = json.dumps(payload, ensure_ascii=False, indent=2)
+        line = json.dumps(visible, ensure_ascii=False, indent=2)
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
 
@@ -360,12 +391,85 @@ def quarantine_file(path, action, root=None):
 # ------------------------------------------------------------------- runtime
 
 
-def _run_command(argv, timeout=DEFAULT_TIMEOUT_S):
+def _json_depth_ok(value, limit):
+    """True when `value` nests no deeper than `limit`. Iterative, not recursive."""
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > limit:
+            return False
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+    return True
+
+
+def loads_bounded(raw, what, limit=MAX_JSON_DEPTH):
+    """json.loads with a depth cap. Hostile nesting is an answer, not a raise.
+
+    ``json`` raises ``RecursionError`` on a capture nested past the C scanner's
+    stack (1200 levels reaches it), and that is not a ``ValueError``: it would
+    escape every ``except ValueError`` here and surface as a traceback. Both
+    paths become ``Malformed``, and the depth cap is checked on the parsed value
+    as well, so the answer does not depend on the interpreter's recursion limit.
+    """
+    try:
+        value = json.loads(raw)
+    except RecursionError:
+        raise Malformed("%s is nested too deeply to read" % what, deep=True)
+    except ValueError as exc:
+        raise Malformed("%s is not valid JSON: %s" % (what, one_line(exc, 200)))
+    if not _json_depth_ok(value, limit):
+        raise Malformed("%s is nested deeper than %d levels" % (what, limit), deep=True)
+    return value
+
+
+def _decode_capture(raw):
+    """bytes -> (text, bytes replaced). Exact UTF-8 first, then a counted fallback.
+
+    ``surrogateescape`` keeps each invalid byte as one lone surrogate, so the
+    count is exact; the returned text is the printable form, one U+FFFD per
+    invalid run, and is never written back as bytes.
+    """
+    try:
+        return raw.decode("utf-8"), 0
+    except UnicodeDecodeError:
+        pass
+    text = raw.decode("utf-8", "surrogateescape")
+    lost = sum(1 for char in text if "\udc80" <= char <= "\udcff")
+    clean = text.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    return clean, lost
+
+
+def _kind_of(exc):
+    """Payload kind for a DataProblem: malformed only for a hostile capture."""
+    return "malformed" if isinstance(exc, Malformed) else None
+
+
+def _run_command(argv, timeout=DEFAULT_TIMEOUT_S, strict_text=False):
+    """Run one command. Returns (stdout, stderr, exit). Never raises OSError.
+
+    The capture is bytes, decoded as UTF-8: exact when the child wrote valid
+    UTF-8, otherwise a counted replacement. ``ps`` is the reader's identity
+    check, so its callers pass ``strict_text``: a capture that had to replace a
+    byte is refused as ``Malformed`` instead of being read as an altered command
+    line. A ``UnicodeDecodeError`` out of the subprocess layer would otherwise
+    turn a hostile process table into exit 2 ``programming_error``.
+    """
     try:
         proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, check=False
+            argv, capture_output=True, timeout=timeout, check=False
         )
-        return proc.stdout or "", proc.stderr or "", proc.returncode
+        out, lost_out = _decode_capture(proc.stdout or b"")
+        err, lost_err = _decode_capture(proc.stderr or b"")
+        if strict_text and (lost_out or lost_err):
+            raise Malformed(
+                "%s output is not valid UTF-8 (%d byte(s) replaced); refusing to "
+                "read a lossy capture"
+                % (os.path.basename(str(argv[0])), lost_out + lost_err)
+            )
+        return out, err, proc.returncode
     except subprocess.TimeoutExpired:
         return "", "timed out after %ss" % timeout, 124
     except FileNotFoundError:
@@ -389,24 +493,32 @@ def _spawn_detached(argv):
 class Runtime(object):
     """The only place that touches the host. Plans use reads only."""
 
-    def run(self, argv, timeout=DEFAULT_TIMEOUT_S):
-        return _run_command(argv, timeout)
+    def run(self, argv, timeout=DEFAULT_TIMEOUT_S, strict_text=False):
+        return _run_command(argv, timeout, strict_text)
 
     def spawn(self, argv):
         return _spawn_detached(argv)
 
     def ps(self, pid):
-        """Never raises: a malformed pid is no command line, not a crash."""
+        """Never raises on a bad pid: a malformed pid is no command line.
+
+        A lossy capture does raise ``Malformed``: the command line is compared
+        against a digest and a profile, so a byte the decoder had to replace
+        could change the identity. That is refused, not read.
+        """
         pid_int = pid_from_cell(pid)
         if pid_int is None:
             return ""
         out, _err, code = self.run(
-            ["ps", "-ww", "-o", "command=", "-p", str(pid_int)], timeout=5.0
+            ["ps", "-ww", "-o", "command=", "-p", str(pid_int)], timeout=5.0,
+            strict_text=True,
         )
         return out.strip() if code == 0 else ""
 
     def ps_table(self):
-        out, _err, code = self.run(["ps", "-ww", "-Ao", "pid=,ppid=,command="], timeout=8.0)
+        out, _err, code = self.run(
+            ["ps", "-ww", "-Ao", "pid=,ppid=,command="], timeout=8.0, strict_text=True
+        )
         if code != 0:
             raise DataProblem("ps -Ao failed with exit %d" % code)
         rows = []
@@ -947,7 +1059,7 @@ def _plan_base(name, items, total_bytes, would, cannot_verify, **extra):
     return payload
 
 
-def _plan_unavailable(name, reason, **extra):
+def _plan_unavailable(name, reason, kind=None, **extra):
     payload = {
         "ok": False,
         "source": SOURCE,
@@ -966,6 +1078,8 @@ def _plan_unavailable(name, reason, **extra):
         ],
         "reasons": {"available": reason},
     }
+    if kind is not None:
+        payload["kind"] = kind
     payload.update(extra)
     return payload
 
@@ -1193,7 +1307,10 @@ def plan_kick_bot(ctx=None, runtime=None):
     try:
         stale, rejected, scanned, threshold, now, readonly = stale_workers(ctx, runtime)
     except DataProblem as exc:
-        return _plan_unavailable("maclink.kick-bot", str(exc))
+        return _plan_unavailable(
+            "maclink.kick-bot", str(exc), kind=_kind_of(exc),
+            _capture_malformed=isinstance(exc, Malformed),
+        )
     if not stale:
         if rejected:
             reason = (
@@ -1273,27 +1390,43 @@ def plan_kick_bot(ctx=None, runtime=None):
 
 
 def pid_file_state(path):
+    """Read a pid file. Anything that is not a positive pid is ``Malformed``.
+
+    Bytes are decoded exactly: a file holding a byte that is not UTF-8 is
+    refused instead of being read as a replacement character, which would make
+    the answer depend on the decoder. A JSON body goes through ``loads_bounded``,
+    so 1200 levels of nesting (which ``json`` cannot parse without a
+    ``RecursionError``) is an answer, not a traceback.
+    """
     if not os.path.isfile(path):
         return {"present": False, "pid": None, "raw": None}
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            raw = handle.read().strip()
+        with open(path, "rb") as handle:
+            data = handle.read()
     except OSError as exc:
-        raise DataProblem("cannot read %s: %s" % (tilde(path), exc.strerror))
-    pid = None
+        raise Malformed("cannot read %s: %s" % (tilde(path), exc.strerror or exc))
+    raw, lost = _decode_capture(data)
+    if lost:
+        raise Malformed(
+            "%s is not valid UTF-8 (%d byte(s) replaced), so it is not a pid file"
+            % (tilde(path), lost)
+        )
+    raw = raw.strip()
+    if not raw:
+        raise Malformed("%s is empty, so it holds no pid" % tilde(path))
     if raw.startswith("{"):
-        try:
-            pid = json.loads(raw).get("pid")
-        except ValueError:
-            raise DataProblem("%s is not valid JSON" % tilde(path))
+        record = loads_bounded(raw, tilde(path))
+        if not isinstance(record, dict):
+            raise Malformed("%s does not hold a pid" % tilde(path))
+        pid = record.get("pid")
     else:
         pid = raw
     try:
         pid = int(pid)
     except (TypeError, ValueError):
-        raise DataProblem("%s does not hold a pid" % tilde(path))
+        raise Malformed("%s does not hold a pid" % tilde(path))
     if pid <= 0:
-        raise DataProblem("%s does not hold a pid" % tilde(path))
+        raise Malformed("%s does not hold a pid" % tilde(path))
     return {"present": True, "pid": pid, "raw": raw}
 
 
@@ -1337,6 +1470,13 @@ def plan_wake(ctx=None, runtime=None):
     paths = state_paths(ctx)
     try:
         recorded = pid_file_state(paths["caffeinate"])
+    except Malformed as exc:
+        # A pid file this reader cannot read exactly is not "no caffeinate
+        # running": it is a hostile file, and starting a second display helper
+        # on top of it would be a guess.
+        return _plan_unavailable(
+            "maclink.wake", str(exc), kind="malformed", _capture_malformed=True
+        )
     except DataProblem as exc:
         recorded = {"present": True, "pid": None, "reason": str(exc)}
     if recorded.get("pid") and runtime.alive(recorded["pid"]):
@@ -1381,7 +1521,10 @@ def plan_wake_off(ctx=None, runtime=None):
     try:
         recorded = pid_file_state(paths["caffeinate"])
     except DataProblem as exc:
-        return _plan_unavailable("maclink.wake-off", str(exc))
+        return _plan_unavailable(
+            "maclink.wake-off", str(exc), kind=_kind_of(exc),
+            _capture_malformed=isinstance(exc, Malformed),
+        )
     if not recorded["pid"]:
         return _plan_unavailable(
             "maclink.wake-off",
@@ -1505,6 +1648,39 @@ def _refused(name, reason, **extra):
     return payload
 
 
+def _plan_failure(name, plan, fallback="unavailable"):
+    """A plan that could not read hostile input is the answer, not a refusal.
+
+    A marker set by a ``Malformed`` catch (a lossy ``ps`` capture or a pid file
+    that is not a pid) returns the plan unchanged, so the run answers
+    ``kind: "malformed"`` at exit 0 without touching the host. A plan that
+    refused a corrupt *board row* carries ``kind: "malformed"`` without that
+    marker and keeps the existing exit 2 refusal, which is the surface the
+    verifier already proved.
+    """
+    if plan.get("_capture_malformed"):
+        return _malformed_run(name, plan.get("reason") or "unreadable input")
+    return _refused(name, plan.get("reason") or fallback)
+
+
+def _malformed_run(name, reason):
+    """A run that never reached the host because its input was hostile."""
+    return {
+        "ok": False,
+        "source": SOURCE,
+        "generated_at": utc_now_iso(),
+        "action": name,
+        "class": CLASS_TABLE[name],
+        "linux_only": False,
+        "ran": False,
+        "refused": False,
+        "kind": "malformed",
+        "reason": reason,
+        "items": [],
+        "total": {"items": 0, "bytes": 0, "bytes_reason": None},
+    }
+
+
 def _confirmed(confirm, name):
     if confirm is True:
         return True
@@ -1527,25 +1703,43 @@ def _guard_run(name, ctx, confirm, runtime):
 
 
 def status_cache_read(ctx, now=None):
-    """A status payload younger than STATUS_CACHE_TTL_S, marked cached, or None."""
+    """A status payload younger than STATUS_CACHE_TTL_S, marked cached, or None.
+
+    A cache file this reader cannot read exactly — a directory, a byte that is
+    not UTF-8, text that is not JSON, JSON nested past the depth cap — raises
+    ``Malformed`` instead of crashing with a traceback. A missing file is not a
+    problem: it means the next probe is the first one.
+    """
     path = state_paths(ctx)["status_cache"]
     try:
-        with open(path, encoding="utf-8") as handle:
-            record = json.load(handle)
-    except (OSError, ValueError):
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except FileNotFoundError:
         return None
+    except IsADirectoryError:
+        raise Malformed("%s is a directory, not a status cache" % tilde(path))
+    except OSError as exc:
+        raise Malformed("cannot read %s: %s" % (tilde(path), exc.strerror or exc))
+    raw, lost = _decode_capture(data)
+    if lost:
+        raise Malformed(
+            "%s is not valid UTF-8 (%d byte(s) replaced)" % (tilde(path), lost)
+        )
+    if not raw.strip():
+        raise Malformed("%s is empty" % tilde(path))
+    record = loads_bounded(raw, tilde(path))
     if not isinstance(record, dict):
-        return None
+        raise Malformed("%s does not hold a status record" % tilde(path))
     payload = record.get("payload")
     stamp = record.get("cached_at")
     raw_epoch = record.get("cached_epoch")
     try:
         epoch = float(raw_epoch) if isinstance(raw_epoch, (int, float)) else float(str(raw_epoch))
     except (TypeError, ValueError):
-        return None
+        raise Malformed("%s carries no readable cache timestamp" % tilde(path))
     age = (time.time() if now is None else now) - epoch
     if not isinstance(payload, dict) or payload.get("action") != "maclink.status":
-        return None
+        raise Malformed("%s does not hold a status payload" % tilde(path))
     if not isinstance(stamp, str) or age < 0 or age >= STATUS_CACHE_TTL_S:
         return None
     served = dict(payload)
@@ -1685,7 +1879,7 @@ def run_restart_relay(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_restart_relay(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.restart-relay", plan.get("reason") or "unavailable")
+        return _plan_failure("maclink.restart-relay", plan)
     item = plan["items"][0]
     pid_before = item.get("pid_before")
     argv = item["argv"]
@@ -1749,7 +1943,7 @@ def run_restart_tunnel(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_restart_tunnel(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.restart-tunnel", plan.get("reason") or "unavailable")
+        return _plan_failure("maclink.restart-tunnel", plan)
     steps = []
     ok = True
     for item in plan["items"]:
@@ -1809,7 +2003,7 @@ def run_kick_bot(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_kick_bot(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.kick-bot", plan.get("reason") or "no stale worker")
+        return _plan_failure("maclink.kick-bot", plan, "no stale worker")
     item = plan["items"][0]
     pid = item["pid"]
     fresh = runtime.ps(pid)
@@ -1878,7 +2072,7 @@ def run_wake(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_wake(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.wake", plan.get("reason") or "unavailable")
+        return _plan_failure("maclink.wake", plan)
     item = plan["items"][0]
     paths = state_paths(ctx)
     try:
@@ -1932,7 +2126,7 @@ def run_wake_off(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_wake_off(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.wake-off", plan.get("reason") or "no recorded caffeinate")
+        return _plan_failure("maclink.wake-off", plan, "no recorded caffeinate")
     item = plan["items"][0]
     pid = item["pid"]
     fresh = runtime.ps(pid)
@@ -1982,7 +2176,7 @@ def run_screenshot(ctx=None, confirm=None, runtime=None):
         return guard
     plan = plan_screenshot(ctx, runtime)
     if not plan.get("ok"):
-        return _refused("maclink.screenshot", plan.get("reason") or "unavailable")
+        return _plan_failure("maclink.screenshot", plan)
     item = plan["items"][0]
     target = item["path"]
     if os.path.exists(target):
@@ -2116,7 +2310,7 @@ class RecordingRuntime(object):
         self.ps_table_calls = 0
         self.table = []
 
-    def run(self, argv, timeout=DEFAULT_TIMEOUT_S):
+    def run(self, argv, timeout=DEFAULT_TIMEOUT_S, strict_text=False):
         argv = [str(part) for part in argv]
         self.runs.append(argv)
         if _state_changing(argv):
@@ -2329,6 +2523,9 @@ def self_check():
         stub_dir,
         "ps",
         (
+            "if os.environ.get('MACLINK_SC_PS_LOSSY') == '1':\n"
+            "    sys.stdout.buffer.write(b'4242 1 worker \\xff\\n')\n"
+            "    sys.exit(0)\n"
             "if any(part.startswith('-Ao') for part in ARGS):\n"
             "    sys.stdout.write(open(os.path.join(FIX, 'ps_table.txt'), encoding='utf-8').read())\n"
             "    sys.exit(0)\n"
@@ -2960,6 +3157,175 @@ def self_check():
         "cache record does not carry the status payload",
     )
 
+    # --- --json is one compact line, for every subcommand -------------------
+    json_state = os.path.join(temp_home, ".local", "state", "nexuslink-json")
+    for name in ("maclink.kick-bot", "maclink.status", "maclink.wake-off"):
+        code, stdout, stderr = _cli(
+            ["plan", name, "--json", "--db", db_path, "--state-dir", json_state],
+            env,
+        )
+        json_lines = stdout.strip().splitlines()
+        try:
+            json_payload = json.loads(stdout)
+        except ValueError:
+            json_payload = None
+        check(
+            "plan-json-one-line:%s" % name,
+            code == 0 and len(json_lines) == 1,
+            "exit=%s lines=%s %s" % (code, len(json_lines), one_line(stderr)),
+        )
+        check(
+            "plan-json-object:%s" % name,
+            isinstance(json_payload, dict) and json_payload.get("action") == name,
+            stdout[:120],
+        )
+    code, stdout, stderr = _cli(
+        ["run", "maclink.status", "--json", "--state-dir", os.path.join(json_state, "status")],
+        env,
+    )
+    status_lines = stdout.strip().splitlines()
+    check(
+        "run-status-json-one-line",
+        code == 0 and len(status_lines) == 1,
+        "exit=%s lines=%s %s" % (code, len(status_lines), one_line(stderr)),
+    )
+
+    # --- hostile ps: a lossy capture is malformed, never a traceback --------
+    lossy_env = dict(env)
+    lossy_env["MACLINK_SC_PS_LOSSY"] = "1"
+    lossy_state = os.path.join(temp_home, ".local", "state", "nexuslink-lossy")
+    log_before = len(stub_log())
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--json", "--db", db_path, "--state-dir", lossy_state],
+        lossy_env,
+    )
+    lossy_lines = stdout.strip().splitlines()
+    try:
+        lossy_plan = json.loads(stdout)
+    except ValueError:
+        lossy_plan = None
+    check(
+        "lossy-ps-plan-exit-0",
+        code == 0 and len(lossy_lines) == 1 and "Traceback" not in stderr,
+        "exit=%s lines=%s %s" % (code, len(lossy_lines), one_line(stderr)),
+    )
+    check(
+        "lossy-ps-plan-malformed",
+        isinstance(lossy_plan, dict)
+        and lossy_plan.get("ok") is False
+        and lossy_plan.get("kind") == "malformed"
+        and "not valid UTF-8" in (lossy_plan.get("reason") or ""),
+        one_line(stdout, 240),
+    )
+    code, stdout, stderr = _cli(
+        ["run", "maclink.kick-bot", "--confirm", "maclink.kick-bot", "--json",
+         "--db", db_path, "--state-dir", lossy_state],
+        lossy_env,
+    )
+    try:
+        lossy_run = json.loads(stdout)
+    except ValueError:
+        lossy_run = None
+    lossy_calls = stub_log()[log_before:]
+    check(
+        "lossy-ps-run-malformed-no-signal",
+        code == 0
+        and isinstance(lossy_run, dict)
+        and lossy_run.get("ok") is False
+        and lossy_run.get("kind") == "malformed"
+        and "Traceback" not in stderr
+        and not any(line.startswith(("kill", "pkill", "killall")) for line in lossy_calls),
+        "exit=%s out=%s err=%s calls=%s"
+        % (code, one_line(stdout, 200), one_line(stderr, 200), str(lossy_calls)[:160]),
+    )
+
+    # --- hostile pid file: text, bytes, empty, 1200-deep JSON ---------------
+    pid_state = os.path.join(temp_home, ".local", "state", "nexuslink-pid")
+    os.makedirs(pid_state, exist_ok=True)
+    pid_file = os.path.join(pid_state, "caffeinate.pid")
+    pid_cases = (
+        ("text", b"not-a-pid\n"),
+        ("blob", b"\\x00\\x01\\xff\\xfe"),
+        ("empty", b""),
+        ("deep", b"[" * 1200 + b"]" * 1200),
+        ("object", b'{"pid": null}'),
+    )
+    for label, payload_bytes in pid_cases:
+        with open(pid_file, "wb") as handle:
+            handle.write(payload_bytes)
+        for action in ("maclink.wake-off", "maclink.wake"):
+            code, stdout, stderr = _cli(
+                ["plan", action, "--json", "--state-dir", pid_state],
+                env,
+            )
+            try:
+                pid_plan = json.loads(stdout)
+            except ValueError:
+                pid_plan = None
+            check(
+                "pid-%s-%s-malformed" % (label, action.split(".", 1)[1]),
+                code == 0
+                and len(stdout.strip().splitlines()) == 1
+                and isinstance(pid_plan, dict)
+                and pid_plan.get("ok") is False
+                and pid_plan.get("kind") == "malformed"
+                and "Traceback" not in stderr,
+                "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 160)),
+            )
+    os.unlink(pid_file)
+
+    # --- status cache: corrupt bytes, a directory, 1200-deep JSON ----------
+    cache_state = os.path.join(temp_home, ".local", "state", "nexuslink-cache")
+    os.makedirs(cache_state, exist_ok=True)
+    cache_path = os.path.join(cache_state, "maclink-status.json")
+    cache_cases = (
+        ("corrupt", b"{not json at all"),
+        ("empty", b""),
+        ("blob", b"\\xff\\xfe\\x00"),
+        ("deep", b"[" * 1200 + b"]" * 1200),
+    )
+    for label, payload_bytes in cache_cases:
+        with open(cache_path, "wb") as handle:
+            handle.write(payload_bytes)
+        code, stdout, stderr = _cli(
+            ["run", "maclink.status", "--json", "--state-dir", cache_state],
+            env,
+        )
+        try:
+            cache_payload = json.loads(stdout)
+        except ValueError:
+            cache_payload = None
+        check(
+            "status-cache-%s-malformed" % label,
+            code == 0
+            and len(stdout.strip().splitlines()) == 1
+            and isinstance(cache_payload, dict)
+            and cache_payload.get("ok") is False
+            and cache_payload.get("kind") == "malformed"
+            and "Traceback" not in stderr,
+            "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 160)),
+        )
+    os.unlink(cache_path)
+    os.makedirs(cache_path, exist_ok=True)
+    code, stdout, stderr = _cli(
+        ["run", "maclink.status", "--json", "--state-dir", cache_state],
+        env,
+    )
+    try:
+        cache_dir_payload = json.loads(stdout)
+    except ValueError:
+        cache_dir_payload = None
+    check(
+        "status-cache-directory-malformed",
+        code == 0
+        and len(stdout.strip().splitlines()) == 1
+        and isinstance(cache_dir_payload, dict)
+        and cache_dir_payload.get("ok") is False
+        and cache_dir_payload.get("kind") == "malformed"
+        and "Traceback" not in stderr,
+        "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 160)),
+    )
+
     # --- no argv text, no token, in classify_worker or the kick-bot plan --
     secret = "FAKE-SECRET-f8c-selfcheck"
     token_pid = 4245
@@ -3364,9 +3730,12 @@ def main(argv=None):
         return EXIT_REFUSED
     log_override = getattr(args, "log", None)
     log_target = log_path_for(ctx, log_override)
+    # --json is the shared feed contract: exactly one JSON object on stdout.
+    # Without the flag the same object is printed for a human, indented.
+    compact = bool(getattr(args, "json", False))
 
     if args.command == "list":
-        emit(list_payload(), compact=False)
+        emit(list_payload(), compact=compact)
         return EXIT_OK
 
     name = args.action
@@ -3375,7 +3744,15 @@ def main(argv=None):
         return EXIT_REFUSED
 
     if args.command == "plan":
-        payload = ACTIONS[name]["plan"](ctx)
+        try:
+            payload = ACTIONS[name]["plan"](ctx)
+        except DataProblem as exc:
+            # A hostile capture or a pid file that is not a pid is an answer
+            # here, not a traceback: one JSON document, ok false, exit 0.
+            payload = _plan_unavailable(
+                name, str(exc), kind=_kind_of(exc),
+                _capture_malformed=isinstance(exc, Malformed),
+            )
         append_log(
             log_target,
             {
@@ -3391,10 +3768,17 @@ def main(argv=None):
                 "reason": payload.get("reason"),
             },
         )
-        emit(payload, compact=False)
+        emit(payload, compact=compact)
         return EXIT_OK
 
-    result = ACTIONS[name]["run"](ctx, args.confirm)
+    try:
+        result = ACTIONS[name]["run"](ctx, args.confirm)
+    except DataProblem as exc:
+        result = (
+            _malformed_run(name, str(exc))
+            if isinstance(exc, Malformed)
+            else _refused(name, str(exc))
+        )
     append_log(
         log_target,
         {
@@ -3409,10 +3793,14 @@ def main(argv=None):
             "summary": one_line(result.get("summary") or result.get("reason"), 200),
         },
     )
+    if result.get("kind") == "malformed":
+        # Nothing was signalled or started: the input could not be read exactly.
+        emit(result, compact=compact)
+        return EXIT_OK
     if result.get("refused"):
         sys.stderr.write("hudfix_maclink: %s\n" % one_line(result.get("reason"), 400))
         return EXIT_REFUSED
-    emit(result, compact=False)
+    emit(result, compact=compact)
     if result.get("ok"):
         return EXIT_OK
     if CLASS_TABLE[name] == "read":
