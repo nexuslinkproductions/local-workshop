@@ -1,0 +1,28 @@
+{
+  "DP-2": {
+    "levels": {
+      "0": [
+        {
+          "address": "0xfixture1",
+          "x": 0,
+          "y": 0,
+          "w": 2560,
+          "h": 1440,
+          "namespace": "nexuslink-hud",
+          "pid": 0
+        }
+      ],
+      "2": [
+        {
+          "address": "0xfixture2",
+          "x": 0,
+          "y": 0,
+          "w": 2560,
+          "h": 26,
+          "namespace": "omarchy-bar",
+          "pid": 0
+        }
+      ]
+    }
+  }
+}

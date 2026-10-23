@@ -41,6 +41,40 @@ Item {
     printErrors: false
   }
 
+  // NEXUS: second switch for deck B (main-live): env NEXUSLINK_HUD_V5 in
+  // NEXUS: {1, true, on}. Read once at startup like the flag file.
+  readonly property string hudEnvSwitch: String(Quickshell.env("NEXUSLINK_HUD_V5") || "").trim().toLowerCase()
+  readonly property bool hudSwitchOn: hudFlagFile.loaded
+    || hudEnvSwitch === "1" || hudEnvSwitch === "true" || hudEnvSwitch === "on"
+
+  // NEXUS: runtime evidence that the HUD plugin instantiated. The plugin API
+  // NEXUS: cannot read another plugin's service (shell.pluginServiceFor only
+  // NEXUS: returns the caller's own service), so the HUD writes one output name
+  // NEXUS: per line here from its PanelWindow onCompleted (hud-ready-marker.patch).
+  // NEXUS: Empty or missing file means not confirmed: the wallpaper is drawn.
+  readonly property string hudReadyPath: stateHome + "/omarchy/nexuslink-hud-v5-ready"
+  property var hudReadyOutputs: []
+
+  FileView {
+    id: hudReadyFile
+    path: root.hudReadyPath
+    blockLoading: false
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.hudReadyOutputs = String(text() || "").split("\n").map(function(line) { return line.trim() }).filter(function(line) { return line !== "" })
+    onLoadFailed: root.hudReadyOutputs = []
+    // NEXUS: text() is stale inside onFileChanged, so reload and parse in onLoaded.
+    onFileChanged: reload()
+  }
+
+  // NEXUS: a marker left by an earlier shell run must not confirm a HUD that
+  // NEXUS: did not start in this run. Removed once at clone start; the HUD
+  // NEXUS: rewrites it when its own window comes up.
+  Process {
+    id: staleHudReadyProc
+    command: ["rm", "-f", root.hudReadyPath]
+  }
+
   // NEXUS: the HUD plugin must be listed in plugins[]; watched so disabling it
   // NEXUS: brings the wallpaper back immediately.
   FileView {
@@ -86,10 +120,16 @@ Item {
     return identity.indexOf("xreal") >= 0 || identity.indexOf("nreal") >= 0
   }
 
-  // NEXUS: an output is HUD owned when the v5 flag existed at startup, the HUD
-  // NEXUS: plugin is enabled, and the output is not the glasses.
+  // NEXUS: an output is HUD owned when a v5 switch is on (flag file or env),
+  // NEXUS: the HUD plugin is enabled, the HUD has confirmed its window on this
+  // NEXUS: output (marker), and the output is not the glasses.
+  function hudConfirmedOn(screen) {
+    var name = screen && screen.name ? String(screen.name) : ""
+    return name !== "" && hudReadyOutputs.indexOf(name) >= 0
+  }
+
   function hudOwns(screen) {
-    return hudFlagFile.loaded && hudEnabled && !isGlasses(screen)
+    return hudSwitchOn && hudEnabled && hudConfirmedOn(screen) && !isGlasses(screen)
   }
 
   // NEXUS: geometry evidence, grep journalctl --user -b for nexuslink.background.
@@ -254,7 +294,11 @@ Item {
     }
   }
 
-  Component.onCompleted: refreshBackground()
+  // NEXUS: clear a stale marker first, then read the live one.
+  Component.onCompleted: {
+    staleHudReadyProc.running = true
+    refreshBackground()
+  }
 
   Variants {
     model: Quickshell.screens

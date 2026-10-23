@@ -57,6 +57,44 @@ itself is within 8 of the field colour at that strip the wallpaper arm prints
 `wallpaper=n/a`: no pixel test can separate the two there, and the layer
 geometry is the proof instead.
 
+## What is proven, and how (VA finding 3)
+
+- Top strip: by pixels. `crop_check.py` has detection power only there. The
+  current wallpaper differs from the field colour only in the top strip.
+- Left, right and bottom: by geometry only, not pixels. `wallpaper=n/a` on
+  those strips means the wallpaper is within 8 of the field colour there, so a
+  pixel pass says nothing about the wallpaper at those edges.
+- Geometry (every edge): `hyprctl layers -j` gives `nexuslink-hud` (or
+  `nexuslink-hud-v5`) on the output at layer origin x=0 y=0 with w and h equal
+  to the monitor size, and no `omarchy-background` surface left above it.
+
+## Geometry mode (no pixels, no grim)
+
+    tools/linux/verify/verify-bleed.sh --geometry [output]
+    tools/linux/verify/verify-bleed.sh --geometry --layers-json F --monitors-json G [output]
+
+- Live by default (`hyprctl layers -j`, `hyprctl monitors -j`; a non JSON first
+  line is stripped). The fixture flags read files instead, for tests.
+- Per output one line, `PASS` or `FAIL`, with the numbers it read. Without an
+  output name every monitor is checked and a monitor with no HUD layer is
+  `SKIP`; with a name, a missing HUD layer is `FAIL`.
+- Exit 0 all PASS, 1 a FAIL, 2 usage or unreadable JSON.
+
+Fixtures in `fixtures/`:
+
+    verify-bleed.sh --geometry --layers-json fixtures/layers-good.json --monitors-json fixtures/monitors-dp2.json     # exit 0
+    verify-bleed.sh --geometry --layers-json fixtures/layers-bad-y26.json --monitors-json fixtures/monitors-dp2.json  # exit 1
+
+`layers-bad-y26.json` is the shape from before the fix (HUD at y=26, h=1414,
+wallpaper above it).
+
+## Hud ready marker
+
+`hud-ready-marker.patch` (against ff0fefe, `nexuslink.hud/v4/HudV4.qml`) adds
+the readiness marker that the background clone needs before it removes the
+wallpaper (see nexuslink.background/README.md). It is a patch, not applied
+here: HudV4.qml belongs to another lane.
+
 ## Measured fact: the current wallpaper is nearly the field colour
 
 `~/.local/state/omarchy/current/background` resolves to

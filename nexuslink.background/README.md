@@ -19,19 +19,46 @@ built-in is listed in `disabledPlugins`.
 
 ## Ownership rule
 
-An output is HUD owned (no wallpaper surface) when all three are true:
+An output is HUD owned (no wallpaper surface) when all four are true:
 
-1. `~/.config/nexuslink/hud-v5` existed when the shell started (read once, the
-   same flag HudV4 uses for the v5 deck).
+1. A v5 switch is on. Either switch is enough (deck A and deck B):
+   - file `~/.config/nexuslink/hud-v5` exists when the shell starts (read
+     once, the same flag HudV4 uses for the v5 deck), or
+   - environment variable `NEXUSLINK_HUD_V5` is `1`, `true` or `on` (read
+     once with `Quickshell.env`; deck B, the main-live fleet deck).
 2. `~/.config/omarchy/shell.json` lists `nexuslink.hud` in `plugins[]`
    (watched: disabling the HUD plugin brings the wallpaper back at once).
-3. The output is not the glasses: `model` + `serialNumber`, lowercased,
+3. The HUD has confirmed its window on this output. The HUD writes the output
+   name, one per line, to `~/.local/state/omarchy/nexuslink-hud-v5-ready` when
+   its PanelWindow completes (`tools/linux/verify/hud-ready-marker.patch`,
+   against ff0fefe, HudV4.qml, not applied here). The clone reads the file and
+   watches it. The clone deletes a stale file once at its own start, so an
+   earlier run cannot confirm a HUD that did not start this time.
+4. The output is not the glasses: `model` + `serialNumber`, lowercased,
    contains `xreal` or `nreal` (the rule from `v4/ScreenRoles.js`).
 
-Without the flag, or without the HUD plugin listed, the clone behaves exactly
-like the stock plugin on every output. On a HUD owned output the PanelWindow is
-created with `visible: false`, so no wallpaper surface is mapped or composited
-there at all.
+Why item 3: the plugin API cannot read another plugin's service
+(`shell.pluginServiceFor` only returns the caller's own service), so there is
+no in-process "HUD instance" to look at. Without the marker a HUD that failed
+to load left the monitor with neither wallpaper nor HUD (VA finding 1). With
+it the wallpaper is drawn until the HUD confirms, and drawn again when the
+file is emptied or removed.
+
+Truth table (switch = flag or env, HUD = shell.json lists nexuslink.hud,
+ready = marker lists the output, glasses = output is XREAL/Nreal):
+
+| switch | HUD listed | ready | glasses | wallpaper surface on output |
+|--------|-----------|-------|---------|-----------------------------|
+| no     | any       | any   | any     | drawn (stock behaviour)     |
+| yes    | no        | any   | any     | drawn                       |
+| yes    | yes       | no    | any     | drawn (HUD not confirmed)   |
+| yes    | yes       | yes   | no      | suppressed (HUD owns it)    |
+| yes    | yes       | yes   | yes     | drawn (glasses)             |
+
+Without any switch, or without the HUD plugin listed, the clone behaves
+exactly like the stock plugin on every output. On a HUD owned output the
+PanelWindow is created with `visible: false`, so no wallpaper surface is
+mapped or composited there at all.
 
 ## Install (parent, after the files are in the live tree)
 
