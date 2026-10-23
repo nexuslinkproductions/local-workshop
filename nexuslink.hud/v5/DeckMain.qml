@@ -189,19 +189,40 @@ Item {
         var raw = String(text === undefined || text === null ? "" : text)
         var q = raw.trim()
         hud.findSeq += 1
-        findProc.running = false
         hud.findQuery = raw
         if (q.length === 0) {
+            hud.retireFind(findProc)
+            hud.retireFind(findProcB)
             hud.findBusy = false
             hud.findNote = ""
             hud.findResults = []
             return
         }
-        findProc.runSeq = hud.findSeq
-        findProc.command = ["python3", hud.feedsDir + "/find.py", "--query", q,
-                            "--filter", surface.findFilter, "--json"]
+        // Two slots. A superseded find.py gets SIGTERM (its handler kills the
+        // yuri process group) and is not reused until it has exited, so a
+        // yuri child cannot outlive its query. Its output is dropped by seq.
+        var slot = !findProc.running ? findProc : (!findProcB.running ? findProcB : findProc)
+        if (slot.running)
+            slot.running = false   // both slots busy (rare): the oldest gets SIGKILL
+        if (findProc !== slot)
+            hud.retireFind(findProc)
+        if (findProcB !== slot)
+            hud.retireFind(findProcB)
+        slot.runSeq = hud.findSeq
+        slot.command = ["python3", hud.feedsDir + "/find.py", "--query", q,
+                        "--filter", surface.findFilter, "--json"]
         hud.findBusy = true
-        findProc.running = true
+        slot.running = true
+    }
+
+    // SIGTERM to a superseded reader (find.py kills yuri's group on TERM).
+    // SIGKILL would skip that handler, so retire never sends it.
+    function retireFind(p) {
+        if (p === null || !p.running || p.processId <= 0)
+            return
+        findKillProc.running = false
+        findKillProc.command = ["kill", "-TERM", String(p.processId)]
+        findKillProc.running = true
     }
 
     function findDone(seq, out) {
@@ -226,6 +247,22 @@ Item {
             waitForEnd: true
             onStreamFinished: hud.findDone(findProc.runSeq, text)
         }
+    }
+
+    Process {
+        id: findProcB
+        property int runSeq: 0
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: hud.findDone(findProcB.runSeq, text)
+        }
+    }
+
+    // Sends the SIGTERM of retireFind. Its own output is not used.
+    Process {
+        id: findKillProc
+        running: false
     }
 
     // Enter on a hit: xdg-open on the expanded path (the deck clears its focus).

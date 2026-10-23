@@ -18,8 +18,8 @@ atomically (temp file plus os.replace), shaped
 
     {"name", "ok", "ran_at", "ttl_s", "duration_ms", "payload", "last_ok_at"}
 
-  ran_at      epoch seconds (float) when the run started. Conservative: it is
-              the earlier of the two clocks, so a consumer never over-trusts.
+  ran_at      epoch seconds (float, wall clock) when the run started, taken
+              before the fork. The consumer ages it on its own clock.
   ttl_s       3 x the job interval. Older than ttl_s means stale.
   payload     the reader's own JSON object, untouched (generated_at included).
   ok          the run worked: exit 0 and exactly one JSON object on stdout.

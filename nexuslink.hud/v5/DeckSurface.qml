@@ -103,10 +103,10 @@ Item {
     // Readout probe (s2, for the stale scenario and tests): what each feed
     // readout shows now. text is the numeral, label the STALE mark ("" if none).
     readonly property var readoutProbe: ({
-        "sessions": { "text": crewValue.text, "opacity": crewGroup.opacity, "label": staleCrew.visible ? staleCrew.label : "" },
-        "metrics": { "text": localValue.text, "opacity": localGroup.opacity, "label": staleLocal.visible ? staleLocal.label : "" },
-        "link": { "text": macValue.text, "opacity": macGroup.opacity, "label": staleMac.visible ? staleMac.label : "" },
-        "disks": { "text": storageValue.text, "opacity": storageGroup.opacity, "label": staleStorage.visible ? staleStorage.label : "" }
+        "sessions": { "text": crewValue.text, "opacity": crewGroup.opacity, "label": staleText("sessions") !== "" ? "STALE " + staleText("sessions") : "" },
+        "metrics": { "text": localValue.text, "opacity": localGroup.opacity, "label": staleText("metrics") !== "" ? "STALE " + staleText("metrics") : "" },
+        "link": { "text": macValue.text, "opacity": macGroup.opacity, "label": staleText("link") !== "" ? "STALE " + staleText("link") : "" },
+        "disks": { "text": storageValue.text, "opacity": storageGroup.opacity, "label": staleText("disks") !== "" ? "STALE " + staleText("disks") : "" }
     })
     property bool assembling: false
     property real assembleProgress: 1

@@ -1519,8 +1519,11 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         listing = hudfix.one_object(out)
         checks.ok("list.object", listing is not None, out or err)
         names = sorted(row["name"] for row in listing.get("actions", [])) if listing else []
-        checks.eq("list.count", listing.get("count") if listing else None, len(ACTIONS))
-        checks.eq("list.names", names, sorted(ACTIONS))
+        # hudfix.py lists every module's actions, so the storage table must be
+        # a subset of the listing, not the whole listing.
+        checks.ok("list.count", bool(listing) and listing.get("count") == len(names)
+                  and len(names) >= len(ACTIONS), "count %s" % (listing or {}).get("count"))
+        checks.ok("list.names", set(ACTIONS) <= set(names), "storage table missing from listing")
         classes = {row["name"]: row["class"] for row in listing.get("actions", [])} \
             if listing else {}
         for name in ("cache-top", "disk-health", "orphans-list", "snapshots-list",

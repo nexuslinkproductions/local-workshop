@@ -51,7 +51,7 @@ Facts, and what is honest about each one
   unreadable, not an empty board. ``board.source`` says which path answered
   and ``board.reason`` says why the CLI did not. When neither path answers,
   ``ok`` is false with that reason and no counts.
-* **Since — the brief's own anchor.** The window starts where the last good
+* **Since - the brief's own anchor.** The window starts where the last good
   brief ended, kept in ``brief_anchor.json`` in the run directory
   (``~/.local/state/nexuslink`` by default, ``--out`` elsewhere)::
 

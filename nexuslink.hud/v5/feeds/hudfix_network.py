@@ -513,6 +513,10 @@ def cache_get(ctx, name, key):
 
 
 def cache_put(ctx, name, key, data):
+    # A miss answer always says cached: false, so callers and checks never
+    # meet a payload without the flag. A hit rewrites it to true.
+    if isinstance(data, dict):
+        data.setdefault("cached", False)
     if not _cache_enabled(ctx):
         return None
     path = _cache_path(ctx, name)

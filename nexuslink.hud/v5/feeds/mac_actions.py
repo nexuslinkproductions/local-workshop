@@ -144,6 +144,9 @@ def read_pid_file(path):
     # 0, 1 (launchd) and negative values.
     if isinstance(pid, (bool, float)):
         raise Refusal("%s does not hold a PID" % shown)
+    # ASCII digits only: int() also accepts Unicode digits such as Arabic-Indic.
+    if isinstance(pid, str) and not re.fullmatch(r"\s*[0-9]{1,12}\s*", pid):
+        raise Refusal("%s does not hold a PID" % shown)
     try:
         value = int(pid)
     except (TypeError, ValueError):

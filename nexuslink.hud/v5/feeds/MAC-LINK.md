@@ -180,7 +180,45 @@ or a caller error.
 and hosts the dispatcher. If the operator wants a different runtime, it is the one
 line in `build_plan` plus this table.
 
-## Self-checks
+## F8c parse inputs (hudfix_maclink.py)
+
+The guarded bot kick and the pid readers in `hudfix_maclink.py` accept only a
+strict pid: an ASCII whole number from 2 to 4194304 (`pid_from_cell`). Anything
+else is no pid, and the kick path refuses before any `ps`, signal or wait. The
+safe default for every input below is no action, state unknown, reason recorded.
+
+| Input | Where it is parsed | Result | Status |
+|---|---|---|---|
+| ps row with only a pid (`123`) | `Runtime.ps_table` | row skipped | PASS (f8c-ps-row-missing-columns-skipped) |
+| ps row with pid and ppid, no command (`123 456`) | `Runtime.ps_table` | kept with empty command; `classify_worker` refuses it, so no kill | PASS (f8c-ps-row-missing-command-empty) |
+| ps row with a non-numeric pid (`abc 1 x`) | `Runtime.ps_table` | row skipped | PASS (f8c-ps-row-nonnumeric-pid-skipped) |
+| ps row with a superscript or Unicode-digit pid | `Runtime.ps_table` | row skipped (ASCII regex) | PASS (f8c-ps-row-superscript-pid-skipped, f8c-ps-row-missing-command-empty) |
+| pid 0, 1, negative, text, float, bool, None, > 4194304 | `pid_from_cell` | None | PASS (f8c-pid-*-refused) |
+| pid file 0, 1, negative, text, empty, JSON float/bool, truncated JSON | `pid_file_state` | Malformed | PASS (f8c-pidfile-*-malformed) |
+| launchctl `pid = <superscript two>` | `parse_launchctl` | was a ValueError crash (`isdigit` accepts it); now pid None | FIXED (f8c-launchctl-superscript-pid-no-crash) |
+| launchctl `pid = 0`, `pid = 1`, a 14-digit pid | `parse_launchctl` | was accepted (0 and 1); now pid None | FIXED (f8c-launchctl-pid-zero-refused, -one-refused, -huge-refused) |
+| status cache, truncated, non-JSON, empty, wrong types | `status_cache_read` | Malformed; never a kick | PASS (f8c-status-cache-*-malformed, f8c-status-cache-never-kicks) |
+| status cache `cached_epoch` NaN | `status_cache_read` | was served as fresh; now Malformed | FIXED (f8c-status-cache-nan-epoch-malformed) |
+| status cache `cached_epoch` 1e400 (inf) | `status_cache_read` | now Malformed | FIXED (f8c-status-cache-inf-epoch-malformed) |
+| status cache `cached_epoch` a 401-digit integer | `status_cache_read` | was an OverflowError crash; now Malformed | FIXED (f8c-status-cache-bigint-epoch-malformed) |
+| status cache `cached_epoch` true | `status_cache_read` | was accepted as 1.0; now Malformed | FIXED (f8c-status-cache-bool-epoch-malformed) |
+| kick with pid 0, 1, -1, "4242", 4242.0, True, None | `run_kick_bot` | no kill, no ps | PASS (f8c-kick-pid-*-no-signal) |
+| kick with strict pid 4242 | `run_kick_bot` | ps only, then the signal path | PASS (f8c-kick-strict-pid-reaches-ps-only) |
+| mac_actions pid file with Unicode digits (Arabic-Indic) | `mac_actions` pid parse | was accepted by `int()`; now refused | FIXED in code, no named case yet (mac_actions self-check 77/77) |
+
+Hermetic self-check (no Mac, no network, host state not read):
+
+- `hudfix_maclink.py --self-check` pins the launchd uid (501), the Mac gate, and
+  the tailscale CLI (`SELF_CHECK_TAILSCALE_CLI`, so a host PATH cannot change
+  the probe count).
+- It runs with HOME set to a temp dir holding a fixed `omarchylink` ssh host,
+  so the host's `~/.ssh/config` is never read. The temp home is removed on exit.
+- The cases make no `ps`, `kill`, `launchctl` or `ssh` run. The fake runtime
+  records argv; the real `Runtime` is only used with a canned `run`.
+
+Not fixed, documented only: none. Every item above had a fix under 30 lines.
+
+
 
 ```
 $ python3 nexuslink.hud/v5/feeds/mac_link.py --self-check

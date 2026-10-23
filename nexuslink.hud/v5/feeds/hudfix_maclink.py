@@ -207,6 +207,10 @@ SELF_CHECK_ASSUME_MAC = False
 # gui/501, so the fake uid is 501 on any host. None means the real uid (production).
 SELF_CHECK_UID = None
 SELF_CHECK_FAKE_UID = 501
+# The self-check pins the tailscale binary too: a host without tailscale on PATH
+# (or with it elsewhere) must not change how many probes a run makes.
+SELF_CHECK_TAILSCALE_CLI = None
+SELF_CHECK_FAKE_TAILSCALE = "/nonexistent/hudfix-fake-bin/tailscale"
 _CLI_BOOT = None  # set by self_check: child loader that pins the fake uid and mac gate
 
 
@@ -220,6 +224,7 @@ _CLI_BOOT_SOURCE = (
     "mod = importlib.util.module_from_spec(spec)\n"
     "spec.loader.exec_module(mod)\n"
     "mod.SELF_CHECK_ASSUME_MAC = True\n"
+    "mod.SELF_CHECK_TAILSCALE_CLI = '/nonexistent/hudfix-fake-bin/tailscale'\n"
     "mod.SELF_CHECK_UID = %d\n"
     "try:\n"
     "    sys.exit(mod.main(sys.argv[2:]))\n"
@@ -622,8 +627,10 @@ def parse_launchctl(text):
             in_arguments = True
         elif key == "state":
             info["state"] = value
-        elif key == "pid" and value.isdigit():
-            info["pid"] = int(value)
+        elif key == "pid" and re.fullmatch(r"[0-9]{1,12}", value):
+            # isdigit() accepts superscript two, which int() refuses: a strict
+            # ASCII match plus pid_from_cell keeps 0, 1 and huge values out too.
+            info["pid"] = pid_from_cell(value)
         elif key == "program":
             info["program"] = value
         elif key == "path":
@@ -631,9 +638,9 @@ def parse_launchctl(text):
         elif key == "last exit code":
             info["last_exit"] = value
     if info["pid"] is None:
-        match = re.search(r"^\tpid = (\d+)$", text or "", re.MULTILINE)
+        match = re.search(r"^\tpid = ([0-9]{1,12})$", text or "", re.MULTILINE)
         if match:
-            info["pid"] = int(match.group(1))
+            info["pid"] = pid_from_cell(match.group(1))
     return info
 
 
@@ -653,6 +660,8 @@ def launchd_unit(label, runtime, domain=None):
 
 
 def tailscale_cli():
+    if SELF_CHECK_TAILSCALE_CLI is not None:
+        return SELF_CHECK_TAILSCALE_CLI
     for candidate in TAILSCALE_CLI_CANDIDATES:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -1753,8 +1762,8 @@ def _guard_run(name, ctx, confirm, runtime):
 def status_cache_read(ctx, now=None):
     """A status payload younger than STATUS_CACHE_TTL_S, marked cached, or None.
 
-    A cache file this reader cannot read exactly — a directory, a byte that is
-    not UTF-8, text that is not JSON, JSON nested past the depth cap — raises
+    A cache file this reader cannot read exactly - a directory, a byte that is
+    not UTF-8, text that is not JSON, JSON nested past the depth cap - raises
     ``Malformed`` instead of crashing with a traceback. A missing file is not a
     problem: it means the next probe is the first one.
     """
@@ -1781,9 +1790,15 @@ def status_cache_read(ctx, now=None):
     payload = record.get("payload")
     stamp = record.get("cached_at")
     raw_epoch = record.get("cached_epoch")
+    # A bool, a huge JSON integer (OverflowError), 1e400 or NaN is not a time:
+    # NaN would pass both the age tests and be served as fresh.
+    if isinstance(raw_epoch, bool) or not isinstance(raw_epoch, (int, float, str)):
+        raise Malformed("%s carries no readable cache timestamp" % tilde(path))
     try:
-        epoch = float(raw_epoch) if isinstance(raw_epoch, (int, float)) else float(str(raw_epoch))
-    except (TypeError, ValueError):
+        epoch = float(raw_epoch)
+    except (TypeError, ValueError, OverflowError):
+        raise Malformed("%s carries no readable cache timestamp" % tilde(path))
+    if epoch != epoch or epoch in (float("inf"), float("-inf")):
         raise Malformed("%s carries no readable cache timestamp" % tilde(path))
     age = (time.time() if now is None else now) - epoch
     if not isinstance(payload, dict) or payload.get("action") != "maclink.status":
@@ -2624,6 +2639,45 @@ def f8c_cases(check):
         "%r %r kills=%r" % ((value or {}).get("ok"), error, kills),
     )
 
+    # Parse-level cases: each breaking input is a named check, no ps/kill/launchctl run.
+    for name, text in [
+        ("f8c-launchctl-superscript-pid-no-crash", "\tpid = \u00b2\n"),
+        ("f8c-launchctl-pid-zero-refused", "\tpid = 0\n"),
+        ("f8c-launchctl-pid-one-refused", "\tpid = 1\n"),
+        ("f8c-launchctl-pid-huge-refused", "\tpid = 99999999999999\n"),
+    ]:
+        value, error = _f8c_try(lambda: parse_launchctl("\tstate = running\n" + text)["pid"])
+        check(name, error is None and value is None, "pid=%r error=%r" % (value, error))
+    value, error = _f8c_try(lambda: parse_launchctl("\tstate = running\n\tpid = 4242\n")["pid"])
+    check("f8c-launchctl-pid-good-accepted", error is None and value == 4242, "pid=%r error=%r" % (value, error))
+    class _CannedPs(Runtime):
+        """The real Runtime.ps_table parser, fed a canned table (no ps runs)."""
+
+        def __init__(self, text):
+            self.text = text
+
+        def run(self, argv, timeout=DEFAULT_TIMEOUT_S, strict_text=False):
+            return self.text, "", 0
+
+    rows, error = _f8c_try(lambda: _CannedPs("123 456\n\u00b2 5 bad\n\u0661\u0662 5 x\n").ps_table())
+    check(
+        "f8c-ps-row-missing-command-empty",
+        error is None and rows == [(123, 456, "")]
+        and classify_worker("", "kakashi", "t_f8c", 123, set())[0] is False,
+        "rows=%r error=%r" % (rows, error),
+    )
+    for name, epoch_text in [
+        ("f8c-status-cache-nan-epoch-malformed", "NaN"),
+        ("f8c-status-cache-inf-epoch-malformed", "1e400"),
+        ("f8c-status-cache-bigint-epoch-malformed", "1" + "0" * 400),
+        ("f8c-status-cache-bool-epoch-malformed", "true"),
+    ]:
+        text = ('{"source": "hudfix_maclink", "action": "maclink.status", "cached_at": "2026-10-23T12:00:00Z",'
+                ' "cached_epoch": %s, "payload": {"action": "maclink.status", "ok": true}}') % epoch_text
+        with open(cache, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        value, error = _f8c_try(lambda: status_cache_read({"state_dir": state}))
+        check(name, error is not None and error.startswith("Malformed"), "%r %r" % (value, error))
     for name, pid in [
         ("f8c-kick-pid-zero-no-signal", 0),
         ("f8c-kick-pid-one-no-signal", 1),
@@ -2646,9 +2700,35 @@ def f8c_cases(check):
 
 
 def self_check():
-    global SELF_CHECK_ASSUME_MAC, SELF_CHECK_UID, _CLI_BOOT
+    """Run the suite with a private HOME that holds a fixed ssh config.
+
+    The probes read ~/.ssh/config (the ssh peer decides whether an ssh run is
+    recorded), so the suite pins HOME to a temp dir with one fixed omarchylink host.
+    The real HOME, the real PATH and the real ps/launchctl/tailscale are never
+    read by the cases; HOME is restored and the temp dir removed on exit.
+    """
+    home_dir = tempfile.mkdtemp(prefix="hudfix-selfcheck-home-", dir=os.environ.get("TMPDIR"))
+    ssh_dir = os.path.join(home_dir, ".ssh")
+    os.makedirs(ssh_dir, exist_ok=True)
+    with open(os.path.join(ssh_dir, "config"), "w", encoding="utf-8") as handle:
+        handle.write("Host omarchylink\n    HostName omarchylink.example.invalid\n")
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = home_dir
+    try:
+        return _self_check_run()
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+        shutil.rmtree(home_dir, ignore_errors=True)
+
+
+def _self_check_run():
+    global SELF_CHECK_ASSUME_MAC, SELF_CHECK_UID, SELF_CHECK_TAILSCALE_CLI, _CLI_BOOT
     SELF_CHECK_ASSUME_MAC = True
     SELF_CHECK_UID = SELF_CHECK_FAKE_UID
+    SELF_CHECK_TAILSCALE_CLI = SELF_CHECK_FAKE_TAILSCALE
     print("hudfix_maclink self-check (python %s on %s)" % (sys.version.split()[0], sys.platform))
     passed = []
     failed = []

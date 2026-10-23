@@ -224,7 +224,7 @@ def bench_supervisor(seconds, out, optional):
         rss_kb_supervisor_vmhwm=vmhwm,
         rss_kb_supervisor_idle_last=rss_samples[-1] if rss_samples else 0,
         threads=threads,
-        exit=proc.returncode,
+        exit=os.waitstatus_to_exitcode(status),
         runs={n: int(v) for n, v in (final.get("runs") or {}).items()},
         avg_wall_ms={n: round(final["run_ms"][n] / final["runs"][n], 1)
                      for n in (final.get("runs") or {})
