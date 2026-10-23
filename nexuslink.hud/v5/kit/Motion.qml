@@ -119,4 +119,30 @@ QtObject {
     readonly property real stageScale: 1.1
     readonly property real stageShiftX: -40
     readonly property real stageShiftY: -48
+
+    // ---- proximity field (round 2, P1) -----------------------------------
+    // Pointer-driven growth around the widgets, independent of hover.
+    // d is the pointer distance to a widget centre, R = 0.5 * hypot(w, h).
+    // proximity is 0 at proximityNearRadius * R and 1 at proximityFarRadius * R.
+    readonly property real proximityNearRadius: 1.2
+    readonly property real proximityFarRadius: 0.4
+    // Neighbour push: 24 px at a fully grown neighbour, gaussian falloff.
+    readonly property real proximityPushMax: 24.0
+    readonly property real proximityPushSigma: 380.0
+
+    // Grow spring. Qt's SpringAnimation normalises its constants, so these are
+    // Qt units calibrated by measurement (work2/P1/cal.txt), not omega^2:
+    //   spring 3.0 / damping 0.24 measured 10.48 pct overshoot, 392 ms settle.
+    //   damping 0.271 is scaled for zeta 0.69 -> 5 pct, about 350 ms.
+    readonly property real growSpring: 3.86
+    readonly property real growDamping: 0.321
+    // Return: zeta 1.0 at the same 9 / 16.7 frequency ratio as before, no
+    // overshoot and about 444 ms.
+    readonly property real growReturnSpring: 2.18
+    readonly property real growReturnDamping: 0.349
+    // Spring rest threshold. 8e-4 of a 0 to 1 move is under 0.1 px of scale.
+    readonly property real growEpsilon: 0.0008
+    // Push offsets use a damped spring (zeta about 1.3) so an offset never wobbles.
+    readonly property real pushSpring: 3.86
+    readonly property real pushDamping: 0.42
 }
