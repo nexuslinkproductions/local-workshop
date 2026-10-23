@@ -98,6 +98,8 @@ Item {
             return "pdf"
         if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"].indexOf(e) >= 0)
             return "image"
+        if (["mp4", "mkv", "webm", "mov", "avi", "m4v", "mpg", "mpeg"].indexOf(e) >= 0)
+            return "video"
         if (["rs", "py", "js", "ts", "qml", "sh", "c", "h", "cpp", "json", "yaml", "yml", "toml", "css", "html"].indexOf(e) >= 0)
             return "code"
         if (["doc", "docx", "odt", "rtf", "txt", "org"].indexOf(e) >= 0)
@@ -110,10 +112,12 @@ Item {
             return Tokens.ice
         if (k === "code")
             return Tokens.azure
-        if (k === "doc" || k === "pdf")
+        if (k === "doc")
             return Tokens.cyan
         if (k === "image")
             return Tokens.cyan
+        if (k === "pdf" || k === "video")
+            return Tokens.white
         return Tokens.textDim
     }
     function shortPath(h) {
@@ -149,6 +153,22 @@ Item {
     }
     function isImage(h) {
         return root.kindOf(h) === "image"
+    }
+    function isVideo(h) {
+        return root.kindOf(h) === "video"
+    }
+    // image and video tiles are plain rounded thumbnails (no dog-ear, no title)
+    function isMedia(h) {
+        var k = root.kindOf(h)
+        return k === "image" || k === "video"
+    }
+    function durationText(h) {
+        var d = Number(field(h, "duration", 0))
+        if (!(d > 0))
+            return ""
+        var m = Math.floor(d / 60)
+        var sec = Math.floor(d % 60)
+        return m + ":" + (sec < 10 ? "0" : "") + sec
     }
     function titleOf(h) {
         var t = String(field(h, "title", ""))
@@ -488,7 +508,8 @@ Item {
                     required property var modelData
                     readonly property bool active: root.filter === chip.modelData.key
                     readonly property bool hot: chipArea.containsMouse
-                    width: active ? 96 : 28
+                    // the active chip carries its word: glyph (16 + 28) + gap + word + right pad
+                    width: active ? 56 + chipWord.implicitWidth + 16 : 28
                     height: 44
 
                     Rectangle {
@@ -509,7 +530,7 @@ Item {
 
                         // All: four solid dots.
                         Grid {
-                            visible: chip.active && chip.modelData.key === "all"
+                            visible: chip.modelData.key === "all"
                             x: 2
                             y: 2
                             columns: 2
@@ -520,13 +541,13 @@ Item {
                                     width: 9
                                     height: 9
                                     radius: 2.6
-                                    color: Tokens.white
+                                    color: chip.active ? Tokens.white : Tokens.textDim
                                 }
                             }
                         }
                         // Files: folder silhouette.
                         Item {
-                            visible: !chip.active && chip.modelData.key === "files"
+                            visible: chip.modelData.key === "files"
                             x: 1
                             y: 5
                             width: 26
@@ -549,7 +570,7 @@ Item {
                         }
                         // Images: frame bars, a sun and two hills.
                         Item {
-                            visible: !chip.active && chip.modelData.key === "images"
+                            visible: chip.modelData.key === "images"
                             anchors.fill: parent
                             Rectangle { x: 1; y: 5; width: 26; height: 3.4; radius: 1.7; color: Tokens.textDim }
                             Rectangle { x: 1; y: 21; width: 26; height: 3.4; radius: 1.7; color: Tokens.textDim }
@@ -572,7 +593,7 @@ Item {
                         }
                         // Docs: page with a cut top-right corner.
                         Shape {
-                            visible: !chip.active && chip.modelData.key === "docs"
+                            visible: chip.modelData.key === "docs"
                             anchors.fill: parent
                             ShapePath {
                                 fillColor: Tokens.textDim
@@ -587,7 +608,7 @@ Item {
                         }
                         // Downloads: tray with an arrow.
                         Item {
-                            visible: !chip.active && chip.modelData.key === "downloads"
+                            visible: chip.modelData.key === "downloads"
                             anchors.fill: parent
                             Rectangle { x: 3; y: 21; width: 22; height: 3.4; radius: 1.7; color: Tokens.textDim }
                             Rectangle { x: 3; y: 16; width: 3.4; height: 8; radius: 1.7; color: Tokens.textDim }
@@ -608,10 +629,11 @@ Item {
                     }
 
                     Text {
-                        visible: chip.active && chip.modelData.key === "all"
+                        id: chipWord
+                        visible: chip.active
                         anchors.verticalCenter: parent.verticalCenter
-                        x: 50
-                        text: "All"
+                        x: 56
+                        text: chip.modelData.word
                         color: Tokens.white
                         font.family: Tokens.fontFamily
                         font.pixelSize: 20
@@ -655,6 +677,7 @@ Item {
 
             PageShape {
                 anchors.fill: parent
+                visible: !root.isMedia(topTile.hit)
                 fold: 120
                 corner: 40
                 fillColor: root.pageFill(topTile.sel || topTile.hot)
@@ -664,32 +687,55 @@ Item {
             // rounded corners come from the path itself (no effect layer).
             Item {
                 anchors.fill: parent
-                anchors.margins: 16
-                visible: root.isImage(topTile.hit)
+                visible: root.isMedia(topTile.hit)
 
+                // soft fill behind the thumbnail (a ShapePath with a fillItem ignores fillColor)
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 40
+                    color: root.pageFill(topTile.sel || topTile.hot)
+                }
                 Shape {
                     id: topThumb
                     anchors.fill: parent
                     ShapePath {
-                        fillColor: Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, 0.35)
+                        fillColor: root.pageFill(topTile.sel || topTile.hot)
                         strokeColor: "transparent"
                         PathRectangle {
                             x: 0
                             y: 0
                             width: topThumb.width
                             height: topThumb.height
-                            radius: 24
+                            radius: 40
                         }
                         fillItem: Image {
                             width: topThumb.width
                             height: topThumb.height
                             asynchronous: root.thumbsAsync
-                            source: topTile.hit ? root.fileUrl(topTile.hit) : ""
-                            sourceSize: Qt.size(504, 650)
+                            source: root.isImage(topTile.hit) ? root.fileUrl(topTile.hit) : ""
+                            // capped at 256: decode cost stays flat; yuri thumb --size 256 (stage 03) matches
+                            sourceSize: Qt.size(256, 256)
                             fillMode: Image.PreserveAspectCrop
                         }
                     }
                 }
+            }
+
+            PlayGlyph {
+                anchors.centerIn: parent
+                size: 150
+                visible: root.isVideo(topTile.hit)
+            }
+            Text {
+                x: parent.width - width - 40
+                y: parent.height - height - 36
+                visible: root.isVideo(topTile.hit) && text !== ""
+                text: root.durationText(topTile.hit)
+                color: Tokens.white
+                font.family: Tokens.fontFamily
+                font.pixelSize: 24
+                font.weight: 500
+                renderType: Text.NativeRendering
             }
 
             // Extension badge.
@@ -717,7 +763,7 @@ Item {
                 x: 48
                 y: 198
                 width: parent.width - 96
-                visible: !root.isImage(topTile.hit)
+                visible: !root.isMedia(topTile.hit)
                 text: root.titleOf(topTile.hit)
                 color: Tokens.white
                 wrapMode: Text.WordWrap
@@ -732,7 +778,7 @@ Item {
 
             // Three muted doc bars near the bottom.
             Repeater {
-                model: root.isImage(topTile.hit) ? 0 : 3
+                model: root.isMedia(topTile.hit) ? 0 : 3
                 delegate: Rectangle {
                     required property int index
                     x: 48
@@ -797,6 +843,7 @@ Item {
                     anchors.fill: parent
                     fold: 56
                     corner: 28
+                    visible: !root.isMedia(tile.hit)
                     fillColor: root.pageFill(tile.sel || tileArea.containsMouse)
                     scale: tile.sel ? 1.04 : 1.0
                     transformOrigin: Item.Center
@@ -813,32 +860,53 @@ Item {
                     // so the corners are round without an effect layer.
                     Item {
                         anchors.fill: parent
-                        anchors.margins: 8
-                        visible: root.isImage(tile.hit)
+                        visible: root.isMedia(tile.hit)
 
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 24
+                            color: root.pageFill(tile.sel || tileArea.containsMouse)
+                        }
                         Shape {
                             id: tileThumb
                             anchors.fill: parent
                             ShapePath {
-                                fillColor: Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, 0.35)
+                                fillColor: root.pageFill(tile.sel || tileArea.containsMouse)
                                 strokeColor: "transparent"
                                 PathRectangle {
                                     x: 0
                                     y: 0
                                     width: tileThumb.width
                                     height: tileThumb.height
-                                    radius: 18
+                                    radius: 24
                                 }
                                 fillItem: Image {
                                     width: tileThumb.width
                                     height: tileThumb.height
                                     asynchronous: root.thumbsAsync
-                                    source: tile.hit ? root.fileUrl(tile.hit) : ""
-                                    sourceSize: Qt.size(220, 280)
+                                    source: root.isImage(tile.hit) ? root.fileUrl(tile.hit) : ""
+                                    sourceSize: Qt.size(256, 256)
                                     fillMode: Image.PreserveAspectCrop
                                 }
                             }
                         }
+                    }
+
+                    PlayGlyph {
+                        anchors.centerIn: parent
+                        size: 64
+                        visible: root.isVideo(tile.hit)
+                    }
+                    Text {
+                        x: parent.width - width - 16
+                        y: parent.height - height - 14
+                        visible: root.isVideo(tile.hit) && text !== ""
+                        text: root.durationText(tile.hit)
+                        color: Tokens.white
+                        font.family: Tokens.fontFamily
+                        font.pixelSize: 16
+                        font.weight: 500
+                        renderType: Text.NativeRendering
                     }
 
                     // Tile badge.
@@ -865,7 +933,7 @@ Item {
                         x: 20
                         y: 84
                         width: parent.width - 40
-                        visible: !root.isImage(tile.hit)
+                        visible: !root.isMedia(tile.hit)
                         text: root.titleOf(tile.hit)
                         color: Tokens.white
                         wrapMode: Text.WordWrap
@@ -879,7 +947,7 @@ Item {
                     }
 
                     Repeater {
-                        model: root.isImage(tile.hit) ? 0 : 3
+                        model: root.isMedia(tile.hit) ? 0 : 3
                         delegate: Rectangle {
                             required property int index
                             x: 20
@@ -960,6 +1028,32 @@ Item {
             font.pixelSize: 16
             font.weight: 400
             renderType: Text.NativeRendering
+        }
+    }
+
+    // ---- play glyph: soft round fill with a solid triangle, no outline -----
+    component PlayGlyph: Item {
+        id: play
+        property real size: 64
+        width: size
+        height: size
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: Tokens.white
+            opacity: 0.14
+        }
+        Shape {
+            anchors.fill: parent
+            ShapePath {
+                fillColor: Tokens.white
+                strokeColor: "transparent"
+                startX: play.size * 0.40
+                startY: play.size * 0.30
+                PathLine { x: play.size * 0.72; y: play.size * 0.50 }
+                PathLine { x: play.size * 0.40; y: play.size * 0.70 }
+                PathLine { x: play.size * 0.40; y: play.size * 0.30 }
+            }
         }
     }
 

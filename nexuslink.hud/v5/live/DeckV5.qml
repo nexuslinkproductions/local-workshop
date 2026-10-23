@@ -154,8 +154,10 @@ Item {
         id: findIdle
         interval: root.findIdleMillis
         repeat: false
+        // No onRunningChanged restart here: restart() toggles running, which re-fired
+        // the handler until the stack overflowed (RangeError). The binding already
+        // starts the timer on open; the Connections below restart it on activity.
         running: root.findOpen && root.shown
-        onRunningChanged: if (running) restart()
         onTriggered: {
             console.log("v5 find: inactivity guard closed Find after " + interval + " ms")
             deckView.findOpen = false
