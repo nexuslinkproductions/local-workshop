@@ -41,8 +41,9 @@ Age thresholds (deliberately conservative, and stated in every plan)
 
 What this module will not do
     * clear a ``~/.cache`` child it cannot attribute to a known owner
-      (``cache-top`` reports the top 10 and marks them; ``cache-evict`` refuses
-      an unattributed name);
+      (``cache-top`` reports the top 10 and marks them; ``cache-evict`` takes one
+      direct child only and refuses a name it cannot attribute, so a deeper path
+      under an unattributed directory is refused before anything is measured);
     * delete a btrfs snapshot (there is no delete action at all - only a listing);
     * remove a package (``orphans-list`` lists orphans and prints no command that
       would remove them);
@@ -56,6 +57,7 @@ never reads or writes a real cache, a real snapshot, or the real quarantine.
 from __future__ import annotations
 
 import datetime
+import functools
 import json
 import os
 import platform
@@ -114,16 +116,35 @@ ATTRIBUTION = (
     ("pip-tools", "pip-tools"),
 )
 
+# Patterns that only ever match a name exactly. The GitHub CLI's cache is the
+# one case where a shared prefix is a trap: ghostty is a terminal emulator, not
+# a GitHub CLI cache, and no continuation of "gh" is the CLI either.
+EXACT_ONLY = ("gh",)
+
 
 def attribute(name):
-    """Known owner for a cache directory name, else None. Case-insensitive."""
+    """Known owner for a cache directory name, else None. Case-insensitive.
+
+    A name carries an owner when it equals a pattern or continues that pattern
+    after ``-``, ``_`` or ``.``: ``uv`` and ``uv-3`` are uv, while ``ghostty`` is
+    not ``gh`` and ``pipenv`` is not ``pip``. The longest matching pattern wins,
+    so ``pip-tools`` beats ``pip``.
+    """
     if not name:
         return None
     low = name.lower().strip()
     for pattern, owner in ATTRIBUTION:
-        if low == pattern or low.startswith(pattern):
+        if low == pattern:
             return owner
-    return None
+    best = None
+    for pattern, owner in ATTRIBUTION:
+        if pattern in EXACT_ONLY:
+            continue
+        following = low[len(pattern):len(pattern) + 1]
+        if low.startswith(pattern) and following in ("-", "_", "."):
+            if best is None or len(pattern) > len(best[0]):
+                best = (pattern, owner)
+    return best[1] if best else None
 
 
 # --------------------------------------------------------------------- helpers
@@ -334,10 +355,102 @@ def run_cache_yay(ctx, confirm):
 # ---------------------------------------------------------------- cache-pacman
 
 
+def _rpmvercmp(left, right):
+    """One pair of version strings, compared the way alpm's rpmvercmp does.
+
+    Numeric segments compare by value (``1.10`` > ``1.9``), alpha segments as
+    text, a run of separators by its length, and a remaining alpha segment never
+    beats an exhausted string.
+    """
+    if left == right:
+        return 0
+    i = j = 0
+    len_left, len_right = len(left), len(right)
+    while i < len_left and j < len_right:
+        separator_start_left, separator_start_right = i, j
+        while i < len_left and not left[i].isalnum():
+            i += 1
+        while j < len_right and not right[j].isalnum():
+            j += 1
+        if not (i < len_left and j < len_right):
+            break
+        separators_left = i - separator_start_left
+        separators_right = j - separator_start_right
+        if separators_left != separators_right:
+            return -1 if separators_left < separators_right else 1
+        segment_start_left, segment_start_right = i, j
+        if left[i].isdigit():
+            while i < len_left and left[i].isdigit():
+                i += 1
+            while j < len_right and right[j].isdigit():
+                j += 1
+            numeric = True
+        else:
+            while i < len_left and left[i].isalpha():
+                i += 1
+            while j < len_right and right[j].isalpha():
+                j += 1
+            numeric = False
+        segment_left = left[segment_start_left:i]
+        segment_right = right[segment_start_right:j]
+        if not segment_left:
+            return -1
+        if not segment_right:
+            return 1 if numeric else -1
+        if numeric:
+            segment_left = segment_left.lstrip("0")
+            segment_right = segment_right.lstrip("0")
+            if len(segment_left) != len(segment_right):
+                return 1 if len(segment_left) > len(segment_right) else -1
+        if segment_left != segment_right:
+            return 1 if segment_left > segment_right else -1
+    left_done = i >= len_left
+    right_done = j >= len_right
+    if left_done and right_done:
+        return 0
+    # The final showdown: a remaining alpha segment loses to an exhausted
+    # string; anything else that remains wins.
+    if left_done and not (not right_done and right[j].isalpha()):
+        return -1
+    if not left_done and left[i].isalpha():
+        return -1
+    return 1
+
+
+def _split_evr(full):
+    """``1:2.0-3`` -> ``("1", "2.0", "3")``. No epoch is 0, no release is ""."""
+    epoch, version = "0", full
+    head, sep, tail = full.partition(":")
+    if sep and head.isdigit():
+        epoch, version = head, tail
+    pkgver, sep, pkgrel = version.rpartition("-")
+    if not sep:
+        return epoch, version, ""
+    return epoch, pkgver, pkgrel
+
+
+def _vercmp(left, right):
+    """Order two pacman versions (``[epoch:]pkgver[-pkgrel]``), <0, 0 or >0."""
+    epoch_left, ver_left, rel_left = _split_evr(left)
+    epoch_right, ver_right, rel_right = _split_evr(right)
+    order = _rpmvercmp(epoch_left, epoch_right)
+    if order:
+        return order
+    order = _rpmvercmp(ver_left, ver_right)
+    if order:
+        return order
+    if rel_left and rel_right:
+        return _rpmvercmp(rel_left, rel_right)
+    if rel_left or rel_right:
+        return 1 if rel_left else -1
+    return 0
+
+
 def _pacman_plan(ctx):
     """pacman/yay's package cache. Linux only: the tool itself has to exist."""
     root = ctx.root("pacman", "/var/cache/pacman/pkg")
-    notes = ["equivalent to `paccache -r -k 1`; keep the newest copy of each package"]
+    notes = ["equivalent to `paccache -r -k 1`; keep the newest copy of each package",
+             "versions are ordered by pacman's own vercmp, so 1.10 is newer than 1.9"]
     if not ctx.which("pacman"):
         return {"ok": False, "reason": "not this host", "detail": "no pacman",
                 "items": [], "count": 0, "bytes": 0}
@@ -349,13 +462,18 @@ def _pacman_plan(ctx):
         return {"ok": False, "reason": "cannot read %s: %s" % (tilde(root), exc.strerror or exc),
                 "items": [], "count": 0, "bytes": 0}
     for name in names:
-        match = re.match(r"^(.+)-([^-]+-[^-]+-[^-]+)\.pkg\.tar\.(?:xz|zst|gz)$", name)
+        # pkgname-pkgver-pkgrel-arch.pkg.tar.(xz|zst|gz), the pacman filename form
+        match = re.match(r"^(.+)-([^-]+)-([^-]+)-([^-]+)\.pkg\.tar\.(?:xz|zst|gz)$", name)
         if not match:
             continue
-        kept.setdefault(match.group(1), []).append((name, match.group(2)))
+        kept.setdefault(match.group(1), []).append(
+            (name, "%s-%s" % (match.group(2), match.group(3))))
     for package in sorted(kept):
-        versions = sorted(kept[package], key=lambda row: row[1])
-        for name, _version in versions[:-1]:
+        newest_first = sorted(kept[package],
+                              key=functools.cmp_to_key(
+                                  lambda left, right: _vercmp(left[1], right[1])),
+                              reverse=True)
+        for name, _version in newest_first[1:]:
             candidates.append({"path": os.path.join(root, name), "owner": "pacman",
                                "note": "superseded version of %s" % package})
     plan = _plan_reversible(ctx, "cache-pacman", candidates, notes=notes)
@@ -442,17 +560,20 @@ def _evict_target(ctx):
             "cache-evict needs --path NAME (a direct child of the cache root) or "
             "--path /abs/path inside it")
     root = ctx.root("cache", "~/.cache")
+    root_abs = expand(root)
     if os.path.isabs(os.path.expanduser(raw)):
         target = expand(raw)
-        if not hudfix.inside(target, root) or target == expand(root):
-            raise hudfix.UsageError("--path must be inside %s" % tilde(root))
     else:
-        target = os.path.join(root, raw)
-        if os.path.dirname(expand(target)) != expand(root):
-            raise hudfix.UsageError(
-                "--path %r must be one direct child of %s" % (raw, tilde(root)))
-    name = os.path.basename(expand(target))
-    return expand(target), name, attribute(name)
+        target = expand(os.path.join(root, raw))
+    # Both forms land on one rule: one direct child of the cache root, no depth,
+    # no traversal and not the root itself. A deeper path is refused even when
+    # its own name carries an owner, because the owner has to come from a name
+    # that is really a child of the cache root.
+    if os.path.dirname(target) != root_abs:
+        raise hudfix.UsageError(
+            "--path %r must be one direct child of %s" % (raw, tilde(root)))
+    name = os.path.basename(target)
+    return target, name, attribute(name)
 
 
 def _evict_plan(ctx):
@@ -1298,6 +1419,9 @@ def _build_fake_home(base):
         "home/.cache/pip/http/item": "P" * 1024,
         "home/.cache/huggingface/hub/model": "H" * 8192,
         "home/.cache/mystery-thing/blob": "M" * 4096,
+        "home/.cache/mystery-thing/uv-stuff/x": "D" * 300,
+        "home/.cache/ghostty/blob": "G" * 500,
+        "home/.cache/pipenv/blob": "I" * 200,
         "home/.cache/yay/pkg/PKGBUILD": "Y" * 128,
         "home/.cargo/registry/cache/pkg.crate": "C" * 512,
         "home/.cargo/registry/src/s/lib.rs": "S" * 256,
@@ -1459,6 +1583,15 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
                   for row in (top or {}).get("items", [])}
         checks.eq("plan.top.huggingface_attributed", owners.get("huggingface"), (True, "huggingface"))
         checks.eq("plan.top.mystery_unattributed", owners.get("mystery-thing"), (False, None))
+        # A shared prefix is not an owner: ghostty is not the GitHub CLI, pipenv
+        # is not pip. Attribution continues a pattern only after - _ or .
+        checks.eq("plan.top.ghostty_unattributed", owners.get("ghostty"), (False, None))
+        checks.eq("plan.top.pipenv_unattributed", owners.get("pipenv"), (False, None))
+        for name, want in (("ghostty", None), ("pipenv", None), ("gh", "github-cli"),
+                           ("uv", "uv"), ("uv-3", "uv"), ("pip-tools", "pip-tools"),
+                           ("ms-playwright", "playwright"), ("PLAYWRIGHT", "playwright"),
+                           ("mystery-thing", None), ("", None)):
+            checks.eq("attribute.%s" % (name or "empty"), attribute(name), want)
         checks.ok("plan.top.total_bytes", ((top or {}).get("cache_total_bytes") or 0) >= 15488)
         checks.ok("plan.top.cap", len(top_names) <= TOP_CONSUMERS if top else False)
 
@@ -1485,6 +1618,27 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         checks.eq("evict.no_path.exit", code, hudfix.EXIT_PROGRAMMING)
         code, _out, _err = cli(["plan", "cache-evict", "--path", "../escape", "--json"])
         checks.eq("evict.traversal.exit", code, hudfix.EXIT_PROGRAMMING)
+
+        # A prefix match must not open a cache the engine cannot attribute, and a
+        # deep path under an unattributed child must never be cleared.
+        for name in ("ghostty", "pipenv"):
+            code, out, _err = cli(["plan", "cache-evict", "--path", name, "--json"])
+            blocked = hudfix.one_object(out)
+            checks.eq("evict.%s.exit" % name, code, hudfix.EXIT_OK)
+            checks.eq("evict.%s.ok" % name, (blocked or {}).get("ok"), False)
+            checks.eq("evict.%s.bytes" % name, (blocked or {}).get("bytes"), 0)
+        deep_abs = os.path.join(home, ".cache", "mystery-thing", "uv-stuff")
+        code, out, _err = cli(["plan", "cache-evict", "--path", deep_abs, "--json"])
+        checks.eq("evict.deep.exit", code, hudfix.EXIT_PROGRAMMING)
+        checks.eq("evict.deep.ok", (hudfix.one_object(out) or {}).get("ok"), False)
+        code, _out, _err = cli(["plan", "cache-evict", "--path",
+                                "mystery-thing/uv-stuff", "--json"])
+        checks.eq("evict.deep_relative.exit", code, hudfix.EXIT_PROGRAMMING)
+        code, _out, _err = cli(["run", "cache-evict", "--path", deep_abs,
+                                "--confirm", "cache-evict", "--json"])
+        checks.eq("evict.deep.run_exit", code, hudfix.EXIT_PROGRAMMING)
+        checks.ok("evict.deep.still_there",
+                  os.path.exists(os.path.join(deep_abs, "x")))
 
         # ---- hermes scratch: age threshold, structure kept ---------------
         code, out, _err = cli(["plan", "hermes-scratch", "--json"])
@@ -1546,6 +1700,29 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
             checks.eq("plan.cache-yay.bytes", (yay or {}).get("bytes"), 128)
         else:
             checks.eq("plan.cache-yay.reason", (yay or {}).get("reason"), "not this host")
+
+        # ---- cache-pacman orders versions the way pacman does -------------
+        # The action itself is Linux only, so prove the ordering through the
+        # patched call: 1.10 is newer than 1.9, and the newest copy stays.
+        packages = os.path.join(base, "pacman-pkgs")
+        for name in ("foo-1.9-1-x86_64.pkg.tar.zst", "foo-1.10-1-x86_64.pkg.tar.zst",
+                     "bar-1.0-1-any.pkg.tar.xz", "bar-1.0-2-any.pkg.tar.xz"):
+            _write(os.path.join(packages, name), "P" * 10)
+        patched = hudfix.Context(overrides={"pacman": packages})
+        patched.which = lambda name: True
+        pacman_plan = _pacman_plan(patched)
+        superseded = sorted(os.path.basename(row["path"])
+                            for row in pacman_plan.get("items", []))
+        checks.eq("pacman.superseded", superseded,
+                  ["bar-1.0-1-any.pkg.tar.xz", "foo-1.9-1-x86_64.pkg.tar.zst"])
+        checks.ok("pacman.newest_kept",
+                  "foo-1.10-1-x86_64.pkg.tar.zst" not in superseded, repr(superseded))
+        checks.eq("pacman.kept_newest", pacman_plan.get("kept_newest"), 2)
+        for left, right, want in (("1.9-1", "1.10-1", -1), ("1.10-1", "1.9-1", 1),
+                                  ("1.0-2", "1.0-10", -1), ("1:0.1-1", "2.0-1", 1),
+                                  ("2.0", "2.0-1", -1), ("1.0a-1", "1.0b-1", -1),
+                                  ("1.0_1-1", "1.0.1-1", 0), ("1.0-1", "1.0-1", 0)):
+            checks.eq("vercmp.%s_vs_%s" % (left, right), _vercmp(left, right), want)
 
         # ---- linux-only and daemon-gated actions refuse ------------------
         before = _digest(os.path.join(base, "home"))

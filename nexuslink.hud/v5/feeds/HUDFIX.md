@@ -177,8 +177,23 @@ in the plan, which reports the daemon's own error.
 | `quarantine-list` | read | - | the last 7 days of MANIFEST rows, the restore instructions |
 
 Age thresholds are stated in every plan. `cache-top` never clears anything:
-`cache-evict` needs an explicit `--path` and refuses a name with no known owner
-(`attributed: false` in `cache-top`).
+`cache-evict` needs an explicit `--path`, takes only one direct child of the
+cache root (a relative name or an absolute path to that child, nothing deeper),
+and refuses a name with no known owner (`attributed: false` in `cache-top`).
+
+Attribution is a name rule, not a prefix rule. A cache directory carries an
+owner when its name equals a pattern in `ATTRIBUTION` or continues that pattern
+after `-`, `_` or `.`: `uv` and `uv-3` are uv, `mystery-thing` has none. The
+longest matching pattern wins, so `pip-tools` is pip-tools and not pip. `gh` is
+the GitHub CLI only as an exact name: `ghostty` is a terminal emulator and
+`pipenv` is not pip, so both stay unattributed and neither can be evicted.
+`cache-evict` takes the owner from the child's own name, so a deeper path is
+refused even when its last component looks like a known cache.
+
+`cache-pacman` keeps the newest copy of each package and orders versions with
+pacman's own `vercmp` rule (`hudfix_storage._vercmp`): epochs first, then
+numeric segments by value, then the release. `foo-1.10-1` is newer than
+`foo-1.9-1`, so `1.9` is the superseded file and `1.10` stays.
 
 ## Test hooks
 
@@ -187,13 +202,18 @@ points it at a throwaway probe module), `--root KEY=PATH` (point a logical root
 at a substitute, e.g. `--root npm=/tmp/fake/.npm`), `--path PATH` (an action's
 target), `--param k=v` (an action's option), `--quarantine-root PATH`,
 `--log PATH`, and `--fixture PATH` on `list`/`plan`/`status` to replay a recorded
-object for UI work (never touches the host; a named file that does not exist is
-exit 2; `run` refuses `--fixture`).
+object for UI work. Fixture mode replays the file and nothing else: it runs no
+module discovery, lists no directory and reads no host state, so the same file
+prints the same bytes under any `$HOME`. A named file that does not exist is
+exit 2; a file that exists but cannot be read as one JSON object (empty,
+truncated, a list) is exit 0 with `{"ok": false, "reason": "...", "kind":
+"fixture"}` so the UI can show the bad recording instead of a crash. `run`
+refuses `--fixture` with exit 2.
 
 ## Self-checks
 
-    python3 nexuslink.hud/v5/feeds/hudfix.py --self-check          # 88 checks
-    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 132 checks
+    python3 nexuslink.hud/v5/feeds/hudfix.py --self-check          # 103 checks
+    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 166 checks
 
 Both build their tree under `$TMPDIR`, drive the real CLI as a subprocess, and
 assert the tree digest before and after every plan, the exit code of every

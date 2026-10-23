@@ -24,7 +24,9 @@ Classes (the safety model from MAIN-SCREEN-BUILD.md)
 
 Exit codes
     0   data, a plan, a completed run, honest absence (``{"ok": false,
-        "reason": "..."}``), and a Linux-only action refused by ``plan``.
+        "reason": "..."}``), a Linux-only action refused by ``plan``, and a
+        ``--fixture`` file that cannot be read as one JSON object (reported as
+        ``{"ok": false, "reason": "..."}`` so the UI can show it).
     1   ``--self-check`` only: an assertion failed.
     2   caller or programming error, and ``run`` refusals: unknown action, bad
         arguments, a named ``--fixture`` that does not exist, a missing or
@@ -1021,7 +1023,13 @@ def refuse(entry, ctx, reason):
 
 
 def cmd_fixture(path):
-    """Replay a recorded object for UI work. Never touches the host."""
+    """Replay a recorded object for UI work. Never touches the host.
+
+    A named file that is not there is a caller mistake: exit 2. A file that is
+    there but holds nothing a UI can draw (empty, malformed, not one object) is
+    an unreadable recording, not a crash: exit 0 with ``ok: false`` and a reason,
+    which is the feeds brief's rule for input the UI should show.
+    """
     if not os.path.isfile(path):
         payload = {"ok": False, "generated_at": utc_now_iso(), "source": "fixture",
                    "reason": "no fixture at %s" % tilde(path), "kind": "usage"}
@@ -1032,12 +1040,12 @@ def cmd_fixture(path):
     except (OSError, ValueError) as exc:
         payload = {"ok": False, "generated_at": utc_now_iso(), "source": "fixture",
                    "reason": "cannot read fixture %s: %s" % (tilde(path), short_error(exc)),
-                   "kind": "usage"}
-        return payload, EXIT_PROGRAMMING
+                   "kind": "fixture"}
+        return payload, EXIT_OK
     if not isinstance(recorded, dict):
         payload = {"ok": False, "generated_at": utc_now_iso(), "source": "fixture",
-                   "reason": "fixture is not one JSON object", "kind": "usage"}
-        return payload, EXIT_PROGRAMMING
+                   "reason": "fixture is not one JSON object", "kind": "fixture"}
+        return payload, EXIT_OK
     payload = dict(recorded)
     payload["source"] = "fixture"
     payload["fixture"] = tilde(path)
@@ -1146,27 +1154,30 @@ def main(argv=None):
         emit({"ok": False, "generated_at": utc_now_iso(), "source": "live",
               "reason": str(exc), "kind": "usage"}, compact)
         return EXIT_PROGRAMMING
-    module_dir = getattr(args, "module_dir", HERE)
-    actions, errors = discover(module_dir)
-    if args.command == "list" and getattr(args, "fixture", None):
-        payload, code = cmd_fixture(args.fixture)
-    elif args.command == "plan" and getattr(args, "fixture", None):
-        payload, code = cmd_fixture(args.fixture)
-    elif args.command == "status" and getattr(args, "fixture", None):
-        payload, code = cmd_fixture(args.fixture)
-    elif args.command == "run" and getattr(args, "fixture", None):
-        payload, code = ({"ok": False, "generated_at": utc_now_iso(), "source": "fixture",
-                          "reason": "run does not accept --fixture: a recorded object "
-                                    "cannot be executed", "kind": "usage"},
-                         EXIT_PROGRAMMING)
-    elif args.command == "list":
-        payload, code = cmd_list(args, ctx, actions, errors)
-    elif args.command == "status":
-        payload, code = cmd_status(args, ctx, actions, errors)
-    elif args.command == "plan":
-        payload, code = cmd_plan(args, ctx, actions, errors)
+    fixture = getattr(args, "fixture", None)
+    if fixture:
+        # Fixture mode is a recording replay: no host state and no directory
+        # listing. Discovery imports every sibling module, so it does not run
+        # here even to build a list object nobody reads.
+        if args.command == "run":
+            payload, code = ({"ok": False, "generated_at": utc_now_iso(),
+                              "source": "fixture",
+                              "reason": "run does not accept --fixture: a recorded object "
+                                        "cannot be executed", "kind": "usage"},
+                             EXIT_PROGRAMMING)
+        else:
+            payload, code = cmd_fixture(fixture)
     else:
-        payload, code = cmd_run(args, ctx, actions, errors)
+        module_dir = getattr(args, "module_dir", HERE)
+        actions, errors = discover(module_dir)
+        if args.command == "list":
+            payload, code = cmd_list(args, ctx, actions, errors)
+        elif args.command == "status":
+            payload, code = cmd_status(args, ctx, actions, errors)
+        elif args.command == "plan":
+            payload, code = cmd_plan(args, ctx, actions, errors)
+        else:
+            payload, code = cmd_run(args, ctx, actions, errors)
     emit(payload, compact)
     return code
 
@@ -1363,6 +1374,13 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         os.makedirs(mods)
         with open(os.path.join(mods, "hudfix_probe.py"), "w", encoding="utf-8") as handle:
             handle.write(PROBE_SOURCE % {"tree": tree, "marks": marks})
+        # A sibling that leaves a trace when it is imported. Fixture mode must
+        # never run discovery, so this trace must not appear from a --fixture call.
+        importer_marker = os.path.join(base, "import-marker.txt")
+        with open(os.path.join(mods, "hudfix_importer.py"), "w", encoding="utf-8") as handle:
+            handle.write("with open(%r, 'w', encoding='utf-8') as handle:\n"
+                         "    handle.write('imported')\n"
+                         "ACTIONS = {}\n" % importer_marker)
 
         base_args = ["--module-dir", mods, "--quarantine-root", quarantine,
                      "--log", log_path]
@@ -1540,6 +1558,28 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
                                                 "--confirm", "probe-move",
                                                 "--fixture", recorded, "--json"])
         checks.eq("fixture.run_refused", code, EXIT_PROGRAMMING)
+        # A recording that exists but holds nothing readable is data the UI shows,
+        # not a caller mistake: exit 0 with ok:false and a reason.
+        for label, text in (("empty", ""), ("malformed", '{"ok": true, '),
+                            ("notobject", "[1, 2]")):
+            broken = os.path.join(base, "fixture-%s.json" % label)
+            with open(broken, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            code, out, _err = cli(["list", "--fixture", broken, "--json"])
+            body = _one_object(out) or {}
+            checks.eq("fixture.%s.exit" % label, code, EXIT_OK)
+            checks.eq("fixture.%s.ok" % label, body.get("ok"), False)
+            checks.eq("fixture.%s.source" % label, body.get("source"), "fixture")
+            checks.ok("fixture.%s.reason" % label, bool(body.get("reason")))
+        # Fixture mode replays a file: it lists no directory and imports no module.
+        if os.path.exists(importer_marker):
+            os.unlink(importer_marker)
+        code, out, _err = cli(["list", "--fixture", recorded, "--json"])
+        checks.eq("fixture.no_discovery.exit", code, EXIT_OK)
+        checks.eq("fixture.no_discovery.source",
+                  (_one_object(out) or {}).get("source"), "fixture")
+        checks.ok("fixture.no_discovery.marker", not os.path.exists(importer_marker),
+                  "discovery imported a sibling module during --fixture")
 
         # ---- status ------------------------------------------------------
         code, out, err = cli(["status", "--json"])
