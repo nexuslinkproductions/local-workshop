@@ -18,10 +18,10 @@ it is correct behaviour, not a gap:
 | Action | Class | linux_only | Live source | On this Mac |
 |---|---|---|---|---|
 | `localai.status` | read | false | `/run/user/1000/chief/metrics.json` | fixture, or `ok:false` with a reason when the file is absent |
-| `localai.unload` | reversible | true | `POST /api/models/unload/<model>` on llama-swap | refuses: `not this host`, plan exit 0, run exit 2 |
-| `localai.clear-slot` | reversible | true | `POST /slots/<id>?action=erase` on llama-server | refuses: `not this host` |
-| `localai.vram` | read | true | `nvidia-smi --query-compute-apps=...` | refuses: `not this host` |
-| `localai.models` | read | true | model directory scan, or `models` in metrics | refuses: `not this host` |
+| `localai.unload` | reversible | true | `POST /api/models/unload/<model>` on llama-swap | refuses: `not this host`; plan exit 0, run exit 2 |
+| `localai.clear-slot` | reversible | true | `POST /slots/<id>?action=erase` on llama-server | refuses: `not this host`; plan exit 0, run exit 2 |
+| `localai.vram` | read | true | `nvidia-smi --query-compute-apps=...` | refuses: `not this host`, exit 0 (honest absence) |
+| `localai.models` | read | true | model directory scan, or `models` in metrics | refuses: `not this host`, exit 0 (honest absence) |
 
 `--fixture PATH` builds the same plan and the same payload on any host from a
 documented snapshot, because the plan is what the UI renders and what Linux
@@ -60,41 +60,55 @@ python3 hudfix_localai.py run  localai.unload --confirm localai.unload --fixture
 python3 hudfix_localai.py --self-check
 ```
 
-Exit codes: `0` for data and for honest absence (`ok:false` with a reason),
-`2` for a bad argument, a named missing fixture, a missing confirmation, a
-linux-only `run` on the wrong host, or a refusal to act.
+Exit codes follow the feeds brief: `0` for data and for honest absence (`ok:false`
+with a reason), which includes a `linux_only` read action refused on the wrong
+host; `2` for a bad argument, a named missing fixture, a refusal to act (no
+`--confirm`, a request in flight or unknown in flight, fixture mode, a
+`linux_only` reversible run on the wrong host), or a request whose outcome is
+unknown.
 
-## Key parity with F7 `chief.py` (branch `v5/f7-callcap-chief`)
+## Key parity with F7 `chief.py` (head 5d7c2e5, branch `v5/f7-callcap-chief`)
 
 The LOCAL AI dock (F7) and this utility view describe the same model, so the
-status payload reuses F7's key names and arithmetic. F7, on its fixture:
+status payload reuses F7's key names, arithmetic and fixture semantics. F7 at
+head 5d7c2e5, on its own fixture (`fixtures/chief.json`):
 
 ```json
-{"ok":true,"source":"fixture","generated_at":"2026-10-23T00:18:28Z","running":true,
- "model":"ornith-chief-v3","vram_gb":10.75,"tokens_per_s":41.6,"metrics_age_s":11486.3,
- "vram_total_gb":12.0,"queue":0,"stale":true}
+{"ok":true,"source":"fixture","generated_at":"2026-10-23T01:38:54Z","running":true,
+ "model":"ornith-chief-v3","vram_gb":10.75,"tokens_per_s":41.6,"metrics_age_s":null,
+ "vram_total_gb":12.0,"queue":0,"stale":null,
+ "metrics_age_reason":"fixture mode reads no clock; age and stale are not measured",
+ "snapshot_ts":"2026-10-22T21:07:02Z"}
 ```
 
-This module, on the same snapshot (`fixtures/localai.json` carries F7's exact
-`ts`, model, tokens/s, queue and VRAM numbers):
+This module, on the same numbers (`fixtures/localai.json` carries F7's exact
+`ts`, model, tokens/s, queue and VRAM values):
 
 ```json
-{"ok":true,"source":"fixture","generated_at":"2026-10-22T21:07:02Z","running":true,
- "model":"ornith-chief-v3","vram_gb":10.75,"tokens_per_s":41.6,"metrics_age_s":0.4,
- "vram_total_gb":12.0,"queue":0,"stale":false,
+{"ok":true,"source":"fixture","generated_at":"2026-10-22T21:07:02Z",
+ "action":"localai.status","class":"read","running":true,"model":"ornith-chief-v3",
+ "vram_gb":10.75,"tokens_per_s":41.6,"metrics_age_s":null,"vram_total_gb":12.0,
+ "queue":0,"stale":null,"snapshot_ts":"2026-10-22T21:07:02Z",
  "slots":[{"slot":0,"busy":false,...},{"slot":1,"busy":true,"request_id":"req_7f3a",...}],
- "slot_occupancy":{"used":1,"total":2}}
+ "slot_occupancy":{"used":1,"total":2},
+ "metrics_age_reason":"fixture mode reads no clock; age and stale are not measured"}
 ```
 
-Every F7 key is present with the same name; `vram_gb` is
-`round(vram_used_mib / 1024.0, 2)` and `stale` is `age > 5.0 s` in both. The
-only added keys are `slots` and `slot_occupancy`, which the card requires. One
-deliberate difference: F7 derives `metrics_age_s` from the wall clock even in
-fixture mode; the feeds contract forbids host state in fixture mode ("no
-clock-derived age"), so here the fixture carries `age_s` and the same fixture
-always prints the same bytes. On the live path the age comes from the metrics
-file's mtime, as in F7, and a cached answer re-derives it (the cache never
-freezes the age).
+A key-by-key diff of those two payloads: no F7 key is missing, every shared
+key carries the same value, and the only keys this module adds are `slots`,
+`slot_occupancy`, `action` and `class`. `vram_gb` is
+`round(vram_used_mib / 1024.0, 2)` and `stale` is `age > 5.0 s` in both. In
+fixture mode both give `metrics_age_s` and `stale` null with
+`metrics_age_reason`, and `snapshot_ts` carries the snapshot's own `ts`, because
+an age is a fact about this host's clock, not about the snapshot. On the live
+path the age comes from the metrics file's mtime, as in F7, and a cached answer
+re-derives it (the cache never freezes the age).
+
+One shared key differs by design: `generated_at`. F7 stamps it with the host
+clock in fixture mode too, which the feeds brief forbids ("a fixture run must
+produce byte-identical output"). Here a fixture payload takes `generated_at`
+from the fixture's `ts` (or null with `generated_at_reason`), so two runs over
+the same fixture print the same bytes.
 
 ## Safety
 
@@ -117,8 +131,14 @@ with its request id and session:
 
 1. no `--confirm localai.unload` exactly;
 2. live on a non-Linux host (`not this host`);
-3. a request in flight, or metrics with no `slots` array so it cannot tell;
+3. a request in flight, a slot row with no `busy` key (unknown counts as
+   unknown, never as idle), or metrics with no `slots` array so it cannot tell;
 4. `--fixture` (fixture mode never acts).
+
+A POST that raises on the transport (connection refused, timeout, no route)
+returns `kind: "unreachable"` with "outcome unknown: the request may have been
+sent", exits 2, and still appends its audit row. A request that may have landed
+is never reported as a clean no-op.
 
 `localai.clear-slot` applies the same in-flight guard to the slot it is about
 to erase and states what the caller loses ("the cached prompt for request
@@ -137,34 +157,46 @@ Live mechanisms, both upstream-documented and never exercised in a test:
 
 ## Fixtures
 
-- `nexuslink.hud/v5/fixtures/localai.json` — one loaded model, slot 1 busy with
+- `nexuslink.hud/v5/fixtures/localai.json`: one loaded model, slot 1 busy with
   `req_7f3a`, two `nvidia-smi` rows summing to `vram_used_mib`, five GGUF files
-  with exact byte sizes, `age_s: 0.4`. Shape and key names from
-  `recon/05-local-ai.md`; numbers are a plausible snapshot, not a measured
-  capture (the note inside says so). It extends F7's `chief.json` field for
-  field on the shared keys.
-- `nexuslink.hud/v5/fixtures/localai-idle.json` — the same box with nothing
-  loaded: `running:false`, occupancy `0/2`, no GPU processes. What the dock
+  with exact byte sizes. Shape and key names from `recon/05-local-ai.md`;
+  numbers are a plausible snapshot, not a measured capture (the note inside
+  says so). It extends F7's `chief.json` field for field on the shared keys,
+  and carries no `age_s`: fixture mode reads no clock, so the age is null with
+  a reason rather than a number copied from capture time.
+- `nexuslink.hud/v5/fixtures/localai-idle.json`: the same box with nothing
+  loaded, `running:false`, occupancy `0/2`, no GPU processes. What the dock
   shows at rest and what makes `unload` a no-op.
 
 ## Self-check
 
 ```
 $ python3 hudfix_localai.py --self-check
-... 35 checks ...
+... 41 checks ...
 EXIT=0
 ```
 
 It proves, with no model, no GPU, no Linux host and no socket: the registry
-shape and the four classes; the F7 key set and the 1024 divisor; fixture output
-byte-identical across runs with no cache written; a partial metrics object, an
-empty file, a malformed file and a missing named fixture each get the specified
-answer and exit code; the 10 s cache; every plan is side-effect free and
-deterministic over a hashed sandbox; one plan per action with `count`, `bytes`
-and `would`; the unload plan's model/VRAM/reload/session; the clear-slot plan's
-slot/request/loss; exact VRAM and model byte totals; the confirm refusal; the
-in-flight refusal with the request id in the reason; `--force` getting past the
-guard into the fixture refusal; the idle no-op; the unknown-in-flight refusal;
-the busy-slot refusal; every `linux_only` action refusing honestly on this Mac;
-zero `_http_post` calls from any fixture run; and one JSONL row per run in the
-hudfix log.
+shape and the four classes; the F7 key set, F7 fixture semantics and the 1024
+divisor; fixture output byte-identical across runs with no cache written; a
+partial metrics object, an empty file, a malformed file and a missing named
+fixture each get the specified answer and exit code; the 10 s cache, its
+expiry, and a cached read keyed on its source (a `models_dir` change inside
+the TTL is re-read, never served the other directory's answer); every plan is
+side-effect free and deterministic over a hashed sandbox; one plan per action
+with `count`, `bytes` and `would`; the unload
+plan's model/VRAM/reload/session; the clear-slot plan's slot/request/loss;
+exact VRAM and model totals, with `bytes` null for VRAM; the confirm refusal;
+the in-flight refusal with the request id in the reason; the slot with no
+`busy` key counted as unknown (plan needs force, run refuses); `--force`
+getting past the guard into the fixture refusal; the idle no-op; the
+unknown-in-flight refusal; the busy-slot refusal; every `linux_only` read
+refusing honestly on this Mac with exit 0 and every reversible run without a
+confirm token stopping at exit 2; a dead POST reported as an unknown outcome
+with exit 2 and a log row; zero `_http_post` calls from any fixture run; and
+one JSONL row per run in the hudfix log.
+
+Nothing in the self-check can reach the live audit log. Every child process
+runs with `HOME` pointed at the self-check's temp root, so its default log and
+cache land there, and the run hashes `~/.local/state/nexuslink/hudfix.log`
+before and after to prove the live file is byte-identical.

@@ -1,6 +1,5 @@
 {
   "ts": 1792703222.1396573,
-  "age_s": 0.9,
   "model": null,
   "tokens_per_s": null,
   "queue": 0,
@@ -64,5 +63,5 @@
       "loaded": false
     }
   ],
-  "fixture_note": "The same box with nothing loaded: this is what the LOCAL AI dock shows at rest and what makes localai.unload a no-op. Values are the empty-state shape from recon/05-local-ai.md; they are a plausible idle snapshot, not a measured capture. age_s is the age at capture, not now (fixture mode never reads the host clock)."
+  "fixture_note": "The same box with nothing loaded: this is what the LOCAL AI dock shows at rest and what makes localai.unload a no-op. Values are the empty-state shape from recon/05-local-ai.md; they are a plausible idle snapshot, not a measured capture. Fixture mode reads no clock: metrics_age_s and stale are null with metrics_age_reason, and snapshot_ts repeats the ts above."
 }

@@ -44,28 +44,41 @@ LIVE MECHANISMS (both are upstream-documented, nothing is invented):
   backend; if the live box does not, point ``--slot-url`` at the llama-server
   port instead.
 
-KEY PARITY WITH F7 ``chief.py`` (branch ``v5/f7-callcap-chief``): the dock and
-this utility view must not describe the same VRAM differently, so the status
-payload reuses F7's key names and semantics exactly:
+KEY PARITY WITH F7 ``chief.py`` (branch ``v5/f7-callcap-chief``, head 5d7c2e5):
+the dock and this utility view must not describe the same VRAM differently, so
+the status payload reuses F7's key names and semantics exactly:
 
     running, model, vram_gb, tokens_per_s, metrics_age_s, stale,
+    metrics_age_reason, snapshot_ts,
     vram_total_gb (when the file has a total), queue (when present)
 
 ``vram_gb`` is ``round(vram_used_mib / 1024.0, 2)`` in both modules and
-``stale`` is ``age > 5.0 s`` in both (the writer ticks at 1 Hz). This module
-adds two keys the card requires, ``slots`` and ``slot_occupancy``, and never
-renames an F7 key. One deliberate difference: F7 derives ``metrics_age_s`` from
-the wall clock even in ``--fixture`` mode, which the feeds contract forbids
-("no clock-derived age"); here a fixture supplies ``age_s`` explicitly, so two
-runs over the same fixture are byte-identical. On the live path the age is the
-metrics file's mtime age, as in F7.
+``stale`` is ``age > 5.0 s`` in both (the writer ticks at 1 Hz). Fixture mode
+is F7's fixture mode: no clock is read, ``metrics_age_s`` and ``stale`` are
+null with a ``metrics_age_reason``, and ``snapshot_ts`` carries the snapshot's
+own ``ts`` as UTC ISO. This module adds the keys the card requires, ``slots``
+and ``slot_occupancy``, plus ``action`` and ``class`` so a log row can name the
+read, and never renames an F7 key. One deliberate difference remains: F7's
+``generated_at`` is the host clock even in ``--fixture`` mode, which the feeds
+brief forbids ("a fixture run must produce byte-identical output"); here a
+fixture payload takes ``generated_at`` from the fixture's ``ts`` (or null with
+``generated_at_reason``). On the live path the age is the metrics file's mtime
+age, as in F7.
+
+EXIT CODES follow the feeds brief: 0 for data and honest absence, including a
+``linux_only`` read action refused on the wrong host, and 2 only for a
+programming error or a refusal to act (no ``--confirm``, in flight or unknown
+in flight, fixture mode, wrong host for a reversible run).
 
 SAFETY. ``localai.unload`` is the one action that can interrupt someone else's
 work. Its plan names the model, the VRAM it frees, the reload cost, and every
 busy slot with its request id and session. ``run`` refuses without
 ``--confirm localai.unload``, refuses while a request is in flight, and refuses
 when the metrics cannot say whether a request is in flight, unless ``--force``
-is given too. ``localai.clear-slot`` applies the same in-flight guard to the
+is given too. A slot row with no ``busy`` key counts as unknown, never as
+idle, so an incomplete metrics file fails closed. A POST that cannot reach the
+host is reported as an unknown outcome and exits 2, because the request may
+have been sent. ``localai.clear-slot`` applies the same in-flight guard to the
 slot it is about to erase. Nothing here deletes a file. The self-check never
 unloads a model, never opens a socket and never touches a process.
 """
@@ -74,6 +87,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
+import io
 import json
 import os
 import shutil
@@ -81,13 +96,15 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import redirect_stdout
 
 EXIT_OK = 0
 EXIT_PROGRAMMING = 2
 
 HOME = os.path.expanduser("~")
 MODULE = "hudfix_localai"
-SOURCE = "localai"
+# The envelope allows fixture or live only (feeds brief, output shape).
+SOURCE = "live"
 
 DEFAULT_METRICS = "/run/user/1000/chief/metrics.json"
 DEFAULT_CACHE = "~/.local/state/nexuslink/localai.json"
@@ -405,12 +422,18 @@ def cache_file(ctx, name):
     return os.path.join(directory, "%s-%s.json" % (stem, name))
 
 
-def cached_read(ctx, name, builder):
-    """Reads are cached, never faster than 10 s; a fixture never touches the cache."""
+def cached_read(ctx, name, builder, identity=""):
+    """Reads are cached, never faster than 10 s; a fixture never touches the cache.
+
+    The key carries the identity of the source as well as the action name, so a
+    different models directory (or another fixture) is never served the other
+    source's answer inside the TTL.
+    """
     if opt(ctx, "fixture") or opt(ctx, "no_cache", False):
         return builder(ctx)
     path = cache_file(ctx, name)
-    hit = cache_get(path, name)
+    key = "%s|%s" % (name, identity)
+    hit = cache_get(path, key)
     if hit is not None:
         payload, age = hit
         fresh = dict(payload)
@@ -419,8 +442,17 @@ def cached_read(ctx, name, builder):
         return fresh
     payload = builder(ctx)
     payload["cached"] = False
-    cache_put(path, name, payload)
+    cache_put(path, key, payload)
     return payload
+
+
+def read_identity(ctx, name):
+    """What a cached read actually read: the fixture, the VRAM tool or the model sources."""
+    if opt(ctx, "fixture"):
+        return os.path.abspath(os.path.expanduser(str(opt(ctx, "fixture"))))
+    if name == "vram":
+        return opt(ctx, "nvidia_smi") or VRAM_COMMAND[0]
+    return "%s|%s" % (models_dir(ctx) or "-", metrics_path(ctx))
 
 
 def log_path(ctx):
@@ -492,7 +524,13 @@ def slot_occupancy(data, slots):
     if total is None or total < 0:
         total = len(slots)
     used = len([row for row in slots if row.get("busy") is True])
-    return {"used": used, "total": total}
+    unknown = len([row for row in slots if row.get("busy") is None])
+    occupancy: dict = {"used": used, "total": total}
+    if unknown:
+        # A row with no busy key is not idle: say so instead of reporting zero.
+        occupancy["unknown"] = unknown
+        occupancy["reason"] = "metrics.json gives no busy flag for %d slot(s)" % unknown
+    return occupancy
 
 
 def metrics_payload(data, age_s, source, generated_at):
@@ -504,18 +542,28 @@ def metrics_payload(data, age_s, source, generated_at):
         "ok": True,
         "source": source,
         "generated_at": generated_at,
+        "action": "localai.status",
+        "class": CLASSES["localai.status"],
         "running": bool(model),
         "model": model,
         "vram_gb": round(used / MIB_PER_GB, 2) if used is not None else None,
         "tokens_per_s": number(data.get("tokens_per_s")),
         "metrics_age_s": round(age_s, 1) if age_s is not None else None,
     }
+    if "model" not in data:
+        payload["running_reason"] = (
+            "metrics carries no model key; the snapshot does not say what is loaded"
+        )
     if total is not None:
         payload["vram_total_gb"] = round(total / MIB_PER_GB, 2)
     queue = number(data.get("queue"))
     if queue is not None:
         payload["queue"] = int(queue)
     payload["stale"] = (age_s > STALE_AFTER_S) if age_s is not None else None
+    snapshot_ts = iso(number(data.get("ts")))
+    payload["snapshot_ts"] = snapshot_ts
+    if snapshot_ts is None:
+        payload["snapshot_ts_reason"] = "metrics carries no ts"
     slots, slots_reason = parse_slots(data)
     payload["slots"] = slots
     if slots is None:
@@ -524,18 +572,28 @@ def metrics_payload(data, age_s, source, generated_at):
     else:
         payload["slot_occupancy"] = slot_occupancy(data, slots)
     if age_s is None:
-        payload["metrics_age_reason"] = "metrics carries no age_s; fixture mode never reads the host clock"
+        if source == "fixture":
+            payload["metrics_age_reason"] = (
+                "fixture mode reads no clock; age and stale are not measured"
+            )
+        else:
+            payload["metrics_age_reason"] = (
+                "cannot read the metrics file's mtime; age and stale are not measured"
+            )
     if generated_at is None:
         payload["generated_at_reason"] = "metrics carries no ts"
     return payload
 
 
 def load_metrics(ctx):
-    """-> (raw metrics dict, age_s, source, generated_at). Reads only."""
+    """-> (raw metrics dict, age_s, source, generated_at). Reads only.
+
+    Fixture mode reads no clock at all: the age is None and the payload says
+    why. On the live path the age is the metrics file's mtime age, as in F7.
+    """
     if opt(ctx, "fixture"):
         data = fixture_metrics(ctx)
-        age = number(pick(data, "age_s", "metrics_age_s"))
-        return data, age, "fixture", iso(number(data.get("ts"))), None
+        return data, None, "fixture", iso(number(data.get("ts"))), None
     path = metrics_path(ctx)
     data = read_json(path, "chief metrics file")
     if not isinstance(data, dict):
@@ -596,6 +654,24 @@ def inflight_rows(payload):
     if slots is None:
         return None
     return [row for row in slots if row.get("busy") is True]
+
+
+def unknown_slots(payload):
+    """Slot rows whose busy flag is absent: the metrics cannot say. Unknown counts as unknown."""
+    slots = payload.get("slots")
+    if slots is None:
+        return []
+    return [row for row in slots if row.get("busy") is None]
+
+
+def slot_label(row):
+    """One slot in a sentence: 'slot 1 request req_7f3a (session chief-voice/...)'."""
+    label = "slot %s" % row.get("slot")
+    if row.get("request_id"):
+        label += " request %s" % row["request_id"]
+    if row.get("session"):
+        label += " (session %s)" % row["session"]
+    return label
 
 
 def reload_cost(data):
@@ -675,6 +751,8 @@ def vram_payload(ctx=None):
         "ok": True,
         "source": source,
         "generated_at": generated_at,
+        "action": "localai.vram",
+        "class": CLASSES["localai.vram"],
         "processes": parsed,
         "count": len(parsed),
         "total_mib": total_mib,
@@ -772,6 +850,8 @@ def models_payload(ctx=None):
         "ok": True,
         "source": source,
         "generated_at": generated_at,
+        "action": "localai.models",
+        "class": CLASSES["localai.models"],
         "models": parsed,
         "count": len(parsed),
         "bytes": total_bytes,
@@ -790,21 +870,35 @@ def models_payload(ctx=None):
 # ----------------------------------------------------------------------- plans
 
 
-def _plan_generated_at(ctx):
-    if opt(ctx, "fixture"):
-        try:
-            data = fixture_json(ctx)
-        except DataProblem:
-            return None
-        return iso(number(data.get("ts"))) if isinstance(data, dict) else None
-    return iso_now()
+def generated_at(ctx):
+    """The stamp a payload carries: now on the live path, the fixture's own ts in fixture mode.
+
+    The feeds brief forbids reading host state in fixture mode, so a fixture
+    without a ts gets null and a reason rather than a plausible-looking clock.
+    """
+    if not opt(ctx, "fixture"):
+        return iso_now()
+    try:
+        data = fixture_json(ctx)
+    except DataProblem:
+        return None
+    return iso(number(data.get("ts"))) if isinstance(data, dict) else None
+
+
+def add_generated_at(payload, ctx):
+    """Put generated_at on a payload, with a reason when a fixture cannot supply one."""
+    payload["generated_at"] = generated_at(ctx)
+    if payload["generated_at"] is None:
+        payload["generated_at_reason"] = (
+            "no fixture ts: fixture mode never reads the host clock"
+        )
+    return payload
 
 
 def base_plan(action, ctx, items, would, bytes_total=None, bytes_reason=None, **extra):
     payload = {
         "ok": True,
         "source": action_source(ctx),
-        "generated_at": _plan_generated_at(ctx),
         "action": action,
         "class": CLASSES[action],
         "linux_only": LINUX_ONLY[action],
@@ -813,6 +907,7 @@ def base_plan(action, ctx, items, would, bytes_total=None, bytes_reason=None, **
         "count": len(items),
         "bytes": bytes_total,
     }
+    add_generated_at(payload, ctx)
     if bytes_total is None and bytes_reason:
         payload["bytes_reason"] = bytes_reason
     payload["would"] = would
@@ -821,10 +916,9 @@ def base_plan(action, ctx, items, would, bytes_total=None, bytes_reason=None, **
 
 
 def plan_failure(action, ctx, reason, kind="data"):
-    return {
+    payload = {
         "ok": False,
         "source": action_source(ctx),
-        "generated_at": _plan_generated_at(ctx),
         "action": action,
         "class": CLASSES[action],
         "linux_only": LINUX_ONLY[action],
@@ -835,6 +929,7 @@ def plan_failure(action, ctx, reason, kind="data"):
         "count": 0,
         "bytes": None,
     }
+    return add_generated_at(payload, ctx)
 
 
 def host_refusal(action):
@@ -914,6 +1009,7 @@ def plan_unload(ctx=None):
         )
 
     inflight = inflight_rows(snap)
+    unknown = unknown_slots(snap)
     used_mib = number(data.get("vram_used_mib"))
     file_bytes = None
     try:
@@ -925,7 +1021,9 @@ def plan_unload(ctx=None):
     except DataProblem:
         file_bytes = None
 
-    busy = inflight[0] if inflight else None
+    # Name the caller in the way: the first busy row, else the first row whose
+    # state is unknown (an unknown row is never treated as idle).
+    first = inflight[0] if inflight else (unknown[0] if unknown else None)
     item = {
         "model": model,
         "vram_freed_mib": int(used_mib) if used_mib is not None else None,
@@ -934,10 +1032,11 @@ def plan_unload(ctx=None):
         "reload_cost_s": reload_s,
         "reload_cost_source": reload_source,
         "model_file_bytes": file_bytes,
-        "session": busy.get("session") if busy else None,
-        "request_id": busy.get("request_id") if busy else None,
+        "session": first.get("session") if first else None,
+        "request_id": first.get("request_id") if first else None,
         "sessions": sorted({row["session"] for row in (inflight or []) if row.get("session")}),
         "slots_busy": len(inflight) if inflight is not None else None,
+        "slots_unknown": len(unknown),
     }
     if reload_s is None:
         item["reload_cost_reason"] = "metrics carries no model_load_s"
@@ -948,14 +1047,20 @@ def plan_unload(ctx=None):
         requires_force = True
         force_reason = "%d request(s) in flight: %s" % (
             len(inflight),
-            ", ".join(
-                "slot %s request %s%s" % (
-                    row.get("slot"),
-                    row.get("request_id") or "unknown",
-                    (" (%s)" % row["session"]) if row.get("session") else "",
-                )
-                for row in inflight
-            ),
+            ", ".join(slot_label(row) for row in inflight),
+        )
+        if unknown:
+            force_reason += "; %s carries no busy flag, so more may be in flight" % ", ".join(
+                "slot %s" % row.get("slot") for row in unknown
+            )
+    elif unknown:
+        requires_force = True
+        force_reason = (
+            "%d slot(s) carry no busy flag (%s): unknown counts as unknown, so a request "
+            "may be in flight" % (
+                len(unknown),
+                ", ".join(slot_label(row) for row in unknown),
+            )
         )
     else:
         requires_force, force_reason = False, None
@@ -972,6 +1077,8 @@ def plan_unload(ctx=None):
     }
     if force_reason:
         extra["force_reason"] = force_reason
+    if unknown:
+        extra["in_flight_unknown"] = unknown
     if inflight is None:
         extra["in_flight_reason"] = "metrics.json carries no slots array"
     return base_plan(
@@ -1054,10 +1161,15 @@ def plan_clear_slot(ctx=None):
     }
     extra = {
         "slot_url": url,
-        "requires_force": busy is True,
+        "requires_force": busy is not False,
     }
     if busy is True:
         extra["force_reason"] = "request %s is in flight in that slot" % (target.get("request_id") or "unknown")
+    elif busy is None:
+        extra["force_reason"] = (
+            "metrics.json gives no busy flag for slot %s: unknown counts as unknown, so a "
+            "request may be in flight" % target.get("slot")
+        )
     return base_plan(
         action, ctx, [item],
         "POST %s; the slot keeps its place and the model stays loaded, only the cached prompt goes"
@@ -1081,8 +1193,8 @@ def plan_vram(ctx=None):
         action, ctx, data["processes"],
         "run nvidia-smi --query-compute-apps=pid,process_name,used_memory and report VRAM "
         "per process; read only, nothing is unloaded",
-        bytes_total=data.get("total_bytes"),
-        bytes_reason=None if data.get("total_bytes") is not None else data.get("total_reason"),
+        bytes_total=None,
+        bytes_reason="VRAM, not disk: the GPU figure is not a file size (see total_mib and total_gb)",
         total_mib=data.get("total_mib"),
         total_gb=data.get("total_gb"),
     )
@@ -1109,11 +1221,10 @@ def plan_models(ctx=None):
 # ------------------------------------------------------------------- run paths
 
 
-def refusal(action, reason, kind="data", **extra):
+def refusal(ctx, action, reason, kind="data", **extra):
     payload = {
         "ok": False,
-        "source": "live",
-        "generated_at": iso_now(),
+        "source": action_source(ctx),
         "action": action,
         "class": CLASSES[action],
         "linux_only": LINUX_ONLY[action],
@@ -1122,26 +1233,23 @@ def refusal(action, reason, kind="data", **extra):
         "changed": False,
     }
     payload.update(extra)
-    return payload
+    return add_generated_at(payload, ctx)
 
 
 def run_refusal(ctx, action, reason, kind="data", **extra):
-    payload = refusal(action, reason, kind, **extra)
-    payload["source"] = action_source(ctx)
-    return payload
+    return refusal(ctx, action, reason, kind, **extra)
 
 
-def done(action, **fields):
+def done(ctx, action, **fields):
     payload = {
         "ok": True,
-        "source": "live",
-        "generated_at": iso_now(),
+        "source": action_source(ctx),
         "action": action,
         "class": CLASSES[action],
         "changed": True,
     }
     payload.update(fields)
-    return payload
+    return add_generated_at(payload, ctx)
 
 
 def confirm_guard(action, confirm, ctx=None):
@@ -1182,9 +1290,7 @@ def run_status(ctx=None, confirm=None):
     try:
         return status_payload(ctx)
     except DataProblem as exc:
-        payload = refusal("localai.status", exc.reason, kind=exc.kind)
-        payload["source"] = action_source(ctx)
-        return payload
+        return refusal(ctx, "localai.status", exc.reason, kind=exc.kind)
 
 
 def run_unload(ctx=None, confirm=None):
@@ -1203,9 +1309,13 @@ def run_unload(ctx=None, confirm=None):
     model = snap.get("model")
     reload_s, reload_source = reload_cost(data)
     if not snap.get("running"):
-        return done(action, changed=False, model=None, reason="no model is loaded; nothing to unload")
+        return done(
+            ctx, action, changed=False, model=None,
+            reason="no model is loaded; nothing to unload",
+        )
 
     inflight = inflight_rows(snap)
+    unknown = unknown_slots(snap)
     force = bool(opt(ctx, "force", False))
     if inflight is None and not force:
         return run_refusal(
@@ -1217,24 +1327,37 @@ def run_unload(ctx=None, confirm=None):
             in_flight=None,
         )
     if inflight and not force:
+        more = ""
+        if unknown:
+            more = "; %s carries no busy flag, so more may be in flight" % ", ".join(
+                "slot %s" % row.get("slot") for row in unknown
+            )
         return run_refusal(
             ctx, action,
-            "refusing to unload %s while %d request(s) are in flight (%s); pass --force to "
+            "refusing to unload %s while %d request(s) are in flight (%s)%s; pass --force to "
             "unload anyway" % (
                 model,
                 len(inflight),
-                ", ".join(
-                    "slot %s request %s%s" % (
-                        row.get("slot"),
-                        row.get("request_id") or "unknown",
-                        (" session %s" % row["session"]) if row.get("session") else "",
-                    )
-                    for row in inflight
-                ),
+                ", ".join(slot_label(row) for row in inflight),
+                more,
             ),
             kind="inflight",
             model=model,
             in_flight=inflight,
+            in_flight_unknown=unknown or None,
+        )
+    if unknown and not force:
+        return run_refusal(
+            ctx, action,
+            "refusing to unload %s: metrics.json gives no busy flag for %s, so a request may "
+            "be in flight (unknown counts as unknown); pass --force to unload anyway" % (
+                model,
+                ", ".join(slot_label(row) for row in unknown),
+            ),
+            kind="inflight",
+            model=model,
+            in_flight=[],
+            in_flight_unknown=unknown,
         )
     if opt(ctx, "fixture"):
         return run_refusal(
@@ -1245,7 +1368,18 @@ def run_unload(ctx=None, confirm=None):
         )
 
     url = "%s/api/models/unload/%s" % (llama_swap_url(ctx), str(model).replace("/", "%2F"))
-    status, body = _http_post(url)
+    try:
+        status, body = _http_post(url)
+    except DataProblem as exc:
+        # The request may have reached llama-swap before the transport failed:
+        # an unload that cannot be confirmed is never reported as a clean no-op.
+        return run_refusal(
+            ctx, action,
+            "outcome unknown: the request may have been sent; %s" % exc.reason,
+            kind="unreachable",
+            model=model,
+            url=url,
+        )
     if not 200 <= status < 300:
         return run_refusal(
             ctx, action,
@@ -1255,6 +1389,7 @@ def run_unload(ctx=None, confirm=None):
             http_status=status,
         )
     return done(
+        ctx,
         action,
         model=model,
         url=url,
@@ -1298,7 +1433,8 @@ def run_clear_slot(ctx=None, confirm=None):
             kind="caller",
         )
     force = bool(opt(ctx, "force", False))
-    if target.get("busy") is True and not force:
+    busy = target.get("busy")
+    if busy is True and not force:
         return run_refusal(
             ctx, action,
             "refusing to erase slot %s while request %s is in flight (%s); pass --force to "
@@ -1306,6 +1442,17 @@ def run_clear_slot(ctx=None, confirm=None):
                 target.get("slot"),
                 target.get("request_id") or "unknown",
                 target.get("session") or "unknown session",
+            ),
+            kind="inflight",
+            slot=target,
+        )
+    if busy is None and not force:
+        return run_refusal(
+            ctx, action,
+            "refusing to erase slot %s: metrics.json gives no busy flag for it%s, so a request "
+            "may be in flight (unknown counts as unknown); pass --force to erase anyway" % (
+                target.get("slot"),
+                (" (request %s)" % target["request_id"]) if target.get("request_id") else "",
             ),
             kind="inflight",
             slot=target,
@@ -1319,7 +1466,18 @@ def run_clear_slot(ctx=None, confirm=None):
         )
 
     url = "%s/slots/%s?action=erase" % (slot_base_url(ctx), target.get("slot"))
-    status, body = _http_post(url)
+    try:
+        status, body = _http_post(url)
+    except DataProblem as exc:
+        # Same rule as unload: the erase may have landed before the transport
+        # failed, so the answer is "unknown", never "nothing happened".
+        return run_refusal(
+            ctx, action,
+            "outcome unknown: the request may have been sent; %s" % exc.reason,
+            kind="unreachable",
+            slot=target.get("slot"),
+            url=url,
+        )
     if not 200 <= status < 300:
         return run_refusal(
             ctx, action,
@@ -1353,7 +1511,7 @@ def run_vram(ctx=None, confirm=None):
     if guard:
         return guard
     try:
-        return cached_read(ctx, "vram", vram_payload)
+        return cached_read(ctx, "vram", vram_payload, read_identity(ctx, "vram"))
     except DataProblem as exc:
         return run_refusal(ctx, action, exc.reason, kind=exc.kind)
 
@@ -1364,7 +1522,7 @@ def run_models(ctx=None, confirm=None):
     if guard:
         return guard
     try:
-        return cached_read(ctx, "models", models_payload)
+        return cached_read(ctx, "models", models_payload, read_identity(ctx, "models"))
     except DataProblem as exc:
         return run_refusal(ctx, action, exc.reason, kind=exc.kind)
 
@@ -1413,7 +1571,7 @@ ACTIONS = {
 def list_payload():
     return {
         "ok": True,
-        "source": "local",
+        "source": SOURCE,
         "generated_at": iso_now(),
         "module": MODULE,
         "actions": {
@@ -1431,7 +1589,14 @@ def list_payload():
 
 
 def append_log(path, payload):
-    """One JSONL row per run. Never raises; a log failure is not an action failure."""
+    """One JSONL row per run. Never raises; a log failure is not an action failure.
+
+    The cache file is written temp-plus-``os.replace``; this log is the one
+    deliberate exception, appended with ``open(..., "a")``. A run log is an
+    append-only history: each row is one short line written in a single call,
+    so rows cannot interleave with themselves, and rewriting the whole file to
+    add a line would risk losing rows a concurrent run just wrote.
+    """
     row = {
         "ts": iso_now(),
         "action": payload.get("action"),
@@ -1474,7 +1639,34 @@ def _run_child(argv, env=None):
 
 F7_STATUS_KEYS = (
     "running", "model", "vram_gb", "tokens_per_s", "metrics_age_s", "stale",
+    "metrics_age_reason", "snapshot_ts",
 )
+
+
+def file_digest(path):
+    """sha256 of a file, or None when it is absent (used to prove a log was untouched)."""
+    try:
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unreadable"
+
+
+def real_home():
+    """The account's home directory, even when the caller sandboxed $HOME."""
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, KeyError, OSError):
+        return HOME
+
+
+def check_log_path():
+    """The live audit log the self-check must never write to."""
+    return os.path.join(real_home(), ".local", "state", "nexuslink", "hudfix.log")
 
 
 def self_check(args):
@@ -1495,6 +1687,18 @@ def self_check(args):
     sandbox_cache = os.path.join(root, "sandbox-cache.json")
     sandbox_log = os.path.join(root, "sandbox-hudfix.log")
 
+    # Nothing a test does may land in the live audit log. Two locks: every
+    # child runs with HOME pointed at this temp root (so the default log and
+    # cache expand inside it), and the real default log is hashed before and
+    # after the run so the claim is measured, not assumed.
+    live_log = os.path.abspath(check_log_path())
+    live_log_before = file_digest(live_log)
+    child_home = os.path.join(root, "home")
+    os.makedirs(child_home, exist_ok=True)
+    global _CHILD_ENV, _http_post, host_is_linux
+    _CHILD_ENV = dict(os.environ, HOME=child_home)
+    sandbox_default_log = os.path.join(child_home, ".local", "state", "nexuslink", "hudfix.log")
+
     # 1. registry shape, exactly the five keys the contract names
     shape_ok = True
     detail = ""
@@ -1513,19 +1717,66 @@ def self_check(args):
             shape_ok, detail = False, "%s linux_only is not a bool" % name
     check("ACTIONS: five actions, exact shape, classes from the four", shape_ok, detail)
 
+    # 1b. a slot row with no busy key counts as unknown, never as idle: the
+    #     in-flight guard fails closed for unload and clear-slot both
+    nobusy = os.path.join(root, "nobusy.json")
+    try:
+        with open(shipped, encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+        for row in snapshot.get("slots") or []:
+            row.pop("busy", None)
+        with open(nobusy, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        nobusy_ok = True
+    except (OSError, ValueError, TypeError):
+        nobusy_ok = False
+    plan_rc, unknown_plan, _, _ = _run_child([
+        "--json", "plan", "localai.unload", "--fixture", nobusy,
+    ])
+    unload_rc, unknown_unload, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", nobusy,
+    ])
+    slot_rc, unknown_slot, _, _ = _run_child([
+        "--json", "run", "localai.clear-slot", "--slot", "1", "--confirm", "localai.clear-slot",
+        "--fixture", nobusy,
+    ])
+    check(
+        "a slot with no busy key is unknown: plan needs --force, unload and clear-slot refuse kind inflight",
+        nobusy_ok
+        and plan_rc == 0 and isinstance(unknown_plan, dict)
+        and unknown_plan.get("requires_force") is True
+        and unknown_plan.get("in_flight") == []
+        and len(unknown_plan.get("in_flight_unknown") or []) == 2
+        and unload_rc == 2 and isinstance(unknown_unload, dict)
+        and unknown_unload.get("kind") == "inflight"
+        and "no busy flag" in str(unknown_unload.get("reason", ""))
+        and "req_7f3a" in str(unknown_unload.get("reason", ""))
+        and slot_rc == 2 and isinstance(unknown_slot, dict)
+        and unknown_slot.get("kind") == "inflight"
+        and "no busy flag" in str(unknown_slot.get("reason", "")),
+        "plan=%r unload=%r slot=%r" % (unknown_plan, unknown_unload, unknown_slot),
+    )
+
     # 2. shipped fixture status shape and F7 key parity
     rc, payload, _, err = _run_child(["--json", "run", "localai.status", "--fixture", shipped])
+    try:
+        shipped_ts = iso(number(json.load(open(shipped, encoding="utf-8")).get("ts")))
+    except (OSError, ValueError, TypeError):
+        shipped_ts = None
     ok = (
         rc == 0 and isinstance(payload, dict) and payload.get("ok") is True
         and payload.get("source") == "fixture"
         and all(key in payload for key in F7_STATUS_KEYS)
         and payload.get("model") == "ornith-chief-v3"
         and payload.get("running") is True
-        and isinstance(payload.get("metrics_age_s"), float)
+        and payload.get("metrics_age_s") is None
+        and payload.get("stale") is None
+        and payload.get("metrics_age_reason") == "fixture mode reads no clock; age and stale are not measured"
+        and payload.get("snapshot_ts") == shipped_ts
         and payload.get("slots") is not None
         and payload.get("slot_occupancy") == {"used": 1, "total": 2}
     )
-    check("shipped fixture run localai.status: F7 keys + slots", ok, "rc=%s err=%r payload=%r" % (rc, err[-200:], payload))
+    check("shipped fixture run localai.status: F7 keys, F7 fixture semantics, slots", ok, "rc=%s err=%r payload=%r" % (rc, err[-200:], payload))
 
     try:
         used_mib = float(json.load(open(shipped, encoding="utf-8")).get("vram_used_mib"))
@@ -1549,6 +1800,39 @@ def self_check(args):
         "out1=%r out2=%r" % (out1[:160], out2[:160]),
     )
     check("fixture read writes no cache file", not os.path.exists(sandbox_cache), sandbox_cache)
+
+    # 3b. a fixture refusal and a fixture no-op take generated_at from the
+    #     fixture's ts, report source fixture, and are byte-identical; every
+    #     envelope source is fixture or live, never "local" or "localai"
+    rc1, ref1, ref_out1, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload",
+        "--force", "--fixture", shipped,
+    ])
+    rc2, ref2, ref_out2, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload",
+        "--force", "--fixture", shipped,
+    ])
+    idle1_rc, idle1, idle_out1, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", idle_fixture,
+    ])
+    idle2_rc, idle2, idle_out2, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", idle_fixture,
+    ])
+    try:
+        idle_ts = iso(number(json.load(open(idle_fixture, encoding="utf-8")).get("ts")))
+    except (OSError, ValueError, TypeError):
+        idle_ts = None
+    check(
+        "fixture refusal and no-op: source fixture, generated_at from the fixture ts, byte-identical",
+        rc1 == 2 and rc1 == rc2 and ref_out1 == ref_out2
+        and isinstance(ref1, dict) and ref1.get("source") == "fixture"
+        and ref1.get("generated_at") == shipped_ts
+        and idle1_rc == 0 and idle1_rc == idle2_rc and idle_out1 == idle_out2
+        and isinstance(idle1, dict) and idle1.get("source") == "fixture"
+        and idle1.get("changed") is False and idle1.get("generated_at") == idle_ts
+        and list_payload().get("source") == "live",
+        "ref=%r idle=%r" % (ref1, idle1),
+    )
 
     # 4. partial object, empty, malformed, missing
     partial = os.path.join(root, "partial.json")
@@ -1643,6 +1927,23 @@ def self_check(args):
         rc == 0 and isinstance(gone, dict) and gone.get("ok") is False
         and "chief metrics" in str(gone.get("reason", "")),
         "rc=%s payload=%r" % (rc, gone),
+    )
+
+    # 6d. the 10 s read cache expires: after the TTL the builder runs again
+    ttl_calls = []
+    ttl_cache = os.path.join(root, "ttl-cache.json")
+
+    def _ttl_builder(_ctx):
+        ttl_calls.append(1)
+        return {"ok": True, "source": "live", "generated_at": iso_now(), "count": 0}
+
+    cached_read({"cache": ttl_cache}, "ttl", _ttl_builder)
+    time.sleep(CACHE_TTL_S + 0.4)
+    expired = cached_read({"cache": ttl_cache}, "ttl", _ttl_builder)
+    check(
+        "the 10 s read cache expires: past the TTL the builder runs again",
+        len(ttl_calls) == 2 and isinstance(expired, dict) and expired.get("cached") is False,
+        "calls=%d payload=%r" % (len(ttl_calls), expired),
     )
 
     # 7. plan purity: every plan in fixture mode leaves the sandbox untouched
@@ -1740,12 +2041,15 @@ def self_check(args):
         "plan=%r" % (clear_plan,),
     )
 
-    # 11. vram and models plans carry exact bytes
+    # 11. vram and models plans: exact VRAM totals, but bytes is null (VRAM is not disk)
     vram_plan = plans.get("localai.vram") or {}
     check(
-        "vram plan sums nvidia-smi rows exactly",
+        "vram plan sums nvidia-smi rows exactly, bytes null with a reason",
         vram_plan.get("ok") is True and vram_plan.get("count") == 2
-        and vram_plan.get("bytes") == int(11012 * 1024 * 1024),
+        and vram_plan.get("total_mib") == 11012.0
+        and vram_plan.get("total_gb") == 10.75
+        and vram_plan.get("bytes") is None
+        and "VRAM, not disk" in str(vram_plan.get("bytes_reason", "")),
         "plan=%r" % (vram_plan,),
     )
     models_plan = plans.get("localai.models") or {}
@@ -1846,7 +2150,10 @@ def self_check(args):
         "rc=%s payload=%r" % (rc, payload),
     )
 
-    # 18. linux_only refusals are honest on this Mac (skipped on the Linux box)
+    # 18. linux_only refusals are honest on this Mac (skipped on the Linux box).
+    #     A test never invokes the destructive form: `run <name>` goes out with
+    #     NO confirm token, so a reversible action stops at the confirm guard and
+    #     a read action stops at the host guard. Nothing here can reach a model.
     if not host_is_linux():
         refused = True
         detail = ""
@@ -1859,18 +2166,29 @@ def self_check(args):
             ):
                 refused, detail = False, "%s plan: rc=%s payload=%r" % (name, rc, payload)
                 break
-            rc, payload, _, _ = _run_child([
-                "--json", "run", name, "--confirm", name, "--force",
-            ])
-            if not (rc == 2 and isinstance(payload, dict) and payload.get("kind") == "host"):
-                refused, detail = False, "%s run: rc=%s payload=%r" % (name, rc, payload)
+            rc, payload, _, _ = _run_child(["--json", "run", name])
+            if CLASSES[name] == "read":
+                # honest absence on the wrong host: ok:false, kind host, exit 0
+                if not (
+                    rc == 0 and isinstance(payload, dict) and payload.get("ok") is False
+                    and payload.get("kind") == "host"
+                ):
+                    refused, detail = False, "%s read run: rc=%s payload=%r" % (name, rc, payload)
+                    break
+            elif not (
+                rc == 2 and isinstance(payload, dict) and payload.get("kind") == "confirm"
+            ):
+                refused, detail = False, "%s run without confirm: rc=%s payload=%r" % (name, rc, payload)
                 break
-        check("every linux_only action refuses honestly on this Mac (plan 0, run 2)", refused, detail)
+        check(
+            "every linux_only action refuses honestly on this Mac (plan 0 kind host; "
+            "read run 0 kind host; reversible run without confirm 2)",
+            refused, detail,
+        )
     else:
         check("linux_only host refusal (skipped: this host is Linux)", True, "running on Linux")
 
     # 19. no network: monkeypatch the poster, run every fixture path, expect zero calls
-    global _http_post
     real_post = _http_post
     calls = []
 
@@ -1926,6 +2244,91 @@ def self_check(args):
         len(rows) == 1 and rows[0].get("action") == "localai.unload"
         and rows[0].get("ok") is False and rows[0].get("class") == "reversible",
         "rows=%r" % (rows,),
+    )
+
+    # 22. a POST that cannot reach the host is "outcome unknown": exit 2, ok:false,
+    #     and the run log still gets its row, because the request may have been sent
+    dead_metrics = os.path.join(root, "dead-metrics.json")
+    with open(dead_metrics, "w", encoding="utf-8") as handle:
+        json.dump({"ts": time.time(), "model": "ornith-chief-v3", "vram_used_mib": 11012,
+                   "slots": [{"slot": 0, "busy": False}]}, handle)
+    dead_log = os.path.join(root, "dead.log")
+    real_linux, real_poster = host_is_linux, _http_post
+
+    def _dead_poster(url, timeout=HTTP_TIMEOUT_S):
+        raise Missing("cannot reach %s: [Errno 61] Connection refused" % url)
+
+    host_is_linux = lambda: True
+    _http_post = _dead_poster
+    buffer = io.StringIO()
+    try:
+        with redirect_stdout(buffer):
+            dead_rc = main([
+                "--json", "run", "localai.unload", "--confirm", "localai.unload",
+                "--metrics", dead_metrics, "--log", dead_log,
+                "--cache", os.path.join(root, "dead-cache.json"),
+            ])
+    finally:
+        host_is_linux, _http_post = real_linux, real_poster
+    try:
+        dead_payload = json.loads(buffer.getvalue())
+    except ValueError:
+        dead_payload = None
+    dead_rows = []
+    try:
+        with open(dead_log, encoding="utf-8") as handle:
+            dead_rows = [json.loads(line) for line in handle if line.strip()]
+    except (OSError, ValueError):
+        dead_rows = []
+    check(
+        "an unreachable POST is outcome unknown: exit 2, ok:false, and a log row",
+        dead_rc == 2 and isinstance(dead_payload, dict)
+        and dead_payload.get("ok") is False and dead_payload.get("kind") == "unreachable"
+        and "outcome unknown" in str(dead_payload.get("reason", ""))
+        and len(dead_rows) == 1 and dead_rows[0].get("ok") is False,
+        "rc=%s payload=%r rows=%r" % (dead_rc, dead_payload, dead_rows),
+    )
+
+    # 23. the read cache is keyed on the source, not just the action name: a
+    #     models_dir change inside the TTL is re-read, never served the other
+    #     directory's answer (2 files / 150 B, then 1 file / 7 B)
+    dir_a = os.path.join(root, "models-a")
+    dir_b = os.path.join(root, "models-b")
+    os.makedirs(dir_a, exist_ok=True)
+    os.makedirs(dir_b, exist_ok=True)
+    for name, size in (("a-one.gguf", 150), ("a-two.gguf", 0)):
+        with open(os.path.join(dir_a, name), "wb") as handle:
+            handle.write(b"x" * size)
+    with open(os.path.join(dir_b, "b-one.gguf"), "wb") as handle:
+        handle.write(b"x" * 7)
+    models_cache = os.path.join(root, "models-cache.json")
+    missing_metrics = os.path.join(root, "no-metrics-for-models.json")
+    real_linux_host = host_is_linux
+    host_is_linux = lambda: True
+    try:
+        with redirect_stdout(io.StringIO()):
+            models_a = run_models({"models_dir": dir_a, "cache": models_cache, "metrics": missing_metrics})
+            models_b = run_models({"models_dir": dir_b, "cache": models_cache, "metrics": missing_metrics})
+    finally:
+        host_is_linux = real_linux_host
+    check(
+        "a models_dir change inside the 10 s TTL is re-read (cache key follows the source)",
+        models_a.get("count") == 2 and models_a.get("bytes") == 150
+        and models_a.get("cached") is False
+        and models_b.get("count") == 1 and models_b.get("bytes") == 7
+        and models_b.get("cached") is False,
+        "a=%r b=%r" % (models_a, models_b),
+    )
+
+    # 24. the live audit log is exactly as it was: every child ran under the
+    #     temp HOME above, so its default log went there instead
+    live_log_after = file_digest(live_log)
+    check(
+        "the self-check writes to its temp HOME, never to the live audit log",
+        live_log_before == live_log_after and os.path.exists(sandbox_default_log),
+        "live_before=%r live_after=%r sandbox_log=%r path=%r" % (
+            live_log_before, live_log_after, os.path.exists(sandbox_default_log), sandbox_default_log,
+        ),
     )
 
     shutil.rmtree(root, ignore_errors=True)
@@ -1997,7 +2400,7 @@ def main(argv=None):
 
     if args.command not in ("plan", "run"):
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(),
+            {"ok": False, "source": action_source(args), "generated_at": iso_now(),
              "reason": "choose one of: list, plan <action>, run <action>, --self-check"},
             getattr(args, "json", False),
         )
@@ -2006,7 +2409,7 @@ def main(argv=None):
     action = args.action
     if action not in ACTIONS:
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(), "action": action,
+            {"ok": False, "source": action_source(args), "generated_at": iso_now(), "action": action,
              "reason": "unknown action %r; known: %s" % (action, ", ".join(ORDER))},
             args.json,
         )
@@ -2022,24 +2425,32 @@ def main(argv=None):
         append_log(args.log, payload)
         emit(payload, args.json)
         if CLASSES[action] == "read":
-            return EXIT_PROGRAMMING if payload.get("kind") in ("caller", "programming", "host") else EXIT_OK
+            # Honest absence is exit 0, including a linux_only read refused on
+            # the wrong host; only a bad argument or a broken run is exit 2.
+            return EXIT_PROGRAMMING if payload.get("kind") in ("caller", "programming") else EXIT_OK
         return EXIT_OK if payload.get("ok") else EXIT_PROGRAMMING
     except DataProblem as exc:
         payload = {
-            "ok": False, "source": action_source(args), "generated_at": iso_now(),
+            "ok": False, "source": action_source(args),
             "action": action, "reason": tilde_text(exc.reason), "kind": exc.kind,
         }
+        add_generated_at(payload, args)
+        if args.command == "run":
+            append_log(args.log, payload)
         emit(payload, args.json)
         return EXIT_PROGRAMMING if isinstance(exc, Caller) else EXIT_OK
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:  # noqa: BLE001
-        emit(
-            {"ok": False, "source": action_source(args), "generated_at": iso_now(),
-             "action": action, "kind": "programming",
-             "reason": tilde_text("programming error: %s: %s" % (type(exc).__name__, exc))},
-            args.json,
-        )
+        payload = {
+            "ok": False, "source": action_source(args),
+            "action": action, "kind": "programming",
+            "reason": tilde_text("programming error: %s: %s" % (type(exc).__name__, exc)),
+        }
+        add_generated_at(payload, args)
+        if args.command == "run":
+            append_log(args.log, payload)
+        emit(payload, args.json)
         return EXIT_PROGRAMMING
 
 
