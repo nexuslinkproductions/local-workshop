@@ -65,7 +65,9 @@ with a reason), which includes a `linux_only` read action refused on the wrong
 host; `2` for a bad argument, a named missing fixture, a refusal to act (no
 `--confirm`, a request in flight or unknown in flight, fixture mode, a
 `linux_only` reversible run on the wrong host), or a request whose outcome is
-unknown.
+unknown. A reversible run whose metrics file is missing never acts: it exits
+`2` with `kind: "missing"` (and one audit row), because without the file it
+cannot confirm that nothing is in flight.
 
 ## Key parity with F7 `chief.py` (head a448a2d, branch `v5/f7-callcap-chief`)
 
@@ -135,9 +137,22 @@ with its request id and session:
 
 1. no `--confirm localai.unload` exactly;
 2. live on a non-Linux host (`not this host`);
-3. a request in flight, a slot row with no `busy` key (unknown counts as
-   unknown, never as idle), or metrics with no `slots` array so it cannot tell;
+3. a request in flight, a slot whose `busy` flag is not a real JSON boolean (a
+   missing key, `0`, `1`, `""`, `"false"`, `"yes"`, `[]` or `{}` is unknown, and
+   unknown counts as unknown, never as idle), a slot row that is not an object,
+   an empty slots array beside a declared `slot_count`, a stale live snapshot
+   (older than `STALE_AFTER_S` or with no readable age, so its busy flags
+   describe a moment that has passed), or metrics with no `slots` array so it
+   cannot tell;
 4. `--fixture` (fixture mode never acts).
+
+A stale snapshot is never treated as idle: on the live path every slot becomes
+unknown, so `plan` sets `requires_force` with the age in `force_reason` and
+`run` refuses with `kind: "inflight"` before it builds a URL. `--force` is the
+only way past that guard, and the refusal carries `stale` and `metrics_age_s`
+so the audit row says why. When the snapshot has no `model` key but a slot is
+busy, `unload` does not claim "no model is loaded": the no-op says the loaded
+state is unknown and names the busy slot.
 
 A POST that raises on the transport (connection refused, timeout, no route)
 returns `kind: "unreachable"` with "outcome unknown: the request may have been
@@ -176,11 +191,11 @@ Live mechanisms, both upstream-documented and never exercised in a test:
 
 ```
 $ python3 hudfix_localai.py --self-check
-... 41 checks ...
+... 56 checks ...
 EXIT=0
 ```
 
-It proves, with no model, no GPU, no Linux host and no socket: the registry
+It proves, with no model, no GPU and no Linux host: the registry
 shape and the four classes; the F7 key set, F7 fixture semantics and the 1024
 divisor; fixture output byte-identical across runs with no cache written; a
 partial metrics object, an empty file, a malformed file and a missing named
@@ -191,14 +206,24 @@ side-effect free and deterministic over a hashed sandbox; one plan per action
 with `count`, `bytes` and `would`; the unload
 plan's model/VRAM/reload/session; the clear-slot plan's slot/request/loss;
 exact VRAM and model totals, with `bytes` null for VRAM; the confirm refusal;
-the in-flight refusal with the request id in the reason; the slot with no
-`busy` key counted as unknown (plan needs force, run refuses); `--force`
-getting past the guard into the fixture refusal; the idle no-op; the
-unknown-in-flight refusal; the busy-slot refusal; every `linux_only` read
+the in-flight refusal with the request id in the reason; `busy` values `0`,
+`1`, `""`, `"false"`, `"yes"`, `[]` and `{}`, the `is_processing` alias, a row
+that is not an object, and an empty slots array with `slot_count` 2 all counted
+as unknown (plan needs force, run refuses kind inflight); the control where
+every busy flag is `false` still passing the guard; the stale snapshot refused
+with kind inflight and zero POSTs against a loopback stub; the clear-slot
+success path against that stub (rc 0, one erase POST, one log row); a live
+models read from a temp directory labelled `source: live`; `--force` getting
+past the guard into the fixture refusal; the idle no-op; the no-model-key
+no-op naming the busy slot; the busy-slot refusal; every `linux_only` read
 refusing honestly on this Mac with exit 0 and every reversible run without a
 confirm token stopping at exit 2; a dead POST reported as an unknown outcome
 with exit 2 and a log row; zero `_http_post` calls from any fixture run; and
 one JSONL row per run in the hudfix log.
+
+The only socket the check opens is a loopback HTTP stub it starts itself (and
+shuts down) for the stale and clear-slot success cases; it never reaches
+llama-swap.
 
 Nothing in the self-check can reach the live audit log. Every child process
 runs with `HOME` pointed at the self-check's temp root, so its default log and

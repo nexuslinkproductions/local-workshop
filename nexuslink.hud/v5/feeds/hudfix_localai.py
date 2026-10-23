@@ -75,12 +75,19 @@ work. Its plan names the model, the VRAM it frees, the reload cost, and every
 busy slot with its request id and session. ``run`` refuses without
 ``--confirm localai.unload``, refuses while a request is in flight, and refuses
 when the metrics cannot say whether a request is in flight, unless ``--force``
-is given too. A slot row with no ``busy`` key counts as unknown, never as
-idle, so an incomplete metrics file fails closed. A POST that cannot reach the
-host is reported as an unknown outcome and exits 2, because the request may
-have been sent. ``localai.clear-slot`` applies the same in-flight guard to the
-slot it is about to erase. Nothing here deletes a file. The self-check never
-unloads a model, never opens a socket and never touches a process.
+is given too. Only a real JSON boolean is a busy flag: a missing key, 0, 1,
+"", "false", "yes", [] or {} is unknown, and unknown counts as unknown, so an
+incomplete or contradictory metrics file fails closed. A slot row that is not
+an object is kept as an unknown row at its own index for the same reason. On
+the live path a snapshot older than ``STALE_AFTER_S`` (or one whose age cannot
+be read) makes every slot unknown: a stale file cannot say who is in flight,
+so unload and clear-slot refuse it without ``--force``. A POST that cannot
+reach the host is reported as an unknown outcome and exits 2, because the
+request may have been sent. ``localai.clear-slot`` applies the same in-flight
+guard to the slot it is about to erase. Nothing here deletes a file. The
+self-check never unloads a model and never touches a process; its one HTTP
+stub listens on a loopback port the check opens itself and never reaches
+llama-swap.
 """
 
 from __future__ import annotations
@@ -96,6 +103,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 from contextlib import redirect_stdout
 
 EXIT_OK = 0
@@ -497,25 +505,61 @@ def fixture_metrics(ctx):
 # --------------------------------------------------------------------- metrics
 
 
+def unparsed_row(index, reason):
+    """One slot row that cannot say anything, kept so the guard can still see it."""
+    return {
+        "slot": index,
+        "busy": None,
+        "busy_reason": reason,
+        "request_id": None,
+        "session": None,
+        "model": None,
+        "tokens_cached": None,
+    }
+
+
+def unknown_busy_row(row, reason):
+    """A row whose busy flag cannot be trusted: keep its labels, drop the verdict."""
+    fresh = dict(row)
+    fresh["busy"] = None
+    fresh["busy_reason"] = reason
+    return fresh
+
+
 def parse_slots(data):
-    """metrics.json -> (slots, reason). Tolerates a missing or partial array."""
+    """metrics.json -> (slots, reason). Tolerates a missing or partial array.
+
+    A busy flag is only trusted when it is a real JSON boolean. Anything else
+    (0, 1, "", "false", "yes", [], {}) is unknown, and unknown counts as
+    unknown, so a wrong type is never read as idle. The is_processing alias
+    follows the same rule. A row that is not an object is kept at its own
+    index as an unknown row: a malformed entry must not hide a request from
+    the guard.
+    """
     raw = data.get("slots")
     if not isinstance(raw, list):
         return None, "metrics.json carries no slots array"
     rows = []
     for index, entry in enumerate(raw):
         if not isinstance(entry, dict):
+            rows.append(unparsed_row(index, "the slot row is not a JSON object"))
             continue
         busy = pick(entry, "busy", "is_processing")
         slot_id = integer(pick(entry, "slot", "id_slot"))
-        rows.append({
+        row = {
             "slot": slot_id if slot_id is not None else index,
-            "busy": bool(busy) if busy is not None else None,
+            "busy": busy if isinstance(busy, bool) else None,
             "request_id": text(pick(entry, "request_id", "id_task")),
             "session": text(pick(entry, "session", "session_id", "caller")),
             "model": text(entry.get("model")),
             "tokens_cached": integer(pick(entry, "tokens_cached", "n_past")),
-        })
+        }
+        if not isinstance(busy, bool):
+            row["busy_reason"] = (
+                "the row carries no busy flag" if busy is None
+                else "the busy flag is not true or false"
+            )
+        rows.append(row)
     return rows, None
 
 
@@ -565,7 +609,35 @@ def metrics_payload(data, age_s, source, generated_at):
     if snapshot_ts is None:
         payload["snapshot_ts_reason"] = "metrics carries no ts"
     slots, slots_reason = parse_slots(data)
+    unknown_reason = None
+    if slots is not None:
+        declared = integer(data.get("slot_count"))
+        if not slots and declared and declared > 0:
+            # An empty array beside a declared slot_count contradicts itself:
+            # every declared slot is unknown, never idle.
+            unknown_reason = (
+                "metrics.json declares %d slot(s) but its slots array is empty" % declared
+            )
+            slots = [unparsed_row(index, unknown_reason) for index in range(declared)]
+        elif slots and source == "live":
+            # A snapshot this old cannot say who is in flight now. The file's
+            # own busy flags describe a moment that has passed, so every slot
+            # is unknown on the live path (fixture mode reads no clock).
+            if age_s is None:
+                unknown_reason = (
+                    "the metrics file's age cannot be read, so no slot can say whether a "
+                    "request is in flight"
+                )
+            elif age_s > STALE_AFTER_S:
+                unknown_reason = (
+                    "the snapshot is %.1f s old (> %.1f s), so no slot can say whether a "
+                    "request is in flight" % (age_s, STALE_AFTER_S)
+                )
+            if unknown_reason:
+                slots = [unknown_busy_row(row, unknown_reason) for row in slots]
     payload["slots"] = slots
+    if unknown_reason:
+        payload["slots_unknown_reason"] = unknown_reason
     if slots is None:
         payload["slots_reason"] = slots_reason
         payload["slot_occupancy"] = None
@@ -609,13 +681,32 @@ def load_metrics(ctx):
 
 
 def age_payload(payload, mtime_ns):
-    """Re-derive the age from the file's mtime; a cache hit must not freeze it."""
+    """Re-derive the age from the file's mtime; a cache hit must not freeze it.
+
+    The slots follow the age: once the file is stale, the busy flags cached
+    with it describe a moment that has passed, so every row becomes unknown
+    here too. A cached answer is never allowed to say "idle" about a snapshot
+    the status line already calls stale.
+    """
     fresh = dict(payload)
     if mtime_ns is None:
         return fresh
     age = max(0.0, time.time() - (mtime_ns / 1000000000.0))
     fresh["metrics_age_s"] = round(age, 1)
     fresh["stale"] = age > STALE_AFTER_S
+    if fresh["stale"] and fresh.get("slots"):
+        reason = (
+            "the snapshot is %.1f s old (> %.1f s), so no slot can say whether a request is "
+            "in flight" % (age, STALE_AFTER_S)
+        )
+        fresh["slots"] = [unknown_busy_row(row, reason) for row in fresh["slots"]]
+        fresh["slots_unknown_reason"] = reason
+        if isinstance(fresh.get("slot_occupancy"), dict):
+            occupancy = dict(fresh["slot_occupancy"])
+            occupancy["used"] = len([row for row in fresh["slots"] if row.get("busy") is True])
+            occupancy["unknown"] = len([row for row in fresh["slots"] if row.get("busy") is None])
+            occupancy["reason"] = "metrics.json gives no usable busy flag for %d slot(s)" % occupancy["unknown"]
+            fresh["slot_occupancy"] = occupancy
     return fresh
 
 
@@ -822,6 +913,9 @@ def models_payload(ctx=None):
         if isinstance(data, dict):
             generated_at = iso(number(data.get("ts")))
     else:
+        # This branch reads the host (metrics or the models directory), so the
+        # envelope says live, exactly as the plan for the same read does.
+        source = "live"
         generated_at = iso_now()
         try:
             data, _age, _source, _gen, _mtime = load_metrics(ctx)
@@ -1000,6 +1094,22 @@ def plan_unload(ctx=None):
     reload_s, reload_source = reload_cost(data)
 
     if not snap.get("running"):
+        inflight = inflight_rows(snap)
+        unknown = unknown_slots(snap)
+        if "model" not in data and (inflight or unknown):
+            # No model key means the snapshot does not say what is loaded. Never
+            # turn that silence into "nothing is loaded" while a slot is busy.
+            named = (inflight or unknown)[0]
+            return base_plan(
+                action, ctx, [],
+                "nothing to unload: the snapshot does not say what is loaded (metrics carries "
+                "no model key) and %s is in flight" % slot_label(named),
+                bytes_total=None,
+                bytes_reason="the snapshot does not say what is loaded",
+                noop=True,
+                slots_busy=len(inflight or []),
+                slots_unknown=len(unknown),
+            )
         return base_plan(
             action, ctx, [],
             "nothing to unload: no model is loaded",
@@ -1055,11 +1165,13 @@ def plan_unload(ctx=None):
             )
     elif unknown:
         requires_force = True
+        snapshot_unknown = snap.get("slots_unknown_reason")
         force_reason = (
-            "%d slot(s) carry no busy flag (%s): unknown counts as unknown, so a request "
-            "may be in flight" % (
+            "%d slot(s) carry no busy flag it can trust (%s): %s"
+            % (
                 len(unknown),
                 ", ".join(slot_label(row) for row in unknown),
+                snapshot_unknown or "unknown counts as unknown, so a request may be in flight",
             )
         )
     else:
@@ -1069,12 +1181,14 @@ def plan_unload(ctx=None):
         reload_text = "the next request reloads the model (load time not in metrics)"
     else:
         reload_text = "the next request reloads it in about %.1f s (%s)" % (reload_s, reload_source)
-    url = "%s/api/models/unload/%s" % (llama_swap_url(ctx), str(model).replace("/", "%2F"))
+    url = "%s/api/models/unload/%s" % (llama_swap_url(ctx), urllib.parse.quote(str(model), safe=""))
     extra = {
         "in_flight": inflight,
         "requires_force": requires_force,
         "model_url": url,
     }
+    if snap.get("slots_unknown_reason"):
+        extra["slots_unknown_reason"] = snap["slots_unknown_reason"]
     if force_reason:
         extra["force_reason"] = force_reason
     if unknown:
@@ -1166,9 +1280,11 @@ def plan_clear_slot(ctx=None):
     if busy is True:
         extra["force_reason"] = "request %s is in flight in that slot" % (target.get("request_id") or "unknown")
     elif busy is None:
+        detail = target.get("busy_reason") or snap.get("slots_unknown_reason")
         extra["force_reason"] = (
-            "metrics.json gives no busy flag for slot %s: unknown counts as unknown, so a "
-            "request may be in flight" % target.get("slot")
+            "metrics.json gives no busy flag it can trust for slot %s%s: unknown counts as "
+            "unknown, so a request may be in flight"
+            % (target.get("slot"), (" (%s)" % detail) if detail else "")
         )
     return base_plan(
         action, ctx, [item],
@@ -1309,6 +1425,19 @@ def run_unload(ctx=None, confirm=None):
     model = snap.get("model")
     reload_s, reload_source = reload_cost(data)
     if not snap.get("running"):
+        inflight = inflight_rows(snap)
+        unknown = unknown_slots(snap)
+        if "model" not in data and (inflight or unknown):
+            # The snapshot does not say what is loaded, so this cannot be a
+            # clean "nothing is loaded" no-op while a slot is busy.
+            named = (inflight or unknown)[0]
+            return done(
+                ctx, action, changed=False, model=None, model_known=False,
+                reason="the snapshot does not say what is loaded (metrics carries no model key); "
+                       "%s is in flight, so nothing was unloaded; unknown, not idle" % slot_label(named),
+                in_flight=inflight or [],
+                in_flight_unknown=unknown or None,
+            )
         return done(
             ctx, action, changed=False, model=None,
             reason="no model is loaded; nothing to unload",
@@ -1347,17 +1476,24 @@ def run_unload(ctx=None, confirm=None):
             in_flight_unknown=unknown or None,
         )
     if unknown and not force:
+        detail = snap.get("slots_unknown_reason")
+        if not detail:
+            reasons = sorted({row.get("busy_reason") for row in unknown if row.get("busy_reason")})
+            detail = "; ".join(reasons) if reasons else None
         return run_refusal(
             ctx, action,
-            "refusing to unload %s: metrics.json gives no busy flag for %s, so a request may "
-            "be in flight (unknown counts as unknown); pass --force to unload anyway" % (
+            "refusing to unload %s: metrics.json gives no busy flag it can trust for %s%s, so a "
+            "request may be in flight (unknown counts as unknown); pass --force to unload anyway" % (
                 model,
                 ", ".join(slot_label(row) for row in unknown),
+                (" (%s)" % detail) if detail else "",
             ),
             kind="inflight",
             model=model,
             in_flight=[],
             in_flight_unknown=unknown,
+            metrics_age_s=snap.get("metrics_age_s"),
+            stale=snap.get("stale"),
         )
     if opt(ctx, "fixture"):
         return run_refusal(
@@ -1367,7 +1503,7 @@ def run_unload(ctx=None, confirm=None):
             model=model,
         )
 
-    url = "%s/api/models/unload/%s" % (llama_swap_url(ctx), str(model).replace("/", "%2F"))
+    url = "%s/api/models/unload/%s" % (llama_swap_url(ctx), urllib.parse.quote(str(model), safe=""))
     try:
         status, body = _http_post(url)
     except DataProblem as exc:
@@ -1447,15 +1583,20 @@ def run_clear_slot(ctx=None, confirm=None):
             slot=target,
         )
     if busy is None and not force:
+        detail = target.get("busy_reason") or snap.get("slots_unknown_reason")
         return run_refusal(
             ctx, action,
-            "refusing to erase slot %s: metrics.json gives no busy flag for it%s, so a request "
-            "may be in flight (unknown counts as unknown); pass --force to erase anyway" % (
+            "refusing to erase slot %s: metrics.json gives no busy flag it can trust for it%s%s, "
+            "so a request may be in flight (unknown counts as unknown); pass --force to erase "
+            "anyway" % (
                 target.get("slot"),
                 (" (request %s)" % target["request_id"]) if target.get("request_id") else "",
+                (" (%s)" % detail) if detail else "",
             ),
             kind="inflight",
             slot=target,
+            metrics_age_s=snap.get("metrics_age_s"),
+            stale=snap.get("stale"),
         )
     if opt(ctx, "fixture"):
         return run_refusal(
@@ -1494,6 +1635,7 @@ def run_clear_slot(ctx=None, confirm=None):
     except ValueError:
         erased = None
     return done(
+        ctx,
         action,
         slot=target.get("slot"),
         url=url,
@@ -1571,6 +1713,8 @@ ACTIONS = {
 def list_payload():
     return {
         "ok": True,
+        # The list is the module's static registry, not a read of a fixture or
+        # the host, so it stays live under the two-value envelope rule.
         "source": SOURCE,
         "generated_at": iso_now(),
         "module": MODULE,
@@ -1699,6 +1843,45 @@ def self_check(args):
     _CHILD_ENV = dict(os.environ, HOME=child_home)
     sandbox_default_log = os.path.join(child_home, ".local", "state", "nexuslink", "hudfix.log")
 
+    def run_inproc(argv):
+        """Run main() here, capturing its one JSON line. The caller patches host_is_linux."""
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(argv)
+        try:
+            parsed = json.loads(buffer.getvalue())
+        except ValueError:
+            parsed = None
+        return code, parsed
+
+    def start_stub():
+        """A loopback stub that records POST paths and answers 200 with n_erased 1."""
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        seen = []
+
+        class Stub(BaseHTTPRequestHandler):
+            def do_POST(self):
+                size = int(self.headers.get("Content-Length") or 0)
+                if size:
+                    self.rfile.read(size)
+                seen.append(self.path)
+                body = b'{"n_erased": 1}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *arguments):
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Stub)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, seen, "http://127.0.0.1:%d" % server.server_address[1]
+
     # 1. registry shape, exactly the five keys the contract names
     shape_ok = True
     detail = ""
@@ -1755,6 +1938,183 @@ def self_check(args):
         and unknown_slot.get("kind") == "inflight"
         and "no busy flag" in str(unknown_slot.get("reason", "")),
         "plan=%r unload=%r slot=%r" % (unknown_plan, unknown_unload, unknown_slot),
+    )
+
+    # 1c. B1/N1: only a real JSON boolean is a busy flag. 0, 1, "", "false",
+    #     "yes", [] and {} are unknown, never idle, for unload and clear-slot.
+    try:
+        with open(shipped, encoding="utf-8") as handle:
+            base_snapshot = json.load(handle)
+    except (OSError, ValueError):
+        base_snapshot = {}
+    for label, value in (("int_0", 0), ("int_1", 1), ("empty_str", ""),
+                         ("str_false", "false"), ("str_yes", "yes"),
+                         ("empty_list", []), ("empty_obj", {})):
+        path = os.path.join(root, "busy-%s.json" % label)
+        try:
+            snapshot = json.loads(json.dumps(base_snapshot))
+            for row in snapshot.get("slots") or []:
+                row["busy"] = value
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(snapshot, handle)
+            written = True
+        except (OSError, ValueError, TypeError):
+            written = False
+        v_plan_rc, v_plan, _, _ = _run_child([
+            "--json", "plan", "localai.unload", "--fixture", path,
+        ])
+        v_run_rc, v_run, _, _ = _run_child([
+            "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", path,
+        ])
+        v_slot_rc, v_slot, _, _ = _run_child([
+            "--json", "run", "localai.clear-slot", "--slot", "1",
+            "--confirm", "localai.clear-slot", "--fixture", path,
+        ])
+        check(
+            "busy=%r is unknown, never idle: plan needs --force, unload and clear-slot refuse" % (value,),
+            written and v_plan_rc == 0 and isinstance(v_plan, dict)
+            and v_plan.get("requires_force") is True
+            and v_run_rc == 2 and isinstance(v_run, dict) and v_run.get("kind") == "inflight"
+            and v_slot_rc == 2 and isinstance(v_slot, dict) and v_slot.get("kind") == "inflight",
+            "plan=%r unload=%r slot=%r" % (v_plan, v_run, v_slot),
+        )
+
+    # 1d. the is_processing alias follows the same boolean-only rule
+    alias = os.path.join(root, "busy-alias.json")
+    try:
+        snapshot = json.loads(json.dumps(base_snapshot))
+        for row in snapshot.get("slots") or []:
+            row.pop("busy", None)
+            row["is_processing"] = "false"
+        with open(alias, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        alias_written = True
+    except (OSError, ValueError, TypeError):
+        alias_written = False
+    alias_rc, alias_payload, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", alias,
+    ])
+    check(
+        "is_processing=\"false\" is unknown: unload refuses kind inflight and names the type problem",
+        alias_written and alias_rc == 2 and isinstance(alias_payload, dict)
+        and alias_payload.get("kind") == "inflight"
+        and "not true or false" in str(alias_payload.get("reason", "")),
+        "rc=%s payload=%r" % (alias_rc, alias_payload),
+    )
+
+    # 1e. control: every real boolean false is idle, so the guard does not
+    #     over-refuse and the run reaches the fixture refusal
+    idle_all = os.path.join(root, "busy-all-false.json")
+    try:
+        snapshot = json.loads(json.dumps(base_snapshot))
+        for row in snapshot.get("slots") or []:
+            row["busy"] = False
+        with open(idle_all, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        idle_written = True
+    except (OSError, ValueError, TypeError):
+        idle_written = False
+    idle_plan_rc, idle_plan, _, _ = _run_child([
+        "--json", "plan", "localai.unload", "--fixture", idle_all,
+    ])
+    idle_run_rc, idle_run, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", idle_all,
+    ])
+    check(
+        "control: every busy flag false is idle, so plan needs no force and run reaches the fixture refusal",
+        idle_written and idle_plan_rc == 0 and isinstance(idle_plan, dict)
+        and idle_plan.get("requires_force") is False
+        and idle_run_rc == 2 and isinstance(idle_run, dict) and idle_run.get("kind") == "fixture",
+        "plan=%r run=%r" % (idle_plan, idle_run),
+    )
+
+    # 1f. B2: a slot row that is not an object is kept as an unknown row, so a
+    #     malformed entry cannot hide a request from the guard
+    odd_rows = os.path.join(root, "slots-not-objects.json")
+    try:
+        snapshot = json.loads(json.dumps(base_snapshot))
+        snapshot["slots"] = [None, "x"]
+        snapshot["slot_count"] = 2
+        with open(odd_rows, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        odd_written = True
+    except (OSError, ValueError, TypeError):
+        odd_written = False
+    odd_plan_rc, odd_plan, _, _ = _run_child([
+        "--json", "plan", "localai.unload", "--fixture", odd_rows,
+    ])
+    odd_run_rc, odd_run, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", odd_rows,
+    ])
+    odd_slot_rc, odd_slot, _, _ = _run_child([
+        "--json", "run", "localai.clear-slot", "--slot", "1",
+        "--confirm", "localai.clear-slot", "--fixture", odd_rows,
+    ])
+    check(
+        "a slot row that is not an object is unknown: plan needs --force, unload and clear-slot refuse",
+        odd_written and odd_plan_rc == 0 and isinstance(odd_plan, dict)
+        and odd_plan.get("requires_force") is True
+        and odd_run_rc == 2 and isinstance(odd_run, dict) and odd_run.get("kind") == "inflight"
+        and "not a JSON object" in str(odd_run.get("reason", ""))
+        and odd_slot_rc == 2 and isinstance(odd_slot, dict) and odd_slot.get("kind") == "inflight",
+        "plan=%r run=%r slot=%r" % (odd_plan, odd_run, odd_slot),
+    )
+
+    # 1g. N8: an empty slots array beside a declared slot_count contradicts
+    #     itself, so every declared slot is unknown, never idle
+    empty_rows = os.path.join(root, "slots-empty-declared.json")
+    try:
+        snapshot = json.loads(json.dumps(base_snapshot))
+        snapshot["slots"] = []
+        snapshot["slot_count"] = 2
+        with open(empty_rows, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        empty_written = True
+    except (OSError, ValueError, TypeError):
+        empty_written = False
+    empty_st_rc, empty_st, _, _ = _run_child([
+        "--json", "run", "localai.status", "--fixture", empty_rows,
+    ])
+    empty_run_rc, empty_run, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", empty_rows,
+    ])
+    empty_slot_rc, empty_slot, _, _ = _run_child([
+        "--json", "run", "localai.clear-slot", "--slot", "1",
+        "--confirm", "localai.clear-slot", "--fixture", empty_rows,
+    ])
+    check(
+        "an empty slots array with slot_count 2 is unknown: occupancy unknown 2, unload and clear-slot refuse",
+        empty_written and empty_st_rc == 0 and isinstance(empty_st, dict)
+        and (empty_st.get("slot_occupancy") or {}).get("unknown") == 2
+        and "array is empty" in str(empty_st.get("slots_unknown_reason", ""))
+        and empty_run_rc == 2 and isinstance(empty_run, dict) and empty_run.get("kind") == "inflight"
+        and empty_slot_rc == 2 and isinstance(empty_slot, dict) and empty_slot.get("kind") == "inflight",
+        "status=%r run=%r slot=%r" % (empty_st, empty_run, empty_slot),
+    )
+
+    # 1h. N4: no model key means the snapshot does not say what is loaded, so
+    #     the no-op names the busy slot instead of inventing "no model"
+    nomodel = os.path.join(root, "no-model-key.json")
+    try:
+        snapshot = json.loads(json.dumps(base_snapshot))
+        snapshot.pop("model", None)
+        with open(nomodel, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        nomodel_written = True
+    except (OSError, ValueError, TypeError):
+        nomodel_written = False
+    nomodel_rc, nomodel_payload, _, _ = _run_child([
+        "--json", "run", "localai.unload", "--confirm", "localai.unload", "--fixture", nomodel,
+    ])
+    check(
+        "no model key: unload says the state is unknown and names the busy slot, not \"no model is loaded\"",
+        nomodel_written and nomodel_rc == 0 and isinstance(nomodel_payload, dict)
+        and nomodel_payload.get("ok") is True and nomodel_payload.get("changed") is False
+        and nomodel_payload.get("model_known") is False
+        and "does not say what is loaded" in str(nomodel_payload.get("reason", ""))
+        and "slot 1" in str(nomodel_payload.get("reason", ""))
+        and "req_7f3a" in str(nomodel_payload.get("reason", "")),
+        "rc=%s payload=%r" % (nomodel_rc, nomodel_payload),
     )
 
     # 2. shipped fixture status shape and F7 key parity
@@ -2289,6 +2649,116 @@ def self_check(args):
         "rc=%s payload=%r rows=%r" % (dead_rc, dead_payload, dead_rows),
     )
 
+    # 22b. B3/B4: the live path against a loopback stub. A stale snapshot must
+    #      refuse without a POST; a fresh one must erase a slot and report it
+    #      as done. The stub answers 200 {"n_erased": 1}; it is never llama-swap.
+    saved_proxy = {}
+    for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        if key in os.environ:
+            saved_proxy[key] = os.environ.pop(key)
+    stub_server, stub_hits, stub_url = start_stub()
+    real_host = host_is_linux
+    try:
+        fresh_metrics = os.path.join(root, "live-fresh-metrics.json")
+        with open(fresh_metrics, "w", encoding="utf-8") as handle:
+            json.dump({
+                "ts": time.time(), "model": "ornith-chief-v3", "vram_used_mib": 11012,
+                "slot_count": 2,
+                "slots": [
+                    {"slot": 0, "busy": False, "request_id": None, "session": None, "tokens_cached": 0},
+                    {"slot": 1, "busy": False, "request_id": None, "session": None, "tokens_cached": 0},
+                ],
+            }, handle)
+        stale_metrics = os.path.join(root, "live-stale-metrics.json")
+        shutil.copy(fresh_metrics, stale_metrics)
+        old = time.time() - 3600
+        os.utime(stale_metrics, (old, old))
+
+        host_is_linux = lambda: True
+        stale_rc, stale_payload = run_inproc([
+            "--json", "run", "localai.unload", "--confirm", "localai.unload",
+            "--metrics", stale_metrics, "--cache", os.path.join(root, "stale-cache.json"),
+            "--log", os.path.join(root, "stale.log"), "--llama-swap-url", stub_url,
+        ])
+        stale_plan_rc, stale_plan = run_inproc([
+            "--json", "plan", "localai.unload",
+            "--metrics", stale_metrics, "--cache", os.path.join(root, "stale-plan-cache.json"),
+            "--log", os.path.join(root, "stale-plan.log"), "--llama-swap-url", stub_url,
+        ])
+        check(
+            "a one-hour-old snapshot refuses unload as inflight, sends no POST, and the plan needs --force",
+            stale_rc == 2 and isinstance(stale_payload, dict)
+            and stale_payload.get("kind") == "inflight"
+            and stale_payload.get("stale") is True
+            and "old (> 5.0 s)" in str(stale_payload.get("reason", ""))
+            and stub_hits == []
+            and stale_plan_rc == 0 and isinstance(stale_plan, dict)
+            and stale_plan.get("requires_force") is True
+            and "old (> 5.0 s)" in str(stale_plan.get("force_reason", "")),
+            "rc=%s payload=%r plan=%r hits=%r" % (stale_rc, stale_payload, stale_plan, stub_hits),
+        )
+
+        clear_log = os.path.join(root, "clear.log")
+        stub_hits.clear()
+        clear_rc, clear_payload = run_inproc([
+            "--json", "run", "localai.clear-slot", "--slot", "1",
+            "--confirm", "localai.clear-slot", "--metrics", fresh_metrics,
+            "--cache", os.path.join(root, "clear-cache.json"), "--log", clear_log,
+            "--slot-url", stub_url,
+        ])
+        clear_rows = []
+        try:
+            with open(clear_log, encoding="utf-8") as handle:
+                clear_rows = [json.loads(line) for line in handle if line.strip()]
+        except (OSError, ValueError):
+            clear_rows = []
+        check(
+            "clear-slot success against a localhost stub: rc 0, ok true, changed true, one erase POST and one log row",
+            clear_rc == 0 and isinstance(clear_payload, dict)
+            and clear_payload.get("ok") is True and clear_payload.get("changed") is True
+            and clear_payload.get("n_erased") == 1
+            and clear_payload.get("action") == "localai.clear-slot"
+            and stub_hits == ["/slots/1?action=erase"]
+            and len(clear_rows) == 1 and clear_rows[0].get("action") == "localai.clear-slot"
+            and clear_rows[0].get("ok") is True,
+            "rc=%s payload=%r hits=%r rows=%r" % (clear_rc, clear_payload, stub_hits, clear_rows),
+        )
+
+        # 22c. B5: a live models read from a directory is labelled live, run and plan
+        models_dir = os.path.join(root, "live-models")
+        os.makedirs(models_dir, exist_ok=True)
+        with open(os.path.join(models_dir, "demo.gguf"), "wb") as handle:
+            handle.write(b"x" * 11)
+        no_models_metrics = os.path.join(root, "live-metrics-no-models.json")
+        with open(no_models_metrics, "w", encoding="utf-8") as handle:
+            json.dump({"ts": time.time(), "model": None}, handle)
+        models_rc, models_run_payload = run_inproc([
+            "--json", "run", "localai.models", "--models-dir", models_dir,
+            "--metrics", no_models_metrics, "--cache", os.path.join(root, "models-live-cache.json"),
+            "--log", os.path.join(root, "models-live.log"),
+        ])
+        models_plan_rc, models_plan_payload = run_inproc([
+            "--json", "plan", "localai.models", "--models-dir", models_dir,
+            "--metrics", no_models_metrics, "--cache", os.path.join(root, "models-plan-cache.json"),
+            "--log", os.path.join(root, "models-plan.log"),
+        ])
+        check(
+            "a live models read from a directory says source live, run and plan",
+            models_rc == 0 and isinstance(models_run_payload, dict)
+            and models_run_payload.get("source") == "live"
+            and models_run_payload.get("source_detail") == "directory"
+            and models_run_payload.get("count") == 1
+            and models_plan_rc == 0 and isinstance(models_plan_payload, dict)
+            and models_plan_payload.get("source") == "live",
+            "run=%r plan=%r" % (models_run_payload, models_plan_payload),
+        )
+    finally:
+        host_is_linux = real_host
+        stub_server.shutdown()
+        stub_server.server_close()
+        for key, value in saved_proxy.items():
+            os.environ[key] = value
+
     # 23. the read cache is keyed on the source, not just the action name: a
     #     models_dir change inside the TTL is re-read, never served the other
     #     directory's answer (2 files / 150 B, then 1 file / 7 B)
@@ -2333,7 +2803,9 @@ def self_check(args):
 
     shutil.rmtree(root, ignore_errors=True)
     failed = [item for item in checks if not item["ok"]]
-    emit({"ok": not failed, "source": SOURCE, "self_check": True,
+    # The self-check reads only its own temp files, so the answer it prints is
+    # a fixture read, not a live one (the list registry keeps the live constant).
+    emit({"ok": not failed, "source": "fixture", "self_check": True,
           "checks": checks, "passed": len(checks) - len(failed), "total": len(checks)}, args.json)
     return 0 if not failed else 1
 
