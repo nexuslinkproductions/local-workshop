@@ -45,8 +45,9 @@ A root is a string (`"~/Downloads"`, depth 1) or an object
 `{"path": ..., "depth": N}`. `depth` counts directory levels: 1 is the root
 itself (default), 2 adds one level of subdirectories, 0 means unlimited. A
 relative path resolves against the directory holding the config, never the
-current directory. Missing keys are allowed (that list stays empty). A config
-with no usable root at all is reported as `ok: false`, not a crash.
+current directory (a fixture file keeps it as written; see Fixtures). Missing
+keys are allowed (that list stays empty). A config with no usable root at all
+is reported as `ok: false`, not a crash.
 
 ## Output
 
