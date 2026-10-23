@@ -5,7 +5,7 @@ Four typed actions, each with a dry-run ``plan`` and a ``run``:
 
     crew.sessions   read         biggest sessions by tokens, from ~/.hermes/state.db
     crew.stop       reversible   stop a runaway session by a *recorded* pid
-    crew.compress   reversible   gzip a session export into quarantine
+    crew.compress   reversible   gzip a session export into quarantine, keep the source
     crew.logs       reversible   trim old session exports into quarantine
 
 The table lives in :data:`ACTIONS`, which is the only thing the hudfix entry
@@ -36,31 +36,48 @@ optional; the defaults below are what the HUD gets with no context:
 
 Safety model, per MAIN-SCREEN-BUILD.md "UTILITY VIEWS":
 
-  * nothing runs without a plan, and a plan changes nothing (the self-check
-    hashes the store and the quarantine tree before and after every plan);
+  * nothing runs without a plan, and a plan changes nothing outside the state
+    dir (the self-check snapshots the store, and every file *and directory*
+    under the quarantine root, before and after every plan);
   * ``read`` changes nothing, ``reversible`` needs ``--confirm <action>``;
   * deletes never happen: every file leaves its place as a *move* into
-    ``_QUARANTINE/<YYYY-MM-DD>/<tag>/`` with a MANIFEST.tsv row, and the row
-    uses the same five columns the existing manifests use;
+    ``_QUARANTINE/<YYYY-MM-DD>/<tag>/`` with a MANIFEST.tsv row.
+    ``crew.compress`` keeps the uncompressed source there, beside the verified
+    archive, instead of unlinking it;
+  * the manifest uses the F8a spine's five columns,
+    ``iso_utc  action  original_path  bytes  destination``, in
+    ``_QUARANTINE/<YYYY-MM-DD>/MANIFEST.tsv``. A day whose file already carries
+    a different (legacy) schema is never appended to: that card's rows go to
+    ``_QUARANTINE/<YYYY-MM-DD>/<tag>/MANIFEST.tsv`` with the same five columns;
   * crew.stop only signals a pid that a record names *and* whose ``ps`` command
     line carries that session ("never ``pkill -f``"). A record that does not
     verify is refused, not "tried anyway";
-  * the Linux path (the documented ``hermes gateway stop``) is planned with
-    ``linux_only: true`` and is never executed on this Mac.
+  * the Linux path (the documented ``hermes gateway stop``) is *planned only*:
+    the command appears as text in the payload, ``linux_only`` stays false, and
+    this module never signals a host, this one or another. The command is run by
+    hand on the Linux box that owns the gateway.
 
-Two deliberate departures from the shared reader contract (the W8
-``feeds/README.md``, which owns that file):
+The shared reader contract (the W8 ``feeds/README.md``, which owns that file):
 
-  * ``crew.sessions`` is uncached. A maintenance plan that says "the biggest
-    sessions" must be the live answer, and the read is one SELECT over ~4.2k
-    rows: 3 ms warm, 97 ms cold, against the 2.9 GB live store on 2026-10-23. A
-    10 s cache would make the plan a lie about now. ``--json`` still emits
-    exactly one object;
+  * ``crew.sessions`` is cached for 10 s under ``~/.local/state/nexuslink``
+    (``crew-sessions-cache.json``, written atomically: temp file, fsync,
+    rename). The 10 s floor is a floor, not a default: a smaller ``cache_ttl``
+    is raised to it. Every payload carries ``cache: {hit, age_s, ttl_s, path}``
+    so a consumer never has to guess whether it read a cached answer;
   * ``crew.logs`` scans ``~/.hermes/session-exports`` (what
     ``hermes sessions export`` writes), so on a host that never exported a
     session the honest plan is zero items. ``--export-dir`` points it at any
     other tree, e.g. ``~/.hermes/sessions`` for the request dumps Hermes
     leaves behind, without ever deleting one.
+
+A *named* path that does not exist is a caller error: ``--db``, ``--pid-file``,
+``--processes-file``, ``--path`` and ``--export-dir`` exit 2, the way ``--path``
+already did. The default paths are different: a missing default is an answer
+(``ok: false``, exit 0), because a HUD tick must not see a broken process.
+
+``--fixture DIR`` points every path this module touches into ``DIR`` (store,
+pid file, Hermes process table, exports, quarantine, log, cache) and reads no
+host state; it exists for the self-check and for a proof on a generated tree.
 
 Deliberately imports nothing from this directory (not ``hudfix.py``, not the
 W8 readers): the branch is runnable before either lands. The few helpers below
@@ -69,6 +86,7 @@ are local copies of the v5 feed conventions, not shared code.
     python3 hudfix_crew.py --list
     python3 hudfix_crew.py --action crew.sessions --plan --json
     python3 hudfix_crew.py --action crew.logs --run --confirm crew.logs
+    python3 hudfix_crew.py --action crew.sessions --plan --fixture /tmp/tree --json
     python3 hudfix_crew.py --self-check
 """
 
@@ -99,12 +117,21 @@ CONFIRM_CLASSES = ("reversible", "destructive")
 
 HOME = os.path.expanduser("~")
 
+#: The only directory this module writes to besides quarantine: log and cache.
+STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"))
+STATE_DIR = os.path.join(STATE_DIR, "nexuslink")
+
 DEFAULT_DB = "~/.hermes/state.db"
 DEFAULT_PID_FILE = "~/.local/state/nexuslink/session-pids.json"
 HERMES_PROCESSES = "~/.hermes/processes.json"
 DEFAULT_EXPORT_DIR = "~/.hermes/session-exports"
 DEFAULT_QUARANTINE = "~/NEXUS_AI_CENTER/_QUARANTINE"
 DEFAULT_LOG = "~/.local/state/nexuslink/hudfix.log"
+DEFAULT_CACHE_DIR = STATE_DIR
+CACHE_NAME = "crew-sessions-cache.json"
+
+#: The shared reader contract's cache floor: a read may be reused for 10 s.
+CACHE_FLOOR_S = 10.0
 
 #: What ``hermes sessions export`` writes, which is what crew.logs trims.
 EXPORT_SUFFIXES = (".jsonl", ".json", ".md", ".qmd", ".html")
@@ -134,7 +161,10 @@ SESSIONS_WANTED = (
     "hidden",
 )
 
-MANIFEST_HEADER = "orig_path\tnew_path\tsize_kb\treason\tdate\n"
+#: The F8a spine's manifest schema (hudfix.py writes the same five columns to
+#: ``_QUARANTINE/<day>/MANIFEST.tsv``). There is no free-text reason column:
+#: the reason travels in the JSONL log line and the action payload instead.
+MANIFEST_HEADER = "iso_utc\taction\toriginal_path\tbytes\tdestination\n"
 
 
 # --------------------------------------------------------------------- helpers
@@ -250,7 +280,7 @@ def fingerprint(path):
     try:
         info = os.stat(path)
     except OSError as exc:
-        return {"path": tilde(path), "exists": False, "error": text(str(exc))}
+        return {"path": tilde(path), "exists": False, "error": text(tilde_text(str(exc)))}
     return {
         "path": tilde(path),
         "exists": True,
@@ -284,16 +314,28 @@ def detect_host():
 
 
 def options(ctx=None):
-    """Normalise ``ctx`` into the full option set every action reads."""
+    """Normalise ``ctx`` into the full option set every action reads.
+
+    ``*_named`` records whether the caller named the path explicitly (a flag),
+    as opposed to taking the default or a ``--fixture`` default. A *named* path
+    that does not exist is a caller error (exit 2); a missing default is an
+    answer in the payload (exit 0).
+    """
     host = text(_ctx_get(ctx, "host")) or detect_host()
+    db = _ctx_get(ctx, "db")
+    pid_file = _ctx_get(ctx, "pid_file")
+    processes_file = _ctx_get(ctx, "processes_file")
+    export_dir = _ctx_get(ctx, "export_dir")
     return {
         "host": host,
-        "db": expand(_ctx_get(ctx, "db") or DEFAULT_DB),
-        "db_named": bool(_ctx_get(ctx, "db")),
-        "pid_file": expand(_ctx_get(ctx, "pid_file") or DEFAULT_PID_FILE),
-        "pid_file_named": bool(_ctx_get(ctx, "pid_file")),
-        "processes_file": expand(_ctx_get(ctx, "processes_file") or HERMES_PROCESSES),
-        "export_dir": expand(_ctx_get(ctx, "export_dir") or DEFAULT_EXPORT_DIR),
+        "db": expand(db or DEFAULT_DB),
+        "db_named": bool(_ctx_get(ctx, "db_named", bool(db))),
+        "pid_file": expand(pid_file or DEFAULT_PID_FILE),
+        "pid_file_named": bool(_ctx_get(ctx, "pid_file_named", bool(pid_file))),
+        "processes_file": expand(processes_file or HERMES_PROCESSES),
+        "processes_file_named": bool(_ctx_get(ctx, "processes_file_named", bool(processes_file))),
+        "export_dir": expand(export_dir or DEFAULT_EXPORT_DIR),
+        "export_dir_named": bool(_ctx_get(ctx, "export_dir_named", bool(export_dir))),
         "quarantine_root": expand(_ctx_get(ctx, "quarantine_root") or DEFAULT_QUARANTINE),
         "session_id": text(_ctx_get(ctx, "session_id")),
         "path": expand(_ctx_get(ctx, "path")) if _ctx_get(ctx, "path") else None,
@@ -303,9 +345,19 @@ def options(ctx=None):
         "grace_s": max(0.2, number(_ctx_get(ctx, "grace_s", 3.0)) or 3.0),
         "now": number(_ctx_get(ctx, "now", time.time())) or time.time(),
         "log": expand(_ctx_get(ctx, "log") or DEFAULT_LOG),
+        "cache_dir": expand(_ctx_get(ctx, "cache_dir") or DEFAULT_CACHE_DIR),
+        "cache": bool(_ctx_get(ctx, "cache", True)),
+        "cache_ttl": max(CACHE_FLOOR_S, number(_ctx_get(ctx, "cache_ttl", CACHE_FLOOR_S)) or CACHE_FLOOR_S),
         "logger": _ctx_get(ctx, "logger"),
         "log_steps": bool(_ctx_get(ctx, "log_steps", False)),
     }
+
+
+def named_missing(path, named, label):
+    """Text for a named path that does not exist, or None."""
+    if named and path and not os.path.exists(path):
+        return "%s does not exist: %s" % (label, tilde(path))
+    return None
 
 
 # ----------------------------------------------------------------- quarantine
@@ -319,8 +371,14 @@ def manifest_path(opts, now=None):
     return os.path.join(day_dir(opts, now), "MANIFEST.tsv")
 
 
+def quarantine_path(opts, tag, now=None):
+    """Where a tag's files land. Pure: a plan may call this and create nothing."""
+    return os.path.join(day_dir(opts, now), tag)
+
+
 def quarantine_dir(opts, tag, now=None):
-    path = os.path.join(day_dir(opts, now), tag)
+    """The tag directory, created. Run paths only, never a plan."""
+    path = quarantine_path(opts, tag, now)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -339,25 +397,48 @@ def unique_path(parent, name):
         index += 1
 
 
-def size_kb(size_bytes):
-    """MANIFEST size column: whole KB, and at least 1 for any non-empty file."""
-    size = int(size_bytes or 0)
-    if size <= 0:
-        return 0
-    return max(1, int(round(size / 1024.0)))
+def manifest_is_spine(path):
+    """True when ``path`` is absent, or already carries the F8a spine header."""
+    if not os.path.exists(path):
+        return True
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            first = handle.readline()
+    except OSError:
+        return False
+    return first == MANIFEST_HEADER
 
 
-def manifest_append(opts, orig, new, size_bytes, reason, now=None):
-    """Write one quarantine MANIFEST row. Same five columns as the existing files."""
-    path = manifest_path(opts, now)
+def manifest_target(opts, tag, now=None):
+    """The file one row may go to: the day manifest, or a per-tag manifest.
+
+    A day manifest written by an older schema (2026-10-19..22) is never mixed
+    with spine rows: that day keeps its file, and this module writes its own
+    ``_QUARANTINE/<day>/<tag>/MANIFEST.tsv`` with the same five columns.
+    """
+    day = manifest_path(opts, now)
+    if manifest_is_spine(day):
+        return day
+    return os.path.join(quarantine_path(opts, tag, now), "MANIFEST.tsv")
+
+
+def manifest_append(opts, action, original, destination, size_bytes, now=None, tag=None):
+    """Write one MANIFEST row in the F8a spine schema. Returns the file written.
+
+    Columns: ``iso_utc, action, original_path, bytes, destination``. There is no
+    free-text reason column in the spine; the reason travels in the payload and
+    the JSONL log line.
+    """
+    path = manifest_target(opts, tag or action, now)
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    stamp = iso(opts["now"] if now is None else now) or iso_now() or "1970-01-01T00:00:00Z"
     row = "\t".join(
         [
-            os.path.abspath(orig),
-            os.path.abspath(new),
-            str(size_kb(size_bytes)),
-            reason.replace("\t", " ").replace("\n", " "),
-            day_stamp(opts["now"] if now is None else now),
+            stamp,
+            str(action),
+            os.path.abspath(original),
+            str(int(size_bytes or 0)),
+            os.path.abspath(destination),
         ]
     ) + "\n"
     fresh = not os.path.exists(path)
@@ -378,7 +459,7 @@ def manifest_rows(path):
     return lines[1:] if lines else []
 
 
-def move_to_quarantine(opts, source, tag, reason, now=None):
+def move_to_quarantine(opts, source, tag, reason, action=None, now=None):
     """Move ``source`` under ``_QUARANTINE/<day>/<tag>/`` and write the row."""
     dest_dir = quarantine_dir(opts, tag, now)
     destination = unique_path(dest_dir, os.path.basename(source))
@@ -386,11 +467,12 @@ def move_to_quarantine(opts, source, tag, reason, now=None):
     shutil.move(source, destination)
     if not os.path.exists(destination) or os.path.getsize(destination) != before:
         raise RuntimeError("quarantine move did not land: %s" % tilde(destination))
-    row_path = manifest_append(opts, source, destination, before, reason, now)
+    row_path = manifest_append(opts, action or tag, source, destination, before, now, tag)
     return {
         "source": tilde(source),
         "destination": tilde(destination),
         "bytes": before,
+        "reason": reason,
         "manifest": tilde(row_path),
     }
 
@@ -471,6 +553,93 @@ def result(action, klass, opts, **fields):
     return payload
 
 
+def caller_error(action, klass, opts, reason, **fields):
+    """A named path that does not exist: a bad invocation, exit 2 (brief rule)."""
+    payload = result(
+        action,
+        klass,
+        opts,
+        ok=False,
+        runnable=False,
+        refuse_reason=reason,
+        would="nothing: %s" % reason,
+        total={"count": 0},
+        kind="caller-error",
+        exit_code=EXIT_PROGRAMMING,
+        **fields
+    )
+    return finish(payload, opts, "plan")
+
+
+# ---------------------------------------------------------------- read cache
+
+
+def cache_key(opts):
+    """One cache slot per store and row limit, so two trees never collide."""
+    material = "%s\n%d" % (os.path.abspath(opts["db"]), int(opts["limit"]))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def cache_path(opts):
+    return os.path.join(opts["cache_dir"], CACHE_NAME)
+
+
+def cache_read(opts):
+    """A cached read younger than the floor, or None. Never raises."""
+    path = cache_path(opts)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            entry = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(entry, dict) or entry.get("key") != cache_key(opts):
+        return None
+    payload = entry.get("payload")
+    written = number(entry.get("written_at"))
+    if not isinstance(payload, dict) or written is None:
+        return None
+    age = opts["now"] - written
+    if age < 0 or age >= opts["cache_ttl"]:
+        return None
+    return {"payload": payload, "age_s": round(age, 3), "path": path}
+
+
+def cache_write(opts, payload):
+    """Atomic write: temp file in the same directory, fsync, rename over it."""
+    path = cache_path(opts)
+    entry = {
+        "key": cache_key(opts),
+        "written_at": opts["now"],
+        "ttl_s": opts["cache_ttl"],
+        "payload": payload,
+    }
+    temporary = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(entry, handle, ensure_ascii=False, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except (OSError, ValueError) as exc:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        return {"path": tilde(path), "written": False, "error": tilde_text(str(exc))}
+    return {"path": tilde(path), "written": True}
+
+
+def cache_info(opts, hit=False, age_s=None):
+    return {
+        "key": cache_key(opts),
+        "hit": bool(hit),
+        "age_s": age_s,
+        "ttl_s": opts["cache_ttl"],
+        "path": tilde(cache_path(opts)),
+    }
+
+
 # ------------------------------------------------------------- crew.sessions
 
 
@@ -484,7 +653,7 @@ def open_store_ro(path):
     try:
         connection = sqlite3.connect(uri, uri=True, timeout=1.5)
     except sqlite3.Error as exc:
-        raise ValueError("cannot open %s read-only: %s" % (tilde(path), exc))
+        raise ValueError(tilde_text("cannot open %s read-only: %s" % (tilde(path), exc)))
     try:
         connection.row_factory = sqlite3.Row
         connection.isolation_level = None
@@ -492,7 +661,7 @@ def open_store_ro(path):
         connection.execute("PRAGMA query_only=1")
     except sqlite3.Error as exc:
         connection.close()
-        raise ValueError("%s is not a usable sqlite store: %s" % (tilde(path), exc))
+        raise ValueError(tilde_text("%s is not a usable sqlite store: %s" % (tilde(path), exc)))
     return connection
 
 
@@ -501,9 +670,20 @@ def store_columns(connection, table="sessions"):
 
 
 def sessions_read(opts):
-    """One SELECT over the store: biggest sessions by tokens. Returns a dict."""
+    """One SELECT over the store: biggest sessions by tokens. Returns a dict.
+
+    The read is cached for ``cache_ttl`` (floor 10 s, state dir) so two HUD
+    ticks in the same window do not open a multi-GB store twice. A hit says so:
+    the payload carries ``cache.hit``, ``cache.age_s`` and the file it came from.
+    """
+    if opts["cache"]:
+        cached = cache_read(opts)
+        if cached is not None:
+            payload = dict(cached["payload"])
+            payload["cache"] = cache_info(opts, hit=True, age_s=cached["age_s"])
+            return payload
     store = fingerprint(opts["db"])
-    payload = {"store": store, "query_only": True, "warnings": []}
+    payload = {"store": store, "query_only": True, "warnings": [], "cache": cache_info(opts)}
     connection = open_store_ro(opts["db"])
     try:
         columns = store_columns(connection)
@@ -531,7 +711,7 @@ def sessions_read(opts):
             "tokens": int(totals["tokens"] or 0),
         }
     except sqlite3.Error as exc:
-        raise ValueError("querying %s failed: %s" % (tilde(opts["db"]), exc))
+        raise ValueError(tilde_text("querying %s failed: %s" % (tilde(opts["db"]), exc)))
     finally:
         connection.close()
 
@@ -568,12 +748,20 @@ def sessions_read(opts):
         payload["store"].get("size_bytes") == payload["store_after"].get("size_bytes")
         and payload["store"].get("mtime_ns") == payload["store_after"].get("mtime_ns")
     )
+    if opts["cache"]:
+        snapshot = {
+            key: value for key, value in payload.items() if key not in ("cache", "cache_write")
+        }
+        payload["cache_write"] = cache_write(opts, snapshot)
     return payload
 
 
 def plan_sessions(ctx=None):
     opts = options(ctx)
     total = {"count": 0, "bytes": None, "tokens": None}
+    missing = named_missing(opts["db"], opts["db_named"], "named store")
+    if missing:
+        return caller_error("crew.sessions", "read", opts, missing)
     try:
         read = sessions_read(opts)
     except (OSError, ValueError) as exc:
@@ -607,6 +795,8 @@ def plan_sessions(ctx=None):
         store_total=read.get("store_total"),
         query_only=read["query_only"],
         warnings=read["warnings"],
+        cache=read.get("cache"),
+        cache_write=read.get("cache_write"),
     )
     return finish(payload, opts, "plan")
 
@@ -614,9 +804,10 @@ def plan_sessions(ctx=None):
 def run_sessions(ctx, confirm):
     payload = plan_sessions(ctx)
     payload["dry_run"] = False
+    payload["phase"] = "run"
     payload["would"] = "read-only: listed %d sessions; the store was not written" % payload["total"]["count"]
-    if payload.get("log_steps"):
-        opts = options(ctx)
+    opts = options(ctx)
+    if opts.get("log_steps"):
         payload["log"] = log_event(opts, event_for(payload))
     return payload
 
@@ -646,7 +837,7 @@ def load_pid_records(opts):
         try:
             raw = read_json(path)
         except (OSError, ValueError) as exc:
-            warnings.append("cannot read %s: %s" % (tilde(path), exc))
+            warnings.append(tilde_text("cannot read %s: %s" % (tilde(path), exc)))
             continue
         if isinstance(raw, dict) and isinstance(raw.get("records"), list):
             entries = raw["records"]
@@ -754,12 +945,17 @@ def resolve_stop(opts):
     records, warnings = load_pid_records(opts)
     matches = [record for record in records if record_matches_session(record, session_id)]
     if not matches:
+        command = linux_stop_command(opts)
         return {
             "runnable": False,
-            "linux_only": True,
-            "command": linux_stop_command(opts),
+            "linux_only": False,
+            "command": command,
+            "command_host": "linux",
             "refuse_reason": "no recorded pid for session %s on this host" % session_id,
-            "note": "Linux only: the documented hermes stop command. Never a pkill pattern.",
+            "note": (
+                "text only, never executed: on the Linux host that owns the gateway, "
+                "%r is run by hand and stops the whole gateway profile" % command
+            ),
             "blast_radius": "the whole gateway process for that profile stops; every session it serves stops with it",
             "items": [],
             "warnings": warnings,
@@ -816,6 +1012,11 @@ def resolve_stop(opts):
 
 def plan_stop(ctx=None):
     opts = options(ctx)
+    missing = named_missing(
+        opts["pid_file"], opts["pid_file_named"], "named pid file"
+    ) or named_missing(opts["processes_file"], opts["processes_file_named"], "named process table")
+    if missing:
+        return caller_error("crew.stop", "reversible", opts, missing, session_id=opts["session_id"])
     resolved = resolve_stop(opts)
     count = len([entry for entry in resolved["items"] if entry.get("verified")])
     total = {"count": count, "bytes": None, "tokens": None}
@@ -823,8 +1024,11 @@ def plan_stop(ctx=None):
         would = "send SIGTERM to pid %s (verified against its ps line); no pkill, no SIGKILL" % (
             resolved["items"][0]["pid"] if resolved["items"] else "?"
         )
-    elif resolved.get("linux_only"):
-        would = "nothing on this Mac; the Linux host would run: %s" % resolved.get("command")
+    elif resolved.get("command"):
+        would = (
+            "nothing runs here: no recorded pid on this host; the documented command for the "
+            "Linux host is text only: %s" % resolved["command"]
+        )
     else:
         would = "nothing: %s" % resolved.get("refuse_reason")
     payload = result(
@@ -842,43 +1046,17 @@ def plan_stop(ctx=None):
         session_id=opts["session_id"],
         records_seen=resolved.get("records_seen", 0),
         warnings=resolved.get("warnings", []),
-        notes=[resolved["blast_radius"]] if resolved.get("blast_radius") else [],
+        notes=[value for value in (resolved.get("note"), resolved.get("blast_radius")) if value],
+        command_host=resolved.get("command_host"),
         pid_file=tilde(opts["pid_file"]),
+        processes_file=tilde(opts["processes_file"]),
     )
     return finish(payload, opts, "plan")
 
 
-def plan_linux_stop(opts, resolved):
-    """The Linux branch: plan the documented hermes command, never run it here."""
-    command = resolved.get("command") or linux_stop_command(opts)
-    return {
-        "session_id": opts["session_id"],
-        "command": command,
-        "linux_only": True,
-        "verified": False,
-        "refuse_reason": "linux_only: this Mac does not run the documented hermes stop command",
-        "blast_radius": resolved.get(
-            "blast_radius",
-            "the whole gateway process for that profile stops; every session it serves stops with it",
-        ),
-    }
-
-
-def linux_stop_run(opts, command):
-    """Run the documented hermes stop command. Only reached on a real Linux host."""
-    argv = command.split()
-    try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=90)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"exit_code": None, "error": text(str(exc)), "argv": argv}
-    return {
-        "exit_code": proc.returncode,
-        "stdout": text(proc.stdout, limit=300),
-        "stderr": text(proc.stderr, limit=300),
-        "argv": argv,
-    }
-
-
+# There is deliberately no helper here that runs the Linux command. It is
+# planned as text only: `hermes gateway stop` without a profile stops every
+# session of that profile, and nothing in this file may send it to a host.
 def run_stop(ctx, confirm):
     opts = options(ctx)
     action = "crew.stop"
@@ -898,30 +1076,11 @@ def run_stop(ctx, confirm):
 
     plan = plan_stop(ctx)
     plan["dry_run"] = False
+    plan["phase"] = "run"
     if not plan["runnable"]:
-        if plan.get("linux_only"):
-            item = plan_linux_stop(opts, {"command": plan.get("command")})
-            if sys.platform.startswith("linux") and shutil.which("hermes"):
-                executed = linux_stop_run(opts, item["command"])
-                item.update(executed)
-                plan["ok"] = executed.get("exit_code") == 0
-                plan["runnable"] = plan["ok"]
-                plan["total"] = {"count": 1 if plan["ok"] else 0, "bytes": None, "tokens": None}
-                plan["changes"] = [{"what": "gateway", "from": "serving profile", "to": "stop"}]
-                plan["would"] = (
-                    "ran %s (exit %s)" % (item["command"], executed.get("exit_code"))
-                    if plan["ok"]
-                    else "ran %s; exit %s" % (item["command"], executed.get("exit_code"))
-                )
-            else:
-                item["refuse_reason"] = (
-                    "linux_only: %s runs on the Linux host, not here (%s)" % (item["command"], detect_host())
-                )
-                plan["refuse_reason"] = item["refuse_reason"]
-                plan["would"] = "refused on this host: %s" % item["refuse_reason"]
-            plan["items"] = [item]
-        else:
-            plan["would"] = "refused: %s" % plan.get("refuse_reason")
+        plan["would"] = "refused: %s" % (plan.get("refuse_reason") or "not runnable")
+        if plan.get("command"):
+            plan["would"] += "; planned as text only, never executed: %s" % plan["command"]
         if opts.get("log_steps"):
             plan["log"] = log_event(opts, event_for(plan))
         return plan
@@ -1062,6 +1221,10 @@ def plan_compress(ctx=None):
     opts = options(ctx)
     session_id = opts["session_id"]
     tag = "crew-compress"
+    if not opts["path"]:
+        missing = named_missing(opts["export_dir"], opts["export_dir_named"], "named export dir")
+        if missing:
+            return caller_error("crew.compress", "reversible", opts, missing, session_id=session_id)
     try:
         source, refusal = resolve_compress_source(opts)
     except FileNotFoundError as exc:
@@ -1071,8 +1234,8 @@ def plan_compress(ctx=None):
             opts,
             ok=False,
             runnable=False,
-            refuse_reason=str(exc),
-            would="nothing: %s" % exc,
+            refuse_reason=tilde_text(str(exc)),
+            would="nothing: %s" % tilde_text(str(exc)),
             total={"count": 0},
             session_id=session_id,
             kind="caller-error",
@@ -1111,8 +1274,9 @@ def plan_compress(ctx=None):
         return finish(payload, opts, "plan")
 
     estimate, raw = gzip_estimate(source)
-    destination = os.path.join(quarantine_dir(opts, tag), os.path.basename(source) + ".gz")
-    destination = unique_path(os.path.dirname(destination), os.path.basename(destination))
+    # Pure: the destination is computed, never created. A plan adds no path.
+    planned_dir = quarantine_path(opts, tag)
+    destination = unique_path(planned_dir, os.path.basename(source) + ".gz")
     payload = result(
         "crew.compress",
         "reversible",
@@ -1129,7 +1293,8 @@ def plan_compress(ctx=None):
                 "mtime_iso": iso(os.path.getmtime(source)),
             }
         ],
-        would="gzip %s into %s (%d -> %d bytes), verify the archive, then remove the source"
+        would="gzip %s into %s (%d -> %d bytes), verify the archive, then move the source "
+        "into quarantine beside it (nothing deleted)"
         % (tilde(source), tilde(destination), raw, estimate),
         session_id=session_id,
         bytes_saved=max(0, raw - estimate),
@@ -1156,6 +1321,7 @@ def run_compress(ctx, confirm):
 
     plan = plan_compress(ctx)
     plan["dry_run"] = False
+    plan["phase"] = "run"
     if not plan["runnable"]:
         plan["would"] = "refused: %s" % plan.get("refuse_reason")
         if opts.get("log_steps"):
@@ -1198,30 +1364,31 @@ def run_compress(ctx, confirm):
 
     os.replace(temporary, destination)
     archived = os.path.getsize(destination)
-    row = manifest_append(
+    # Card rule: quarantine, never delete. The uncompressed original lands in
+    # the same tag directory as the archive it produced, and the row says so.
+    moved = move_to_quarantine(
         opts,
         source,
-        destination,
-        archived,
-        "hudfix crew.compress session %s (%d B -> %d B)"
-        % ((opts["session_id"] or os.path.basename(source)), item["bytes"], archived),
+        "crew-compress",
+        "hudfix crew.compress session %s: archive %s verified (%d B -> %d B)"
+        % ((opts["session_id"] or os.path.basename(source)), tilde(destination), item["bytes"], archived),
+        action="crew.compress",
     )
-    os.unlink(source)
     item["bytes_after"] = archived
     item["sha256_after"] = source_sha
+    item["quarantine"] = moved["destination"]
     item["verified"] = True
     plan["items"] = [item]
     plan["changes"] = [
         {"what": "archive", "from": item["source"], "to": item["destination"]},
-        {"what": "source", "from": item["source"], "to": "removed after archive verify"},
+        {"what": "source", "from": item["source"], "to": moved["destination"]},
     ]
-    plan["manifest"] = tilde(row)
+    plan["manifest"] = moved["manifest"]
     plan["total"] = {"count": 1, "bytes": item["bytes"], "tokens": None}
-    plan["would"] = "archived %s to %s (%d -> %d bytes); source removed" % (
-        item["source"],
-        item["destination"],
-        item["bytes"],
-        archived,
+    plan["would"] = (
+        "archived %s to %s (%d -> %d bytes); the original now sits in quarantine at %s, "
+        "nothing deleted"
+        % (item["source"], item["destination"], item["bytes"], archived, moved["destination"])
     )
     if opts.get("log_steps"):
         plan["log"] = log_event(opts, event_for(plan))
@@ -1265,6 +1432,9 @@ def collect_old_exports(opts):
 
 def plan_logs(ctx=None):
     opts = options(ctx)
+    missing = named_missing(opts["export_dir"], opts["export_dir_named"], "named export dir")
+    if missing:
+        return caller_error("crew.logs", "reversible", opts, missing, export_dir=tilde(opts["export_dir"]))
     items, reason = collect_old_exports(opts)
     total = {
         "count": len(items),
@@ -1309,6 +1479,7 @@ def run_logs(ctx, confirm):
 
     plan = plan_logs(ctx)
     plan["dry_run"] = False
+    plan["phase"] = "run"
     moved = []
     rows = []
     for entry in plan["items"]:
@@ -1321,10 +1492,13 @@ def run_logs(ctx, confirm):
                 source,
                 "crew-logs",
                 "hudfix crew.logs older than %gd" % opts["older_than_days"],
+                action="crew.logs",
             )
         except (OSError, RuntimeError) as exc:
             plan["ok"] = False
-            plan.setdefault("errors", []).append("%s: %s" % (entry["path"], exc))
+            plan.setdefault("errors", []).append(
+                tilde_text("%s: %s" % (entry["path"], exc))
+            )
             continue
         moved.append(moved_entry)
         rows.append(moved_entry["manifest"])
@@ -1367,7 +1541,7 @@ ACTIONS = {
     },
     "crew.compress": {
         "class": "reversible",
-        "doc": "gzip one session export into quarantine, verify the round-trip, then drop the source.",
+        "doc": "gzip one session export into quarantine, verify the round-trip, keep the source there too (nothing deleted).",
         "plan": plan_compress,
         "run": run_compress,
         "linux_only": False,
@@ -1412,9 +1586,15 @@ def build_parser():
     parser.add_argument("--profile", help="profile for the Linux stop plan")
     parser.add_argument("--db", help="sessions store (default ~/.hermes/state.db)")
     parser.add_argument("--pid-file", dest="pid_file", help="pid record file")
+    parser.add_argument("--processes-file", dest="processes_file",
+                        help="Hermes' own pid table (default ~/.hermes/processes.json)")
     parser.add_argument("--export-dir", dest="export_dir", help="export directory")
     parser.add_argument("--quarantine-root", dest="quarantine_root", help="quarantine root")
     parser.add_argument("--log", help="JSONL log path")
+    parser.add_argument("--fixture", metavar="DIR",
+                        help="point every path (store, pids, exports, quarantine, log, cache) into DIR; reads no host state")
+    parser.add_argument("--cache-ttl", dest="cache_ttl", type=float, default=CACHE_FLOOR_S,
+                        help="crew.sessions cache seconds, floored at %g (default %g)" % (CACHE_FLOOR_S, CACHE_FLOOR_S))
     parser.add_argument("--older-than", dest="older_than_days", type=float, default=30.0,
                         help="crew.logs age floor in days (default 30)")
     parser.add_argument("--limit", type=int, default=10, help="crew.sessions rows (default 10)")
@@ -1425,28 +1605,54 @@ def build_parser():
 
 
 def ctx_from_args(args):
-    return {
+    ctx = {
         "session_id": args.session_id,
         "path": args.path,
         "profile": args.profile,
         "db": args.db,
+        "db_named": bool(args.db),
         "pid_file": args.pid_file,
+        "pid_file_named": bool(args.pid_file),
+        "processes_file": args.processes_file,
+        "processes_file_named": bool(args.processes_file),
         "export_dir": args.export_dir,
+        "export_dir_named": bool(args.export_dir),
         "quarantine_root": args.quarantine_root,
         "log": args.log,
         "older_than_days": args.older_than_days,
         "limit": args.limit,
         "grace_s": args.grace_s,
+        "cache_ttl": args.cache_ttl,
         "log_steps": not args.no_log,
     }
+    if args.fixture:
+        # Every path this module could touch moves under DIR: no host state is
+        # read and nothing is written outside it. An explicit flag still wins.
+        base = expand(args.fixture)
+        ctx["cache_dir"] = os.path.join(base, "state", "nexuslink")
+        for key, name in (
+            ("db", "state.db"),
+            ("pid_file", "session-pids.json"),
+            ("processes_file", "processes.json"),
+            ("export_dir", "session-exports"),
+            ("quarantine_root", "quarantine"),
+            ("log", os.path.join("state", "nexuslink", "hudfix.log")),
+        ):
+            if not ctx.get(key):
+                ctx[key] = os.path.join(base, name)
+    return ctx
 
 
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.fixture and not os.path.isdir(expand(args.fixture)):
+        parser.error("--fixture directory does not exist: %s" % tilde(args.fixture))
+
     if args.self_check:
-        return self_check(keep=args.keep, compact=args.json, verbose=True)
+        # --json prints one object and nothing else: no per-check "ok" lines.
+        return self_check(keep=args.keep, compact=args.json, verbose=not args.json)
 
     if args.list:
         payload = {
@@ -1511,7 +1717,7 @@ class Checks(object):
         self.failed = []
         self.lines = []
 
-    def check(self, name, condition, detail=""):
+    def check(self, name, condition, detail=None):
         detail = "" if detail is None else str(detail)
         if condition:
             self.passed += 1
@@ -1519,7 +1725,8 @@ class Checks(object):
                 print("ok   %s" % name)
         else:
             self.failed.append((name, detail))
-            print("FAIL %s%s" % (name, (": " + detail) if detail else ""))
+            if self.verbose:
+                print("FAIL %s%s" % (name, (": " + detail) if detail else ""))
         return bool(condition)
 
     def equal(self, name, got, want):
@@ -1592,11 +1799,22 @@ def _spawn_dummy(marker, seconds=60):
 
 
 def _tree_state(root):
-    """Every path under ``root`` with size and mtime: the 'plan changed nothing' proof."""
+    """Every path under ``root``, files *and* directories, with size and mtime.
+
+    Directories are in the map on purpose: a plan that creates one has changed
+    the tree even when no file appears.
+    """
     state = {}
     if not os.path.isdir(root):
         return state
-    for base, _dirs, names in os.walk(root):
+    for base, dirs, names in os.walk(root):
+        for name in sorted(dirs):
+            path = os.path.join(base, name)
+            try:
+                info = os.stat(path)
+            except OSError:
+                continue
+            state[os.path.relpath(path, root) + os.sep] = ("dir", info.st_mtime_ns)
         for name in sorted(names):
             path = os.path.join(base, name)
             try:
@@ -1608,18 +1826,22 @@ def _tree_state(root):
 
 
 def self_check(keep=False, compact=False, verbose=True):
-    global HERMES_PROCESSES
+    global HERMES_PROCESSES, DEFAULT_CACHE_DIR, DEFAULT_LOG
+    saved_globals = (HERMES_PROCESSES, DEFAULT_CACHE_DIR, DEFAULT_LOG)
     checks = Checks(verbose=verbose)
     root = tempfile.mkdtemp(prefix="hudfix-crew-selftest-")
-    # The Hermes process table is a second pid source; point it at the temp tree
-    # so not one real process record is read during this proof.
+    # Every host path an action can fall back to points into the temp tree: not
+    # one real process record, log line or cache file is read or written here.
     HERMES_PROCESSES = os.path.join(root, "no-hermes-processes.json")
+    DEFAULT_CACHE_DIR = os.path.join(root, "state", "nexuslink")
+    DEFAULT_LOG = os.path.join(root, "hudfix.log")
     now = utc_now_epoch()
     store = os.path.join(root, "state.db")
     pid_file = os.path.join(root, "session-pids.json")
     export_dir = os.path.join(root, "session-exports")
     quarantine = os.path.join(root, "_QUARANTINE")
-    log_path = os.path.join(root, "hudfix.log")
+    log_path = DEFAULT_LOG
+    cache_dir = DEFAULT_CACHE_DIR
     keep_root = root
 
     dummies = []
@@ -1674,6 +1896,7 @@ def self_check(keep=False, compact=False, verbose=True):
             "export_dir": export_dir,
             "quarantine_root": quarantine,
             "log": log_path,
+            "cache_dir": cache_dir,
             "now": now,
             "limit": 3,
             "older_than_days": 30,
@@ -1698,8 +1921,50 @@ def self_check(keep=False, compact=False, verbose=True):
         checks.equal("crew.sessions quarantine untouched", _tree_state(quarantine), tree_before)
         checks.check("crew.sessions is read-only by pragma", plan.get("query_only") is True)
         checks.check("crew.sessions has no changes", plan["changes"] == [])
-        checks.check("crew.sessions missing store is an answer, not a crash",
-                     plan_sessions({"db": os.path.join(root, "nope.db"), "log_steps": False})["ok"] is False)
+
+        # ---- the read cache: 10 s floor, atomic file, under the state dir
+        cache_file = os.path.join(cache_dir, CACHE_NAME)
+        checks.check("crew.sessions first plan is a cache miss", plan["cache"]["hit"] is False, plan.get("cache"))
+        checks.equal("crew.sessions cache floor is 10 s", plan["cache"]["ttl_s"], CACHE_FLOOR_S)
+        checks.check("crew.sessions wrote its cache", plan.get("cache_write", {}).get("written") is True,
+                     plan.get("cache_write"))
+        checks.check("crew.sessions cache file is under the state dir", os.path.exists(cache_file), cache_file)
+        checks.check("crew.sessions cache file is one JSON object, not a half write",
+                     isinstance(json.load(open(cache_file, encoding="utf-8")), dict))
+        checks.check("crew.sessions cache file leaves no .tmp beside it",
+                     not [name for name in os.listdir(cache_dir) if name.endswith(".tmp")],
+                     str(os.listdir(cache_dir)))
+        cached_plan = plan_sessions(dict(ctx))
+        checks.check("crew.sessions second plan inside 10 s is a cache hit",
+                     cached_plan["cache"]["hit"] is True, cached_plan.get("cache"))
+        checks.check("crew.sessions cache hit reports its age",
+                     cached_plan["cache"]["age_s"] is not None and cached_plan["cache"]["age_s"] >= 0,
+                     cached_plan.get("cache"))
+        checks.equal("crew.sessions cached answer is identical",
+                     [(item["full"], item["tokens"]) for item in cached_plan["items"]],
+                     [(item["full"], item["tokens"]) for item in plan["items"]])
+        checks.check("crew.sessions cache expires after the floor",
+                     plan_sessions(dict(ctx, now=now + CACHE_FLOOR_S + 1))["cache"]["hit"] is False)
+        checks.check("crew.sessions cache can be bypassed in one call",
+                     plan_sessions(dict(ctx, cache=False))["cache"]["hit"] is False)
+        checks.equal("crew.sessions cache floor clamps a smaller ttl",
+                     plan_sessions(dict(ctx, cache_ttl=1))["cache"]["ttl_s"], CACHE_FLOOR_S)
+        empty_fixture = os.path.join(root, "empty-fixture")
+        os.makedirs(empty_fixture, exist_ok=True)
+        empty_plan = plan_sessions({"db": os.path.join(empty_fixture, "state.db"), "db_named": False,
+                                    "log_steps": False,
+                                    "cache_dir": os.path.join(empty_fixture, "state")})
+        checks.check("a fixture with no store is an answer, not a crash",
+                     empty_plan["ok"] is False and empty_plan.get("exit_code") is None)
+        checks.equal("crew.sessions cache hits leave the store alone", fingerprint(store), db_before)
+        checks.check("crew.sessions named missing store is exit 2",
+                     plan_sessions({"db": os.path.join(root, "nope.db"), "db_named": True,
+                                    "log_steps": False})["exit_code"] == EXIT_PROGRAMMING)
+        default_missing = plan_sessions({"db": os.path.join(root, "nope.db"), "db_named": False,
+                                         "log_steps": False})
+        checks.check("crew.sessions missing default store is an answer, not a crash",
+                     default_missing["ok"] is False and default_missing.get("exit_code") is None,
+                     default_missing.get("refuse_reason"))
 
         # ---- crew.stop: refused when the ps line does not match
         bystander = _spawn_dummy("bystander-process-0001")
@@ -1743,25 +2008,55 @@ def self_check(keep=False, compact=False, verbose=True):
 
         no_record = plan_stop({"session_id": "20261020_101010_aaaaaa", "pid_file": pid_file,
                                "now": now, "log_steps": False, "host": "darwin"})
-        checks.check("crew.stop with no record plans linux_only", no_record["linux_only"] is True)
-        checks.check("crew.stop linux plan names the hermes command",
+        checks.check("crew.stop with no record is not runnable", no_record["runnable"] is False)
+        checks.check("crew.stop with no record is not linux_only", no_record["linux_only"] is False,
+                     no_record.get("linux_only"))
+        checks.check("crew.stop no-record plan still shows the hermes command as text",
                      (no_record.get("command") or "").startswith("hermes gateway stop"),
                      no_record.get("command"))
+        checks.check("crew.stop no-record plan says the command is text only",
+                     any("text only" in value for value in (no_record.get("notes") or [])),
+                     no_record.get("notes"))
         no_record_run = run_stop({"session_id": "20261020_101010_aaaaaa", "pid_file": pid_file,
                                   "now": now, "log_steps": False, "host": "darwin"}, "crew.stop")
-        checks.check("crew.stop refuses to run a linux_only plan on this Mac",
+        checks.check("crew.stop refuses to run the no-record plan",
                      no_record_run["ok"] is False and no_record_run["runnable"] is False)
-        checks.check("crew.stop linux refusal says linux_only",
-                     "linux_only" in (no_record_run.get("refuse_reason") or ""))
-        checks.check("crew.stop linux refusal executed nothing", process_alive(good.pid))
+        checks.check("crew.stop run reports the command as text only",
+                     "never executed" in (no_record_run.get("would") or ""), no_record_run.get("would"))
+        checks.check("crew.stop run executed nothing", process_alive(good.pid))
 
-        # A host claim of "linux" on this Mac must not unlock execution either.
-        forced = run_stop({"session_id": "20261020_101010_aaaaaa", "pid_file": pid_file,
-                           "now": now, "log_steps": False, "host": "linux"}, "crew.stop")
-        checks.check("crew.stop stays refused when ctx claims linux on a Mac",
-                     forced["ok"] is False and process_alive(good.pid))
-        checks.check("crew.stop names the platform it actually is",
-                     "darwin" in (forced.get("refuse_reason") or ""), forced.get("refuse_reason"))
+        # A Linux host with `hermes` on PATH must still execute nothing. The shim
+        # below would leave a marker if anything ran it; the platform claim and
+        # the real sys.platform are both set to linux for the call.
+        shim_dir = os.path.join(root, "shim")
+        os.makedirs(shim_dir, exist_ok=True)
+        marker = os.path.join(root, "hermes-was-called")
+        shim = os.path.join(shim_dir, "hermes")
+        with open(shim, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\n: > %s\nexit 0\n" % marker)
+        os.chmod(shim, 0o755)
+        saved_path = os.environ.get("PATH", "")
+        saved_platform = sys.platform
+        os.environ["PATH"] = shim_dir + os.pathsep + saved_path
+        sys.platform = "linux"
+        try:
+            linux_plan = plan_stop({"session_id": "no-such-session-9999", "pid_file": pid_file,
+                                    "now": now, "log_steps": False, "host": "linux"})
+            linux_run = run_stop({"session_id": "no-such-session-9999", "pid_file": pid_file,
+                                  "now": now, "log_steps": False, "host": "linux"}, "crew.stop")
+        finally:
+            os.environ["PATH"] = saved_path
+            sys.platform = saved_platform
+        checks.check("simulated linux host never calls hermes", not os.path.exists(marker))
+        checks.check("simulated linux plan stays not runnable",
+                     linux_plan["runnable"] is False and linux_plan["linux_only"] is False)
+        checks.check("simulated linux run stays plan-only",
+                     linux_run["ok"] is False and linux_run["dry_run"] is False
+                     and linux_run.get("command_host") == "linux")
+        checks.check("simulated linux run executed nothing", process_alive(good.pid))
+        checks.check("module carries no linux execute helper",
+                     ("linux_stop" + "_run") not in source_text
+                     and ("def plan_linux" + "_stop") not in source_text)
 
         # The Hermes process table is the second pid source; prove it is read.
         processes_file = os.path.join(root, "hermes-processes.json")
@@ -1803,42 +2098,79 @@ def self_check(keep=False, compact=False, verbose=True):
             handle.write('{"role": "user", "content": "compress me"}\n' * 2000)
         source_sha = sha256_file(source)
         source_bytes = os.path.getsize(source)
-        compress_plan = plan_compress({"session_id": "20261021_111111_bbbbbb", "export_dir": export_dir,
-                                       "quarantine_root": quarantine, "now": now, "log_steps": False})
+        compress_ctx = {"session_id": "20261021_111111_bbbbbb", "export_dir": export_dir,
+                        "quarantine_root": quarantine, "now": now, "log_steps": False,
+                        "cache_dir": cache_dir}
+        compress_plan = plan_compress(dict(compress_ctx))
         checks.check("crew.compress plan ok", compress_plan["ok"], compress_plan.get("refuse_reason"))
         checks.equal("crew.compress plan source", compress_plan["items"][0]["source"], tilde(source))
         checks.check("crew.compress plan names a .gz destination",
                      compress_plan["items"][0]["destination"].endswith(".gz"))
         checks.equal("crew.compress plan bytes", compress_plan["items"][0]["bytes"], source_bytes)
         checks.check("crew.compress plan changes nothing on disk", os.path.exists(source))
+        checks.check("crew.compress plan creates no quarantine directory",
+                     not os.path.exists(quarantine), quarantine)
         checks.equal("crew.compress quarantine untouched by plan", _tree_state(quarantine), tree_before)
-        no_confirm = run_compress({"session_id": "20261021_111111_bbbbbb", "export_dir": export_dir,
-                                   "quarantine_root": quarantine, "now": now, "log_steps": False}, None)
+        checks.check("crew.compress plan says nothing is deleted",
+                     "nothing deleted" in (compress_plan.get("would") or ""), compress_plan.get("would"))
+        no_confirm = run_compress(dict(compress_ctx), None)
         checks.check("crew.compress without --confirm refuses", no_confirm["ok"] is False)
         checks.check("crew.compress refusal left the source", os.path.exists(source))
-        compress_run = run_compress({"session_id": "20261021_111111_bbbbbb", "export_dir": export_dir,
-                                     "quarantine_root": quarantine, "now": now, "log_steps": False},
-                                    "crew.compress")
+        compress_run = run_compress(dict(compress_ctx), "crew.compress")
         checks.check("crew.compress run ok", compress_run["ok"], compress_run.get("refuse_reason"))
         archive = expand(compress_run["items"][0]["destination"])
+        quarantined = expand(compress_run["items"][0]["quarantine"])
         checks.check("crew.compress archive exists", os.path.exists(archive), archive)
-        checks.check("crew.compress source is gone", not os.path.exists(source))
+        checks.check("crew.compress source left the export dir", not os.path.exists(source))
+        checks.check("crew.compress source was quarantined, not deleted",
+                     os.path.exists(quarantined), quarantined)
+        checks.equal("crew.compress quarantined source is byte-identical",
+                     sha256_file(quarantined), source_sha)
         checks.check("crew.compress archive round-trips",
                      sha256_file(archive) != "" and _gunzip_sha256(archive) == source_sha)
-        checks.check("crew.compress writes a MANIFEST row", len(manifest_rows(manifest_path({"quarantine_root": quarantine}, now))) == 1)
-        row = manifest_rows(manifest_path({"quarantine_root": quarantine}, now))[0]
-        checks.equal("crew.compress MANIFEST has five columns", len(row.split("\t")), 5)
-        checks.check("crew.compress MANIFEST names the archive", archive in row.split("\t")[1])
-        checks.check("crew.compress MANIFEST records the byte counts",
-                     ("%d B -> " % source_bytes) in row and row.split("\t")[2] != "0",
-                     row)
+        checks.check("crew.compress MANIFEST is the F8a spine file",
+                     open(manifest_path({"quarantine_root": quarantine}, now), encoding="utf-8").readline()
+                     == MANIFEST_HEADER)
+        rows = manifest_rows(manifest_path({"quarantine_root": quarantine}, now))
+        checks.equal("crew.compress writes one MANIFEST row", len(rows), 1)
+        fields = rows[0].split("\t") if rows else []
+        checks.equal("crew.compress MANIFEST has the spine's five columns", len(fields), 5)
+        checks.check("crew.compress MANIFEST starts with an iso utc stamp",
+                     bool(fields) and fields[0].endswith("Z") and fields[0][:2] == "20", fields[:1])
+        checks.equal("crew.compress MANIFEST names the action",
+                     fields[1] if len(fields) > 1 else None, "crew.compress")
+        checks.equal("crew.compress MANIFEST records the original path",
+                     fields[2] if len(fields) > 2 else None, source)
+        checks.equal("crew.compress MANIFEST records the byte count",
+                     fields[3] if len(fields) > 3 else None, str(source_bytes))
+        checks.equal("crew.compress MANIFEST records the destination",
+                     fields[4] if len(fields) > 4 else None, quarantined)
         checks.check("crew.compress second run refuses (no source)",
-                     plan_compress({"session_id": "20261021_111111_bbbbbb", "export_dir": export_dir,
-                                    "quarantine_root": quarantine, "now": now,
-                                    "log_steps": False})["ok"] is False)
+                     plan_compress(dict(compress_ctx))["ok"] is False)
         missing = plan_compress({"path": os.path.join(root, "absent.bin"), "quarantine_root": quarantine,
                                  "now": now, "log_steps": False})
         checks.equal("crew.compress named missing path is a caller error", missing.get("exit_code"), EXIT_PROGRAMMING)
+        missing_dir = plan_compress({"session_id": "20261021_111111_bbbbbb",
+                                     "export_dir": os.path.join(root, "no-exports"),
+                                     "export_dir_named": True, "quarantine_root": quarantine,
+                                     "now": now, "log_steps": False})
+        checks.equal("crew.compress named missing export dir is exit 2",
+                     missing_dir.get("exit_code"), EXIT_PROGRAMMING)
+
+        # A day manifest from an older schema is never appended to: the row goes
+        # to the per-tag file, and the legacy file keeps its exact bytes.
+        legacy_day = os.path.join(quarantine, "2026-10-20")
+        os.makedirs(legacy_day, exist_ok=True)
+        legacy_manifest = os.path.join(legacy_day, "MANIFEST.tsv")
+        legacy_text = "date\tsrc\tdst\treason\n2026-10-20\t~/a\t~/b\tlegacy\n"
+        with open(legacy_manifest, "w", encoding="utf-8") as handle:
+            handle.write(legacy_text)
+        legacy_now = datetime.datetime(2026, 10, 20, 12, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
+        legacy_target = manifest_target({"quarantine_root": quarantine, "now": legacy_now}, "crew-logs")
+        checks.equal("legacy day manifest gives way to a per-tag manifest",
+                     legacy_target, os.path.join(legacy_day, "crew-logs", "MANIFEST.tsv"))
+        with open(legacy_manifest, encoding="utf-8") as handle:
+            checks.equal("picking the per-tag file wrote nothing", handle.read(), legacy_text)
 
         # ---- crew.logs
         tree_before_logs = _tree_state(quarantine)
@@ -1870,6 +2202,14 @@ def self_check(keep=False, compact=False, verbose=True):
         checks.equal("crew.logs quarantine tree grew by three", len(_tree_state(os.path.join(quarantine, day_stamp(now), "crew-logs"))), 3)
         rows_after = manifest_rows(manifest_path({"quarantine_root": quarantine}, now))
         checks.equal("crew.logs appended three MANIFEST rows", len(rows_after), 4)
+        logs_fields = [row.split("\t") for row in rows_after[1:]]
+        checks.check("crew.logs rows carry the spine columns",
+                     all(len(fields) == 5 for fields in logs_fields), str(logs_fields[:1]))
+        checks.check("crew.logs rows name the action",
+                     all(fields[1] == "crew.logs" for fields in logs_fields), str([f[1] for f in logs_fields]))
+        checks.check("crew.logs rows record the quarantine destination",
+                     all(fields[4].startswith(os.path.join(quarantine, day_stamp(now), "crew-logs"))
+                         for fields in logs_fields), str([f[4] for f in logs_fields]))
         checks.check("crew.logs quarantine copies are byte-identical",
                      all(os.path.getsize(os.path.join(quarantine, day_stamp(now), "crew-logs", name)) > 0
                          for name in os.listdir(os.path.join(quarantine, day_stamp(now), "crew-logs"))))
@@ -1877,6 +2217,17 @@ def self_check(keep=False, compact=False, verbose=True):
                      plan_logs({"export_dir": export_dir, "quarantine_root": quarantine, "now": now,
                                 "older_than_days": 30, "log_steps": False})["total"]["count"] == 0)
         checks.equal("crew.logs store untouched", fingerprint(store), db_before_logs)
+        missing_logs_dir = plan_logs({"export_dir": os.path.join(root, "no-exports"),
+                                      "export_dir_named": True, "quarantine_root": quarantine,
+                                      "now": now, "log_steps": False})
+        checks.equal("crew.logs named missing export dir is exit 2",
+                     missing_logs_dir.get("exit_code"), EXIT_PROGRAMMING)
+        unset_logs_dir = plan_logs({"export_dir": os.path.join(root, "no-exports"),
+                                    "export_dir_named": False, "quarantine_root": quarantine,
+                                    "now": now, "log_steps": False})
+        checks.check("crew.logs missing default export dir is an answer",
+                     unset_logs_dir["ok"] is False and unset_logs_dir.get("exit_code") is None,
+                     unset_logs_dir.get("refuse_reason"))
 
         # ---- logging goes through the file when standalone, and says nothing secret
         log_ctx = dict(ctx, log_steps=True, log=log_path)
@@ -1908,6 +2259,89 @@ def self_check(keep=False, compact=False, verbose=True):
         code_bad, out_bad = _cli(["--action", "crew.compress", "--plan", "--json", "--path",
                                   os.path.join(root, "absent.bin"), "--no-log"])
         checks.equal("CLI named missing path exits 2", code_bad, EXIT_PROGRAMMING)
+        code_db, out_db = _cli(["--action", "crew.sessions", "--plan", "--json",
+                                "--db", os.path.join(root, "absent.db"), "--no-log"])
+        checks.equal("CLI named missing --db exits 2", code_db, EXIT_PROGRAMMING)
+        code_pid, out_pid = _cli(["--action", "crew.stop", "--plan", "--json", "--session-id", "sess-x",
+                                  "--pid-file", os.path.join(root, "absent-pids.json"), "--no-log"])
+        checks.equal("CLI named missing --pid-file exits 2", code_pid, EXIT_PROGRAMMING)
+        code_exp, out_exp = _cli(["--action", "crew.logs", "--plan", "--json",
+                                  "--export-dir", os.path.join(root, "absent-exports"), "--no-log"])
+        checks.equal("CLI named missing --export-dir exits 2", code_exp, EXIT_PROGRAMMING)
+        checks.check("CLI caller errors stay one JSON object",
+                     all(isinstance(payload, dict) and payload.get("ok") is False
+                         for payload in (out_bad, out_db, out_pid, out_exp)))
+
+        # ---- --fixture DIR: no host state, every path inside the fixture
+        fixture = os.path.join(root, "fixture")
+        os.makedirs(os.path.join(fixture, "session-exports"), exist_ok=True)
+        fixture_store = os.path.join(fixture, "state.db")
+        _make_store(fixture_store)
+        fixture_db_before = fingerprint(fixture_store)
+        fixture_export = os.path.join(fixture, "session-exports", "20260101_aaaaaa_old.jsonl")
+        with open(fixture_export, "w", encoding="utf-8") as handle:
+            handle.write('{"role": "user"}\n' * 10)
+        os.utime(fixture_export, (now - 90 * 86400.0, now - 90 * 86400.0))
+        fake_home = os.path.join(root, "fake-home")
+        os.makedirs(fake_home, exist_ok=True)
+        # PYTHONDONTWRITEBYTECODE stops the interpreter's own stdlib caches from
+        # landing in the fake home; what is left is what the module itself wrote.
+        fake_env = {"HOME": fake_home, "PYTHONDONTWRITEBYTECODE": "1"}
+
+        def _home_smells():
+            return sorted(
+                name for name in _tree_state(fake_home)
+                if "nexuslink" in name or ".hermes" in name or "_QUARANTINE" in name
+            )
+        fake_before = _tree_state(fake_home)
+        code_fx, out_fx = _cli(["--action", "crew.sessions", "--plan", "--json",
+                                "--fixture", fixture, "--no-log"], env=fake_env)
+        checks.equal("CLI --fixture sessions plan exits 0", code_fx, 0)
+        checks.check("CLI --fixture plan reads the fixture store", out_fx.get("ok") is True,
+                     out_fx.get("refuse_reason"))
+        checks.check("CLI --fixture plan points at the fixture store",
+                     (out_fx.get("store") or {}).get("path", "").endswith(os.path.join("fixture", "state.db")),
+                     (out_fx.get("store") or {}).get("path"))
+        checks.check("CLI --fixture writes its cache inside the fixture",
+                     os.path.exists(os.path.join(fixture, "state", "nexuslink", CACHE_NAME)))
+        checks.check("CLI --fixture leaves the host cache dir alone",
+                     not os.path.exists(os.path.join(fake_home, ".local", "state", "nexuslink", CACHE_NAME)))
+        code_fx_logs, out_fx_logs = _cli(["--action", "crew.logs", "--plan", "--json",
+                                          "--fixture", fixture, "--no-log"], env=fake_env)
+        checks.equal("CLI --fixture logs plan exits 0", code_fx_logs, 0)
+        checks.check("CLI --fixture logs plan finds the fixture export",
+                     out_fx_logs.get("total", {}).get("count") == 1, out_fx_logs.get("total"))
+        code_fx_stop, out_fx_stop = _cli(["--action", "crew.stop", "--plan", "--json",
+                                          "--fixture", fixture, "--session-id", "20260101_aaaaaa",
+                                          "--no-log"], env=fake_env)
+        checks.equal("CLI --fixture stop plan exits 0", code_fx_stop, 0)
+        checks.check("CLI --fixture stop plan is not runnable",
+                     out_fx_stop.get("runnable") is False and out_fx_stop.get("linux_only") is False)
+        code_fx_compress, out_fx_compress = _cli(["--action", "crew.compress", "--plan", "--json",
+                                                  "--fixture", fixture, "--session-id", "20260101_aaaaaa",
+                                                  "--no-log"], env=fake_env)
+        checks.equal("CLI --fixture compress plan exits 0", code_fx_compress, 0)
+        checks.check("CLI --fixture compress plan finds the fixture export",
+                     out_fx_compress.get("ok") is True, out_fx_compress.get("refuse_reason"))
+        checks.check("CLI --fixture wrote no state path into the fake home",
+                     _home_smells() == [], str(_home_smells()))
+        checks.equal("CLI --fixture plans left the fixture store untouched",
+                     fingerprint(fixture_store), fixture_db_before)
+
+        # ---- --self-check --json is one object and nothing else
+        # The child runs the same proof, so it may not spawn another self-check:
+        # HUDFIX_CREW_SELF_CHECK=1 tells it to skip this one nested start.
+        if not os.environ.get("HUDFIX_CREW_SELF_CHECK"):
+            proc = _run_cli(["--self-check", "--json"], env={"HUDFIX_CREW_SELF_CHECK": "1"})
+            stdout_lines = [line for line in proc.stdout.splitlines() if line.strip()]
+            checks.equal("CLI --self-check --json exits 0", proc.returncode, 0)
+            checks.equal("CLI --self-check --json prints exactly one line", len(stdout_lines), 1)
+            try:
+                reported = json.loads(stdout_lines[0]) if stdout_lines else {}
+            except ValueError:
+                reported = {}
+            checks.check("CLI --self-check --json prints the summary object",
+                         reported.get("ok") is True and reported.get("passed", 0) >= 100, stdout_lines[:1])
 
         # ---- final invariants
         checks.equal("no plan or run wrote to the store", fingerprint(store), db_before)
@@ -1916,6 +2350,14 @@ def self_check(keep=False, compact=False, verbose=True):
         checks.equal("quarantine holds exactly the three old exports, nothing deleted", len(moved_names), 3)
         checks.check("every quarantined file is non-empty",
                      all(os.path.getsize(os.path.join(moved_dir, name)) > 0 for name in moved_names))
+        compress_dir = os.path.join(quarantine, day_stamp(now), "crew-compress")
+        compress_names = sorted(os.listdir(compress_dir)) if os.path.isdir(compress_dir) else []
+        checks.equal("compress left the archive and the source in quarantine", len(compress_names), 2)
+        checks.check("compress quarantine holds the .gz and the original",
+                     any(name.endswith(".gz") for name in compress_names)
+                     and any(not name.endswith(".gz") for name in compress_names), str(compress_names))
+        checks.check("nothing was deleted from the quarantine tree",
+                     all(os.path.getsize(os.path.join(compress_dir, name)) > 0 for name in compress_names))
     finally:
         for proc in dummies:
             if proc.poll() is None:
@@ -1924,15 +2366,19 @@ def self_check(keep=False, compact=False, verbose=True):
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     pass
+        HERMES_PROCESSES, DEFAULT_CACHE_DIR, DEFAULT_LOG = saved_globals
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
-        else:
+        elif not compact:
             print("temp: %s" % keep_root)
             print("quarantine proof: %s" % os.path.join(keep_root, "_QUARANTINE"))
 
     if compact:
+        # --json: one object on stdout, nothing else, failures included.
         emit({"ok": not checks.failed, "passed": checks.passed,
-              "failed": [name for name, _ in checks.failed]}, True)
+              "checks": checks.passed + len(checks.failed),
+              "failed": [{"name": name, "detail": detail} for name, detail in checks.failed]}, True)
+        return EXIT_OK if not checks.failed else 1
     return checks.summary()
 
 
@@ -1944,13 +2390,22 @@ def _gunzip_sha256(path):
     return digest.hexdigest()
 
 
-def _cli(argv):
-    proc = subprocess.run(
+def _run_cli(argv, env=None):
+    """The real CLI, as a subprocess, with an optional environment overlay."""
+    environ = dict(os.environ)
+    if env:
+        environ.update(env)
+    return subprocess.run(
         [sys.executable, os.path.abspath(__file__)] + argv,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=180,
+        env=environ,
     )
+
+
+def _cli(argv, env=None):
+    proc = _run_cli(argv, env)
     payload = {}
     if proc.stdout.strip():
         try:
