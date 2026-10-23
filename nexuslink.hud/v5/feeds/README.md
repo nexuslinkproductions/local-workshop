@@ -98,11 +98,11 @@ number as live.
 `audioop` (removed in Python 3.13) and no numpy.
 
 `--rate` pacing sits on a fixed grid, `t0 + k * (1 / rate)`. A late wake-up
-delivers its sample late and the next one returns to the grid; slots that already
-passed are skipped, never replayed, and no two lines are closer than half a
-period, so one slow wake-up cannot burst the stream. The wait for a slot is
-sliced into 5 ms sleeps: a single long `sleep` oversleeps by tens of milliseconds
-on a loaded host, and that oversleep is what turns 10 Hz into 6 Hz.
+delivers that sample late; the next sample returns to the grid. Slots that
+already passed are skipped, never replayed, and no two lines are closer than
+half a period, so one slow wake-up cannot burst the stream. The wait for a slot
+is sliced into 5 ms sleeps: a single long `sleep` oversleeps by tens of
+milliseconds on a loaded host, and that oversleep is what turns 10 Hz into 6 Hz.
 
 ## Reading it from the deck
 
