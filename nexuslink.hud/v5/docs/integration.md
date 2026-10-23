@@ -72,12 +72,18 @@ Rules the layer keeps:
 * **`disks` has no reader yet.** `DeckMain` runs `df -B1 --output=source,used,size,target`
   and shapes the rows as `{label, mount, used, usedGb, sizeGb}`; the storage deep
   view consumes exactly that.
-* **Typography** is loaded once in `DeckSurface.qml` from `Tokens.fontFiles`
-  (`v5/fonts/Satoshi-{Regular,Medium,Bold,Black}.ttf`), and again in `DeckMain`
-  for the shell instance. Two registrations of the same file are harmless, and
-  the second one is what makes an offscreen still Satoshi without Quickshell.
-  (`kit/Clock.qml` has its own loaders that resolve one directory too high through
-  the module symlink; the family is already registered by then, so it is inert.)
+* **Typography** is loaded in one place: `DeckSurface.qml`, from
+  `Tokens.fontFiles` (`v5/fonts/Satoshi-{Regular,Medium,Bold,Black}.ttf`).
+  `DeckMain.qml` carries no `FontLoader` — it instantiates `DeckSurface`, so the
+  shell gets the same four, and a render that never loads Quickshell (the
+  offscreen stills today, an offscreen gate on Linux tomorrow) gets them too.
+  A kit component asks for its faces as `../fonts/...`, which through the module
+  import path resolves to `<imports>/NexusHud/fonts`, so `deck-shot.sh`,
+  `deck-audit.py` and `deck-trace.py` mirror `v5/fonts` there and
+  `kit/Clock.qml`'s own four loaders resolve that way. Whether the painted glyphs
+  are really Satoshi is measured, not assumed: `tests/i1/DeckAudit.qml` compares
+  every visible `Text` against a Satoshi twin and a fallback twin, and
+  `deck-audit.py` fails when the painted advance is the fallback one.
 
 ## 2. How a widget expands into its deeper view
 

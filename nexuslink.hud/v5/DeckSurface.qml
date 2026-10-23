@@ -222,11 +222,18 @@ Item {
             focusId = focusRequest
     }
 
-    // Fonts: the four Satoshi faces, from Tokens.fontFiles. DeckSurface is at
-    // v5/ and the paths in the token are relative to it, so Qt.resolvedUrl lands
-    // on v5/fonts/Satoshi-*.ttf. DeckMain loads the same four for the shell
-    // instance; a duplicate registration of the same file is harmless, and this
-    // one is what makes an offscreen still Satoshi without Quickshell.
+    // Fonts. The four Satoshi faces, from Tokens.fontFiles. This is the only
+    // place the deck loads them: DeckMain.qml is the Quickshell layer and owns
+    // no FontLoader, because every render that is not the live shell (the still
+    // harness today, an offscreen gate on Linux tomorrow) composes DeckSurface
+    // directly and would otherwise fall back to another face - and then every
+    // number measured on that render is measured against the wrong metrics.
+    // DeckSurface lives at v5/ and the token paths are relative to it, so
+    // Qt.resolvedUrl lands on v5/fonts/Satoshi-*.ttf. A kit component loaded
+    // through the module import path resolves ../fonts instead, so the tools
+    // that build that path (deck-shot.sh, deck-audit.py, deck-trace.py) mirror
+    // v5/fonts to <imports>/NexusHud/fonts. tests/i1/DeckAudit.qml fails the
+    // audit if a painted Text carries the fallback advance rather than Satoshi's.
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["400"]) }
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["500"]) }
     FontLoader { source: Qt.resolvedUrl(Tokens.fontFiles["700"]) }

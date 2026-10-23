@@ -33,6 +33,50 @@ Stills: `v5/stills/i1-deck-rest.png`, `v5/stills/i1-deck-crew-focus.png`,
 full size as JPEG (`.jpg`, 116 to 196 KB) for reading in chat.
 `deck-shot.sh`, so a silently flat frame exits 1.
 
+### Fonts
+
+Every render above is Satoshi, and that is measured, not assumed.
+
+* The still harness itself reports the resolved family. `tests/i1/FontProof.qml`
+  composes the same deck and prints what the engine has:
+
+  ```
+  nexuslink.hud/v5/tools/deck-shot.sh nexuslink.hud/v5/tests/i1/FontProof.qml \
+      "$TMPDIR/font-proof.png" 2>&1 | grep FONT
+  qml: FONT {"family":"Satoshi","familiesHasSatoshi":true,"familiesCount":249,
+    "clockDigit96":63.359,"clockDigit96Fallback":58.203,"clockOne96":63.359,
+    "clockColon96":27.063,"clockColon96Fallback":20.797,
+    "label16":101.672,"label16Fallback":102.188,
+    "value20":62.984,"value20Fallback":62.047}
+  ```
+
+* `deck-audit.py` compares every painted `Text` three ways (its own advance, a
+  Satoshi twin, a fallback twin): at rest **16 of 16 decisive texts carry the
+  Satoshi advance, 0 the fallback one**; crew focus **16 of 16** with one elided
+  session title not decisive. The audit's own widths (`STORAGE` 101.672 at 16 px,
+  `412 GB` 62.984 at 20 px, section 3) equal the proof's Satoshi numbers exactly.
+* The clock's fixed advance is the W7 check, unchanged:
+  `tests/w7/ClockProof.qml` at 168 px gives `implicitWidth` 461.000 for `01:11`,
+  for `18:48` and for the resting clock, and `TNUM on 0000=443.500 1111=443.500
+  delta=0.000` against `delta=236.516` with the feature off. At the deck's 96 px
+  that is the `63.359` digit advance, 0.660 em.
+* `DeckSurface.qml` holds the only four `FontLoader`s in the tree; `DeckMain.qml`
+  has none (it instantiates `DeckSurface`, so the shell gets them too).
+  `deck-shot.sh`, `deck-audit.py` and `deck-trace.py` also mirror `v5/fonts` to
+  `<imports>/NexusHud/fonts`, which is where a kit component's `../fonts/...`
+  lands through the module import path.
+
+What round 2 saw, and what it was: at `cfdee53` each render printed four
+`FontLoader: Cannot load font` lines, and all four were `kit/Clock.qml`'s
+module-relative loaders, not the deck's. The deck itself was already Satoshi.
+Measured, not argued: the same still with the module fonts link and without it
+differs by **15 pixels at a maximum channel delta of 1** (antialiasing), and the
+audit reports the Satoshi advance on all 16 painted texts either way. The repair
+closes the class anyway: the deck's loaders now live where every non-shell render
+gets them, the import path the three tools build resolves the kit's own loaders,
+and the audit exits non-zero if a painted text ever regresses to the fallback
+face.
+
 ## 2. Layout against the guides and against s2
 
 `v5/tools/deck-layout.py` measures the render, not the intent: it converts the
@@ -73,9 +117,16 @@ these:
   first tile ring (1135) and the 1.3x Arc Raiders hero (2407), because the hero
   sits 40 px apart so the arc's optical centre is not its box centre.
 
-The measured clock centre is 5.4 px right of 1280 at 96 px type; that is the
-glyph advance of "00:18" in Satoshi, inside the 8 px tolerance, and the Clock
-component centres its own row - the deck does not nudge it.
+The measured clock centre is 5.4 px right of the 1280 guide. The audit puts the
+Clock item's own box at x 1148.0 with cells 4 x 59.52 + 24.96 = 263.04, so the
+box centre is 1279.5: the deck centres the clock on the guide and does not nudge
+it. The 5.4 px is where the glyph ink falls inside those fixed cells (the 0.660 em
+tabular digit is wider than its 0.62 em cell, so the outer digits overhang their
+cells while the `1` stem does not). Inside the 8 px tolerance, and not tuned.
+
+**Nothing moved.** Section 1 renders and this layout were re-run after the fonts
+fix and every number above is unchanged: the deck was already composing in
+Satoshi (section 1, Fonts), so there was no metric to move.
 
 **Against s2.** Where s2 and the deck share a guide, s2's own numbers are the
 expectation: the s2 knot crop is 540x540 at (1010, 280) (measured by W1 for
@@ -111,15 +162,27 @@ nexuslink.hud/v5/tools/deck-audit.py nexuslink.hud/v5/tests/i1/audit-rest.qml
 ```
 == rest
    texts  16 items, 16 words after merging glyph cells
-   '00:18'    x= 1148.0 y= 96.0   w= 263.0        'CREW'     x= 394.5 y=675.0
-   'FRI'      x= 1077.9 y=134.0                   '3'        x= 420.5 y=695.0
-   '23 OCT'   x= 1446.0 y=134.0                   'LOCAL'    x=2098.0 y=687.5
-   'Find'     x= 2028.0 y=197.5                   '0.3 GB'   x=2103.0 y=707.5
-   'MAC'      x=  403.0 y=914.3                   '8 ms'     x= 405.0 y=934.3
-   'STORAGE'  x= 2083.0 y=914.3                   '412 GB'   x=2103.0 y=934.3
+   '00:18'                x= 1148.0 y=   96.0 w= 263.0
+   'FRI'                  x= 1077.9 y=  134.0 w=  36.1
+   '23 OCT'               x= 1446.0 y=  134.0 w=  80.3
+   'Find'                 x= 1977.5 y=  197.5 w= 184.0
+   'CREW'                 x=  394.5 y=  675.0 w=  64.3
+   'LOCAL'                x= 2098.0 y=  687.5 w=  71.3
+   '3'                    x=  420.5 y=  695.0 w=  11.4
+   '0.3 GB'               x= 2103.0 y=  707.5 w=  62.0
+   'MAC'                  x=  403.0 y=  914.3 w=  48.2
+   'STORAGE'              x= 2083.0 y=  914.3 w= 101.7
+   '8 ms'                 x=  405.0 y=  934.3 w=  43.1
+   '412 GB'               x= 2103.0 y=  934.3 w=  63.0
    min px 16   overlaps 0
+   fonts  Qt.fontFamilies() has Satoshi: True   16 of 16 decisive texts painted in the Satoshi advance, 0 in the fallback face
    PASS
 ```
+
+Two differences from the round-2 evidence, both re-measured rather than argued:
+`Find` sits at x **1977.5** (the 2028.0 in round 1's copy of this block was stale
+from before the W6 token fold in `FindField`; the pill's measured centre, 2133.0,
+is unchanged), and the `fonts` line is new.
 
 * **16 words** at rest (limit 40). `CREW 3`, `LOCAL 0.3 GB`, `MAC 8 ms`,
   `STORAGE 412 GB`, `00:18`, `FRI`, `23 OCT`, `Find`.
@@ -152,6 +215,19 @@ directly. While `kit/Knot.qml` was missing from the base the same run reported 2
 warnings and all 20 extra were one root cause repeated (`Knot.qml is listed as
 component in qmldir but does not exist`, cascading into every file that imports
 the module); they are gone now that the component is in the tree.
+
+Round-1's repair files and this round's are clean against the module, not just
+against the file set above. With the import path built the way the tools build it:
+
+```
+qmllint -I <NexusHud/V5 -> kit, NexusHud/fonts -> v5/fonts> \
+  nexuslink.hud/v5/DeckSurface.qml nexuslink.hud/v5/tests/i1/DeckAudit.qml \
+  nexuslink.hud/v5/tests/i1/FontProof.qml
+```
+0 warnings, exit 0. (`DeckMain.qml` keeps its 15, unchanged: they are all
+`import Quickshell` being absent on this Mac. Linting `DeckSurface.qml` by file
+path without `-I` prints 129 `[unqualified]` notes for `Tokens.*`, which is the
+import path missing, not the file.)
 
 `deck-shot.sh`/`deck-audit.py`/`deck-trace.py` build the import path themselves,
 so no one has to hand-edit `tools/qml-lint.sh` (the `-I` request W4 raised is
@@ -187,6 +263,10 @@ Motion evidence for criterion 3 is in `motion.md`: the expand overshoot there is
 read off the curve's closed form plus a duration-stretched run of the same easing
 (`CrewOrb.transitions[0].animations[0]`, read live), because the offscreen frame
 clock here is 25 to 100 ms and cannot resolve a 347 ms curve's ~10 ms vertex.
+`deck-trace.py`'s exit status is that closed form, and only that: the
+frame-sampled runs are printed as a two-sided bound with their sample counts, so
+a frame landing off the vertex cannot fail a clean head (round 2 saw exactly that
+twice). Five consecutive runs on this head all exit 0.
 
 ## 6. What is deliberately not here
 

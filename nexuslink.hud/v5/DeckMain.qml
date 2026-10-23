@@ -350,12 +350,10 @@ Item {
         WlrLayershell.layer: WlrLayer.Background
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-        // The four Satoshi faces, loaded here as the card asks. DeckSurface loads
-        // them too, because an offscreen still has no shell to do it.
-        FontLoader { source: Qt.resolvedUrl("fonts/Satoshi-Regular.ttf") }
-        FontLoader { source: Qt.resolvedUrl("fonts/Satoshi-Medium.ttf") }
-        FontLoader { source: Qt.resolvedUrl("fonts/Satoshi-Bold.ttf") }
-        FontLoader { source: Qt.resolvedUrl("fonts/Satoshi-Black.ttf") }
+        // The four Satoshi faces live in DeckSurface.qml, not here: DeckSurface is
+        // instantiated below, so the shell gets them, and a pure-QtQuick render
+        // (tools/deck-shot.sh today, an offscreen gate on Linux tomorrow) gets
+        // them without Quickshell. Nothing else in this file loads a font.
 
         DeckSurface {
             anchors.fill: parent

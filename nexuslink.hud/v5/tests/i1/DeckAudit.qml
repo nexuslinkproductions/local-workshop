@@ -51,6 +51,32 @@ Item {
         return op
     }
 
+    // Font proof. The deck asks every Text for family "Satoshi"; if that family
+    // is not in the font database the request silently falls back and every
+    // measured advance belongs to another face. So for each painted Text the
+    // probe measures the same string three ways in the same engine: what the
+    // live item actually advanced (contentWidth), a twin with family "Satoshi",
+    // and a twin with a family that cannot exist (the fallback face). A live
+    // item that matches the Satoshi twin and not the fallback twin is painted
+    // in Satoshi. Nothing here is guessed from the source.
+    property var twinComponent: Component {
+        Text { visible: false; textFormat: Text.PlainText; wrapMode: Text.NoWrap }
+    }
+
+    function advanceWidth(s, px, wt, fam, ls, feats) {
+        var t = twinComponent.createObject(probe)
+        t.font.family = fam
+        t.font.pixelSize = px
+        t.font.weight = wt
+        t.font.letterSpacing = ls
+        if (feats)
+            t.font.features = feats
+        t.text = s
+        var w = t.contentWidth
+        t.destroy()
+        return Math.round(w * 1000) / 1000
+    }
+
     function collect(item, out) {
         var kids = item.children
         for (var i = 0; i < kids.length; ++i) {
@@ -60,6 +86,12 @@ Item {
                 var op = probe.effectiveOpacity(c)
                 if (op > 0.01) {
                     var p = c.mapToItem(null, 0, 0)
+                    var advS = probe.advanceWidth(txt, c.font.pixelSize, c.font.weight,
+                                                  "Satoshi", c.font.letterSpacing,
+                                                  c.font.features)
+                    var advF = probe.advanceWidth(txt, c.font.pixelSize, c.font.weight,
+                                                  "NexusNoSuchFamilyZzz", c.font.letterSpacing,
+                                                  c.font.features)
                     out.push({
                         "t": txt,
                         "px": c.font.pixelSize,
@@ -68,7 +100,14 @@ Item {
                         "y": Math.round(p.y * 10) / 10,
                         "w": Math.round(c.width * 10) / 10,
                         "h": Math.round(c.height * 10) / 10,
-                        "op": Math.round(op * 1000) / 1000
+                        "op": Math.round(op * 1000) / 1000,
+                        "adv": Math.round(c.contentWidth * 1000) / 1000,
+                        "advSatoshi": advS,
+                        "advFallback": advF,
+                        // A text that does not fit its box reports the elided
+                        // advance, which is smaller than both twins: it cannot
+                        // tell the two faces apart and the checker skips it.
+                        "advConstrained": c.contentWidth + 0.01 < Math.min(advS, advF)
                     })
                 }
             }
@@ -83,6 +122,12 @@ Item {
         }
         var out = []
         probe.collect(loader.item, out)
-        console.log("AUDIT " + JSON.stringify({ "label": probe.label, "texts": out }))
+        console.log("AUDIT " + JSON.stringify({
+            "label": probe.label,
+            "fontFamily": "Satoshi",
+            "fontFamiliesHasSatoshi": Qt.fontFamilies().indexOf("Satoshi") >= 0,
+            "fontFamiliesCount": Qt.fontFamilies().length,
+            "texts": out
+        }))
     }
 }

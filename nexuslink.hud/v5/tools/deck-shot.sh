@@ -34,6 +34,16 @@ imports=$(mktemp -d "${TMPDIR:-/tmp}/deck-imports.XXXXXX") || exit 3
 trap 'rm -rf -- "$imports"' EXIT
 mkdir -p "$imports/NexusHud" || exit 3
 ln -sfn "$V5/kit" "$imports/NexusHud/V5" || exit 3
+# Fonts. A component inside kit/ resolves its faces as ../fonts/Satoshi-*.ttf,
+# which is v5/fonts on disk; loaded through this module symlink that URL becomes
+# <imports>/NexusHud/fonts, so without this link every FontLoader in a kit
+# component fails. The deck itself does not need it (DeckSurface.qml carries the
+# four deck loaders, module-relative, so they land on v5/fonts either way - that
+# is measured in docs/acceptance.md, section 1: linking or not changes 15 pixels
+# at a channel delta of 1). This link is what makes a kit component resolve its
+# own faces, so the error lines stop and a component rendered on its own is not
+# composed in a fallback face.
+ln -sfn "$V5/fonts" "$imports/NexusHud/fonts" || exit 3
 
 mkdir -p -- "$(dirname -- "$out_png")" || exit 3
 

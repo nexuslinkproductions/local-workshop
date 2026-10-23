@@ -102,6 +102,27 @@ def overlaps(texts):
     return bad
 
 
+def font_check(payload, texts):
+    """Is the deck painted in Satoshi, or silently in the fallback face?
+
+    Each Text arrives with three advances measured in the same engine: the live
+    item's own contentWidth, a twin requesting family "Satoshi", and a twin
+    requesting a family that cannot exist (the fallback). A text whose Satoshi
+    and fallback advances differ is decisive: if the live advance is the
+    Satoshi one, the painted glyphs are Satoshi. Texts where the two advances
+    are identical cannot discriminate and are counted but not required.
+    """
+    fam = bool(payload.get("fontFamiliesHasSatoshi"))
+    eps = 0.01
+    elided = [t for t in texts if t.get("advConstrained")]
+    candidates = [t for t in texts if not t.get("advConstrained")]
+    decisive = [t for t in candidates
+                if abs(t.get("advSatoshi", 0) - t.get("advFallback", 0)) >= eps]
+    sat = [t for t in decisive if abs(t["adv"] - t["advSatoshi"]) < eps]
+    fb = [t for t in decisive if abs(t["adv"] - t["advFallback"]) < eps]
+    return fam, decisive, sat, fb, elided
+
+
 def audit(qml, wrapper):
     imports = tempfile.mkdtemp(prefix="deck-audit-imports.")
     try:
@@ -109,6 +130,11 @@ def audit(qml, wrapper):
         link = os.path.join(imports, "NexusHud", "V5")
         if not os.path.exists(link):
             os.symlink(os.path.join(V5, "kit"), link)
+        # kit components resolve their faces as ../fonts; through the module
+        # symlink that is <imports>/NexusHud/fonts, so mirror v5/fonts there.
+        fonts = os.path.join(imports, "NexusHud", "fonts")
+        if not os.path.exists(fonts):
+            os.symlink(os.path.join(V5, "fonts"), fonts)
         payload = run_probe(qml, wrapper, imports)
     finally:
         shutil.rmtree(imports, ignore_errors=True)
@@ -128,6 +154,11 @@ def audit(qml, wrapper):
     for m in merged:
         print("   %-22r x=%7.1f y=%7.1f w=%6.1f" % (m["t"], m["x"], m["y"], m["w"]))
     print("   min px %.0f   overlaps %d" % (min_px, len(bad)))
+    fam, decisive, sat, fb, elided = font_check(payload, texts)
+    print("   fonts  Qt.fontFamilies() has Satoshi: %s   %d of %d decisive texts painted"
+          " in the Satoshi advance, %d in the fallback face%s"
+          % (fam, len(sat), len(decisive), len(fb),
+             ("; %d elided text not decisive" % len(elided)) if elided else ""))
 
     ok = True
     if words > MAX_WORDS:
@@ -139,6 +170,16 @@ def audit(qml, wrapper):
     if bad:
         for a, b, area in bad:
             print("   FAIL overlap %.1f px2: %r / %r" % (area, a, b))
+        ok = False
+    if not fam:
+        print("   FAIL Satoshi is not in Qt.fontFamilies(): every advance above"
+              " belongs to the fallback face")
+        ok = False
+    if decisive and (len(sat) != len(decisive) or fb):
+        for t in decisive:
+            if abs(t["adv"] - t["advSatoshi"]) >= 0.01:
+                print("   FAIL %r painted at advance %.3f, Satoshi gives %.3f"
+                      " (fallback %.3f)" % (t["t"], t["adv"], t["advSatoshi"], t["advFallback"]))
         ok = False
     print("   %s" % ("PASS" if ok else "FAIL"))
     return ok
