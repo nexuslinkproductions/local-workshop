@@ -1,0 +1,20 @@
+{
+  "note": "Shape the boot briefing reads from a bridge-digest output file. bridge-digest is Linux-only and does not write this on the Mac yet; every key is optional and a missing one counts as zero.",
+  "generated_at": "2026-10-23T00:40:00Z",
+  "since": "2026-10-20T00:00:00Z",
+  "blocked": [
+    {
+      "id": "t_fx9001",
+      "title": "Linux: install bridge-digest after review",
+      "reason": "waiting on Marcel's go"
+    }
+  ],
+  "stalled": [
+    {
+      "id": "t_fx1009",
+      "title": "HUD v5 F2: fleet pulse counts and needs-me",
+      "heartbeat_age_s": 900
+    }
+  ],
+  "dead_events": 2
+}

@@ -1,0 +1,123 @@
+[
+  {
+    "id": "t_fx1001",
+    "title": "HUD v5 W3 GAUGES: dot arcs, battery and load rings",
+    "status": "done",
+    "assignee": "kakashi",
+    "priority": 5,
+    "created_at": 1792705200,
+    "started_at": 1792705300,
+    "completed_at": 1792709600,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1002",
+    "title": "HUD v5 W4 ICONS: one stroke set, IconTile ring",
+    "status": "done",
+    "assignee": "yamato",
+    "priority": 5,
+    "created_at": 1792705400,
+    "started_at": 1792705500,
+    "completed_at": 1792709880,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1003",
+    "title": "HUD v5 W6 FIND: dot search glyph and typed tiles",
+    "status": "done",
+    "assignee": "levi",
+    "priority": 5,
+    "created_at": 1792705600,
+    "started_at": 1792705700,
+    "completed_at": 1792709400,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1004",
+    "title": "BRIDGE 02: relay retry cap",
+    "status": "done",
+    "assignee": "shino",
+    "priority": 3,
+    "created_at": 1792690000,
+    "started_at": 1792690100,
+    "completed_at": 1792701000,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1005",
+    "title": "CGS card F: media sweep",
+    "status": "done",
+    "assignee": "tenten",
+    "priority": 3,
+    "created_at": 1792706000,
+    "started_at": 1792706100,
+    "completed_at": null,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1006",
+    "title": "CANVAS-PORT: Lilly frontend into the root canvas",
+    "status": "blocked",
+    "assignee": "kakuzu",
+    "priority": 4,
+    "created_at": 1792700000,
+    "started_at": 1792700100,
+    "completed_at": null,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1007",
+    "title": "Vari8: dedupe pass on the ud lane",
+    "status": "todo",
+    "assignee": "jiraiya",
+    "priority": 2,
+    "created_at": 1792702000,
+    "started_at": 1792702100,
+    "completed_at": null,
+    "last_failure_error": "pid 87547 exited with code 1"
+  },
+  {
+    "id": "t_fx1008",
+    "title": "HUD v5 W1 KNOT: 540 point-swarm knot",
+    "status": "running",
+    "assignee": "shizune",
+    "priority": 6,
+    "created_at": 1792707000,
+    "started_at": 1792707100,
+    "completed_at": null,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1009",
+    "title": "HUD v5 F2: fleet pulse counts and needs-me",
+    "status": "running",
+    "assignee": "tanjiro",
+    "priority": 5,
+    "created_at": 1792707200,
+    "started_at": 1792707300,
+    "completed_at": null,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1010",
+    "title": "HUD v5 W7 ENVIRONMENT: clock and focus dim",
+    "status": "todo",
+    "assignee": "kakashi",
+    "priority": 5,
+    "created_at": 1792707400,
+    "started_at": null,
+    "completed_at": null,
+    "last_failure_error": null
+  },
+  {
+    "id": "t_fx1011",
+    "title": "B repair 1: post-navigation bindings, mobile footer",
+    "status": "blocked",
+    "assignee": "yamato",
+    "priority": 4,
+    "created_at": 1792700500,
+    "started_at": 1792700600,
+    "completed_at": null,
+    "last_failure_error": "worker deadline exceeded after 4h"
+  }
+]
