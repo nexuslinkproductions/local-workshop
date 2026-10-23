@@ -196,6 +196,12 @@ def encode_grid(pts, pitch, off=(0.0, 0.0, 0.0), offs=(0, 0, 0), cols=GRID_COLS,
     q[:, 1] += offs[1]
     q[:, 2] += offs[2]
     out = np.zeros((rows, cols, 4), np.uint8)
+    # Padding is marked, not left at zero: Qt premultiplies image textures, so an
+    # alpha-0 texel loses its RGB whatever was stored there. A = 255 keeps the
+    # bytes exact everywhere and R = 255 marks a texel that carries no point (no
+    # real lattice index reaches it). Both shader stages test R > 0.996 for it.
+    out[:, :, 0] = 255
+    out[:, :, 3] = 255
     n = min(len(pts), rows * cols)
     r = np.arange(n) // cols
     c = np.arange(n) % cols
