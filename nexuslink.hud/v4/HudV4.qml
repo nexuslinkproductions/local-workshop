@@ -108,6 +108,23 @@ Item {
         return Qt.rect(x0, y0, x1 - x0, y1 - y0)
     }
 
+    // NEXUS: readiness marker for nexuslink.background (VA finding 1). Each
+    // NEXUS: PanelWindow that completes adds its output name; the clone reads
+    // NEXUS: the file and suppresses the wallpaper only on listed outputs.
+    property var readyScreenNames: []
+    FileView {
+        id: hudReadyMarker
+        path: Quickshell.env("HOME") + "/.local/state/omarchy/nexuslink-hud-v5-ready"
+        blockLoading: false
+        printErrors: false
+        watchChanges: false
+    }
+    function markScreenReady(name) {
+        if (!name || readyScreenNames.indexOf(name) >= 0) return
+        readyScreenNames = readyScreenNames.concat([name])
+        hudReadyMarker.setText(readyScreenNames.join("\n") + "\n")
+    }
+
     // ------------------------------------------------------------------ state
     property var stats: ({})
     property var probeMap: ({})        // static keys merged into every frame
@@ -641,6 +658,8 @@ Item {
             id: win
             required property var modelData
             screen: modelData
+            // NEXUS: confirm this output to nexuslink.background (readiness marker).
+            Component.onCompleted: hud.markScreenReady(win.screen ? String(win.screen.name) : "")
 
             readonly property string screenName: String(modelData.name)
             // role from EDID identity (ScreenRoles.js); connector names are

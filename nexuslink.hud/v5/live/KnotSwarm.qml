@@ -108,6 +108,52 @@ Item {
             property real knotPx: root.knotPx
             property real uW: root.width
             property real uH: root.height
+            // K3c: explicit zeros, the spark-disc mode must be off for the strands.
+            // Unset uniforms read stale memory (the strands turned into spark discs).
+            property vector4d uSparkCol: Qt.vector4d(0, 0, 0, 0)
+            property vector4d uSparkGeom: Qt.vector4d(0, 0, 0, 0)
+        }
+    }
+
+    // K3c: fourth draw, the acid sparks as solid discs. Declared after the
+    // strand Repeater, so they are drawn last and no ice dot paints over them.
+    // Each spark is a one point ShaderEffect (uN 1, uOffset = point id); the
+    // disc centre is the rest point projected with the global pose, plus the
+    // offset that puts it on the target spot (see work5/K3c/spark_pick.json).
+    readonly property var sparkSpots: [
+        { pid: 2435, dx: -0.09, dy: -0.46, rgb: [196, 239, 61], r: 7.5 },
+        { pid: 14845, dx: 0.81, dy: -2.67, rgb: [195, 237, 62], r: 7.5 },
+        { pid: 27313, dx: -19.65, dy: 0.44, rgb: [160, 197, 66], r: 7.5 }
+    ]
+
+    Repeater {
+        model: root.sparkSpots
+
+        ShaderEffect {
+            required property var modelData
+            anchors.fill: parent
+            visible: root.running
+            blending: true
+
+            vertexShader: Qt.resolvedUrl("shaders/knot.vert.qsb")
+            fragmentShader: Qt.resolvedUrl("shaders/knot.frag.qsb")
+
+            mesh: GridMesh {
+                resolution: Qt.size(2, 1)
+            }
+
+            property Item src: pointTexture
+            property real uN: 1
+            property real uOffset: modelData.pid
+            property real uWidth: root.texWidth
+            property real uRows: root.texRows
+            property real t: root.t
+            property real knotPx: root.knotPx
+            property real uW: root.width
+            property real uH: root.height
+            property vector4d uSparkCol: Qt.vector4d(modelData.rgb[0] / 255, modelData.rgb[1] / 255,
+                                                     modelData.rgb[2] / 255, 1.0)
+            property vector4d uSparkGeom: Qt.vector4d(1.0, modelData.r, modelData.dx, modelData.dy)
         }
     }
 }

@@ -40,6 +40,7 @@ layout(location = 0) out vec2 v_local;
 layout(location = 1) out float v_radius;
 layout(location = 2) out vec4 v_color;
 layout(location = 3) out float v_pidSmooth;
+layout(location = 4) out float v_spark;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
@@ -52,6 +53,10 @@ layout(std140, binding = 0) uniform buf {
     float uW;
     float uH;
     float uOffset;
+    // K3c: spark pass only. uSparkGeom = (mode, radius px at 1080, dx px, dy px),
+    // uSparkCol = colour of the solid disc. Both zero for the strand slices.
+    vec4 uSparkCol;
+    vec4 uSparkGeom;
 };
 
 layout(binding = 1) uniform sampler2D src;
@@ -77,12 +82,14 @@ const float DEPTH_K = 0.35;       // how much of the z depth cue survives (1 = o
 const float ALPHA_CAP = 0.80;     // per dot alpha ceiling, acid sparks excepted
 
 // round 5 sprite and alpha recipe (spec section 4); GAIN is the tuning knob
-const float GAIN = 0.35;          // TUNE: additive blend, the core overlaps about 3 deep
-const float RMIN = 0.55;          // px at knotPx 540, edge radius floor
-const float RMAX_RIBBON = 1.75;   // px at knotPx 540, core radius of the ribbon
+const float GAIN = 1.10;          // TUNE: additive blend, the core overlaps about 3 deep (K3c: GAIN 0.90 gave edge 9.46, kept 1.10)
+const float RMIN = 0.30;          // px at knotPx 540, edge radius floor (K3c: 0.45 -> 0.30, edge 10-90)
+const float RMAX_RIBBON = 2.20;   // px at knotPx 540, core radius of the ribbon (K3c: 1.50 -> 2.20, widens the mid profile, FWHM)
 const float RMAX_RING = 1.5;      // px at knotPx 540, core radius of the ring
-const float A_FLOOR = 0.40;    // edge floor of the core weight a0 (spec 0.18)
-const float W_CORE = 0.35;      // white in the core, wm = core^3 * W_CORE + 0.15 * dd (spec 0.55)
+const float A_FLOOR = 0.25;    // edge floor of the core weight a0 (spec 0.18; K3c 0.10 pushed FWHM below 11.8)
+const float W_CORE = 0.40;      // white in the core, wm = core^3 * W_CORE + 0.15 * dd (K3c: 0.50 -> 0.40)
+const float CORE_P = 0.9;       // core alpha exponent (K3c 1.6 narrowed FWHM, edge did not move)
+const float RAD_P = 3.0;        // radius falloff exponent (spec 3.0; K3c 4.5 dropped FWHM to 10.3)
 
 // morph schedule, mirrors MORPH_* in tools/linux/measure/knot/knot_port.py
 const float CYC = 60.0;           // full alternation cycle, s
@@ -182,6 +189,7 @@ void main() {
     v_radius = 1.0;
     v_color = vec4(0.0);
     v_pidSmooth = pid;
+    v_spark = 0.0;
 
     if (pidLocal < 0.0 || pidLocal >= uN) {
         v_pidSmooth = pid + 1.0;
@@ -195,6 +203,43 @@ void main() {
     vec4 t2 = texAt(base + 2.0);
     vec4 t3 = texAt(base + 3.0);
     vec4 t4 = texAt(base + 4.0);
+
+    // ---- F2 (K3c): anchored acid disc, spark pass only -------------------
+    // The rest point is projected with the global pose only (pitch, roll and
+    // the scale pulse, as the strands), with no morph and no local terms, so
+    // the disc sits still at its spot. The spark pass is drawn after the three
+    // strand slices, so no ice dot can paint over it.
+    if (uSparkGeom.x > 0.5) {
+        const vec2 PIVOT_S = vec2(-4.780, 35.939);
+        vec3 Ps = posDecode(t0, t1);
+        float brs = 0.5 - 0.5 * cos(TAU * t / 7.0);
+        vec3 Qs = Ps * (1.0 + 0.008 * brs);
+        float pitS = radians(1.6) * (sin(TAU * t / 71.0 + 0.7)
+                   + 0.5 * sin(TAU * t / 97.0 + 2.1)) / 1.5;
+        float rolS = radians(1.6) * (sin(TAU * t / 83.0 + 1.9)
+                   + 0.5 * sin(TAU * t / 113.0 + 0.4)) / 1.5;
+        float cpS = cos(pitS), spS = sin(pitS);
+        float crS = cos(rolS), srS = sin(rolS);
+        float y1S = Qs.y * cpS - Qs.z * spS;
+        float z2S = Qs.y * spS + Qs.z * cpS;
+        float camS = 2.7 * KNOT_H;
+        float kS = camS / (camS - z2S);
+        float pxS = knotPx / KNOT_H;
+        vec2 pvS = PIVOT_S * (knotPx / 540.0);
+        vec2 relS = vec2(Qs.x * kS * pxS, y1S * kS * pxS) - pvS;
+        vec2 spS2 = vec2(uW, uH) * 0.5 + pvS
+                  + vec2(relS.x * crS - relS.y * srS, relS.x * srS + relS.y * crS);
+        float rS = uSparkGeom.y * knotPx / 1080.0;
+        vec2 cornerS = corner * (rS + 1.5);
+        vec2 posS = spS2 + cornerS + uSparkGeom.zw * (knotPx / 1080.0);
+        v_local = cornerS;
+        v_radius = rS;
+        v_color = vec4(uSparkCol.rgb, 1.0);
+        v_spark = 1.0;
+        v_pidSmooth = pid;
+        gl_Position = qt_Matrix * vec4(posS, 0.0, 1.0);
+        return;
+    }
 
     vec3 P = posDecode(t0, t1);
     vec3 N3 = t2.rgb * 2.0 - 1.0;
@@ -404,8 +449,8 @@ void main() {
     }
 
     vec3 cAzure = vec3(86.0, 150.0, 238.0) / 255.0;
-    vec3 cIce = vec3(150.0, 220.0, 236.0) / 255.0;
-    vec3 cWhite = vec3(236.0, 247.0, 252.0) / 255.0;
+    vec3 cIce = vec3(136.0, 206.0, 240.0) / 255.0;   // K3c: was (150,220,236), core too grey
+    vec3 cWhite = vec3(226.0, 240.0, 252.0) / 255.0;  // K3c: was (236,247,252)
     vec3 cAcid = vec3(200.0, 243.0, 29.0) / 255.0;
 
     // depth cue flattened: the three lobes sit at different z, and the full range
@@ -426,7 +471,8 @@ void main() {
     // falloff to the edge), depth, the knockout cut (occl2 = knock * (1 - sm)),
     // vis and GAIN; the bfac term and the crowd weight stay as before
     float h2 = fract(sin(pid * 39.3468 + 2.1) * 24634.6345);
-    float aCore = (A_FLOOR + (1.0 - A_FLOOR) * pow(core, 0.9)) * (0.9 + 0.1 * h2) * (cls < 0.5 ? 1.0 : 1.25);
+    // K3c: exponent 0.9 -> CORE_P (steeper edge alpha, outer edge 10-90 tighter)
+    float aCore = (A_FLOOR + (1.0 - A_FLOOR) * pow(core, CORE_P)) * (0.9 + 0.1 * h2) * (cls < 0.5 ? 1.0 : 1.25);
     float alpha = aCore * (0.55 + 0.45 * dd) * (0.95 + 0.05 * br0) * (1.0 - occl2)
                 * vis * GAIN * mix(0.80, 1.55, clamp((bfac - 0.60) / 1.10, 0.0, 1.0));
     alpha *= mix(1.0, crowd, 0.9);
@@ -441,7 +487,7 @@ void main() {
     float h1 = fract(sin(pid * 12.9898) * 43758.5453);
     float sc = knotPx / 540.0;
     float rmax = cls < 0.5 ? RMAX_RIBBON : RMAX_RING;
-    float rpx = (RMIN + (rmax - RMIN) * pow(1.0 - lat, 0.9) * (0.72 + 0.28 * h1)) * k * sc * rfac;
+    float rpx = (RMIN + (rmax - RMIN) * pow(1.0 - lat, RAD_P) * (0.72 + 0.28 * h1)) * k * sc * rfac;
     rpx = clamp(rpx, 0.45 * sc, 3.0 * sc);
     float hh = rpx + 1.5;
 

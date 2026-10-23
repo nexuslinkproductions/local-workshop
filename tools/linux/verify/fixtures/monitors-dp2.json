@@ -1,0 +1,14 @@
+[
+  {
+    "id": 0,
+    "name": "DP-2",
+    "description": "fixture 2560x1440 at 0,0",
+    "make": "fixture",
+    "model": "fixture",
+    "width": 2560,
+    "height": 1440,
+    "x": 0,
+    "y": 0,
+    "focused": true
+  }
+]
