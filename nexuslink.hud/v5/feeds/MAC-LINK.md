@@ -185,7 +185,7 @@ line in `build_plan` plus this table.
 ```
 $ python3 nexuslink.hud/v5/feeds/mac_link.py --self-check
 ...
-self-check ok: 111 passed, 0 failed
+self-check ok: 112 passed, 0 failed
 $ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 ...
 self-check ok: 77 passed, 0 failed

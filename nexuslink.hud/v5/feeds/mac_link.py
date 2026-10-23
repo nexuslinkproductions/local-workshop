@@ -1209,6 +1209,24 @@ def self_check(args):
         str((cli_a or {}).get("reasons")),
     )
 
+    # The reader-clock fallback stays for live mode, with its reason.
+    clock_reads[:] = []
+    time.time = pinned_clock(1792713000)
+    try:
+        live_fallback, _live_epoch = payload_for(no_now, "live", "local", "omarchylink")
+    finally:
+        time.time = real_time
+    live_items = (live_fallback.get("kanban") or {}).get("items") or []
+    check(
+        "live-no-now-falls-back-with-reason",
+        live_fallback.get("collected_at") == iso(1792713000)
+        and isinstance((live_fallback.get("mac") or {}).get("uptime_s"), int)
+        and bool(live_items)
+        and all(isinstance(item.get("age_s"), int) for item in live_items)
+        and "mac.now" in (live_fallback.get("reasons") or {}),
+        "%s %s" % (live_fallback.get("collected_at"), sorted(live_fallback.get("reasons") or {})),
+    )
+
     # --- Devin list: a null model carries a list-level reason (O2) ----------
     devin_only = "@@DEVIN\n4123 /Users/x/.local/bin/devin --permission-mode dangerous\n@@END\n"
     devin_payload, _devin_epoch = payload_for(devin_only, "fixture", "local", "omarchylink")
