@@ -26,6 +26,11 @@ end, the Linux box does the live check.
 - Exactly one JSON object on stdout, newline terminated, nothing else. `--json`
   makes it one compact line; without it the same object is pretty printed.
 - `--fixture PATH` reads a snapshot instead of the host and runs no command.
+- `"source"` says where the answer came from, and it takes exactly two values:
+  `"fixture"` when `--fixture` was read, `"live"` when the value came off the
+  host. Every envelope carries it, the `ok: false` ones included, and it is never
+  the reader's name and never a path, so a widget can tell a replay from a
+  reading with one string compare.
 - Exit `0` for data and for honest absence (`{"ok": false, "reason": "..."}`).
   Exit `2` for a caller error: bad arguments, a missing file the caller named, or
   an action that was refused or failed.

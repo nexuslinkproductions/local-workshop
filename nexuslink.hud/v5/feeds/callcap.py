@@ -55,7 +55,6 @@ EXIT_OK = 0
 EXIT_PROGRAMMING = 2
 
 HOME = os.path.expanduser("~")
-SOURCE = "callcap"
 DEFAULT_BIN = "callcap"
 DEFAULT_CALLS = "~/calls"
 DEFAULT_CACHE = "~/.local/state/nexuslink/callcap.json"
@@ -150,6 +149,54 @@ def tilde_text(message):
     return message
 
 
+def display_path(value):
+    """A path as the payload shows it: ``~`` for the home root, else unchanged.
+
+    Only an absolute or already home-relative path is rewritten, so a bare
+    command name such as ``callcap`` stays a name.
+    """
+    if not value or not isinstance(value, str):
+        return value
+    if not (value.startswith(os.sep) or value.startswith("~")):
+        return value
+    return tilde(value)
+
+
+def display_argv(value):
+    """``bin arg arg`` -> the same string with only the program shortened."""
+    if not isinstance(value, str) or not value:
+        return value
+    head, sep, tail = value.partition(" ")
+    return display_path(head) + sep + tail
+
+
+def display_fields(fields, keep_paths=False):
+    """Shorten every path-bearing field, once, for every payload this file emits.
+
+    ``command`` and ``would_run`` are argv strings, so only their first word is a
+    path; ``last[].file`` is nested and is walked here. ``keep_paths`` is the
+    documented ``--dry-run`` exception: that envelope prints the exact argv.
+    """
+    out = dict(fields)
+    if keep_paths:
+        return out
+    for name in ("command", "would_run"):
+        if out.get(name):
+            out[name] = display_argv(out[name])
+    for name in ("target", "file", "bin"):
+        if out.get(name):
+            out[name] = display_path(out[name])
+    last = out.get("last")
+    if isinstance(last, list):
+        out["last"] = [
+            dict(item, file=display_path(item["file"]))
+            if isinstance(item, dict) and item.get("file")
+            else item
+            for item in last
+        ]
+    return out
+
+
 def number(value):
     """Finite float or None. Accepts numeric strings, rejects bools and NaN."""
     if value is None or isinstance(value, bool):
@@ -177,17 +224,23 @@ def text(value, limit=None):
     return value
 
 
+def origin(args):
+    """Where this answer's data came from. The contract allows two values only."""
+    return "fixture" if getattr(args, "fixture", None) else "live"
+
+
 def envelope(source, **fields):
     payload = {"ok": True, "source": source, "generated_at": iso_now()}
-    payload.update(fields)
+    # --dry-run is the documented exception: its job is to print the exact argv.
+    payload.update(display_fields(fields, keep_paths=fields.get("dry_run") is True))
     return payload
 
 
-def failure(problem, source=SOURCE):
+def failure(args, problem):
     reason = getattr(problem, "reason", None) or str(problem)
     return {
         "ok": False,
-        "source": source,
+        "source": origin(args),
         "generated_at": iso_now(),
         "reason": tilde_text(reason),
         "kind": getattr(problem, "kind", "data"),
@@ -443,7 +496,7 @@ def describe(item, running):
     elif item.get("stamp"):
         started = iso(stamp_epoch(item["stamp"]))
     entry = {
-        "file": tilde(wav) if wav else None,
+        "file": wav or None,
         "started_at": started,
         "duration_s": round(seconds, 1) if seconds else None,
     }
@@ -465,7 +518,7 @@ def live_status(args):
     source_of_elapsed = None
     target = None
     if running is not None:
-        target = tilde(running["path"])
+        target = running["path"]
         seconds = wav_seconds(running["wav"]) if running.get("wav") else 0.0
         if seconds > 0:
             elapsed, source_of_elapsed = round(seconds, 1), "wav-size"
@@ -554,9 +607,14 @@ def status_payload(args):
     return payload
 
 
-def refusal(reason, **extra):
-    payload = {"ok": False, "source": "live", "generated_at": iso_now(), "reason": tilde_text(reason)}
-    payload.update(extra)
+def refusal(args, reason, **extra):
+    payload = {
+        "ok": False,
+        "source": origin(args),
+        "generated_at": iso_now(),
+        "reason": tilde_text(reason),
+    }
+    payload.update(display_fields(extra))
     return payload
 
 
@@ -567,19 +625,19 @@ def act(args):
     if verb == "start":
         label = args.start or "hud"
         if not LABEL_RE.match(label):
-            return refusal("label must match %s" % LABEL_RE.pattern, action=verb), EXIT_PROGRAMMING
+            return refusal(args, "label must match %s" % LABEL_RE.pattern, action=verb), EXIT_PROGRAMMING
         argv_tail.append(label)
 
     if args.fixture:
         return (
-            refusal("fixture mode never acts; drop --fixture to reach the host", action=verb),
+            refusal(args, "fixture mode never acts; drop --fixture to reach the host", action=verb),
             EXIT_PROGRAMMING,
         )
 
     bin_path = resolve_bin(args)
     if bin_path is None:
         return (
-            refusal("%s not on this host" % DEFAULT_BIN, action=verb, bin=DEFAULT_BIN),
+            refusal(args, "%s not on this host" % DEFAULT_BIN, action=verb, bin=DEFAULT_BIN),
             EXIT_PROGRAMMING,
         )
 
@@ -587,7 +645,7 @@ def act(args):
 
     if verb == "stop" and args.confirm is not None and args.confirm != CONFIRM_TOKEN:
         return (
-            refusal("unknown --confirm token; the token for --stop is %r" % CONFIRM_TOKEN, action=verb),
+            refusal(args, "unknown --confirm token; the token for --stop is %r" % CONFIRM_TOKEN, action=verb),
             EXIT_PROGRAMMING,
         )
 
@@ -597,9 +655,10 @@ def act(args):
     if verb == "start" and is_running:
         return (
             refusal(
+                args,
                 "a recording is already running; stop it first",
                 action=verb,
-                target=tilde(running["path"]) if running else None,
+                target=running["path"] if running else None,
                 probe=probe,
             ),
             EXIT_PROGRAMMING,
@@ -608,9 +667,10 @@ def act(args):
     if verb == "stop" and is_running and args.confirm != CONFIRM_TOKEN:
         return (
             refusal(
+                args,
                 "stopping a live call recording needs --confirm %s" % CONFIRM_TOKEN,
                 action=verb,
-                target=tilde(running["path"]) if running else None,
+                target=running["path"] if running else None,
                 probe=probe,
                 was_running=True,
             ),
@@ -633,6 +693,7 @@ def act(args):
     if rc != 0:
         return (
             refusal(
+                args,
                 "%s %s failed (exit %d): %s" % (DEFAULT_BIN, verb, rc, text(err) or text(out) or "no output"),
                 action=verb,
                 exit_code=rc,
@@ -652,7 +713,7 @@ def act(args):
         exit_code=rc,
         command=" ".join(argv),
         running=running_after,
-        target=tilde(after["path"]) if after else None,
+        target=after["path"] if after else None,
         stdout=text(out, 400),
     )
     payload["probe"] = after_probe or "none"
@@ -894,7 +955,7 @@ def self_check(args):
 
     shutil.rmtree(root, ignore_errors=True)
     failed = [item for item in checks if not item["ok"]]
-    emit({"ok": not failed, "source": SOURCE, "self_check": True, "checks": checks}, args.json)
+    emit({"ok": not failed, "source": origin(args), "self_check": True, "checks": checks}, args.json)
     return 0 if not failed else 1
 
 
@@ -934,7 +995,7 @@ def main(argv=None):
     actions = [bool(args.status), args.start is not None, bool(args.stop)]
     if sum(1 for item in actions if item) != 1:
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(),
+            {"ok": False, "source": origin(args), "generated_at": iso_now(),
              "reason": "choose exactly one of --status, --start, --stop"},
             args.json,
         )
@@ -948,13 +1009,13 @@ def main(argv=None):
             emit(payload, args.json)
             return code
     except DataProblem as exc:
-        emit(failure(exc), args.json)
+        emit(failure(args, exc), args.json)
         return EXIT_PROGRAMMING if isinstance(exc, Caller) else EXIT_OK
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:  # noqa: BLE001 - a bug is a bug, report and exit 2
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(),
+            {"ok": False, "source": origin(args), "generated_at": iso_now(),
              "reason": tilde_text("programming error: %s: %s" % (type(exc).__name__, exc)),
              "kind": "programming"},
             args.json,

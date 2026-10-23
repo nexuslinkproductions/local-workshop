@@ -53,7 +53,6 @@ EXIT_OK = 0
 EXIT_PROGRAMMING = 2
 
 HOME = os.path.expanduser("~")
-SOURCE = "chief"
 DEFAULT_METRICS = "/run/user/1000/chief/metrics.json"
 DEFAULT_CACHE = "~/.local/state/nexuslink/chief.json"
 CACHE_TTL_S = 10.0
@@ -136,6 +135,46 @@ def tilde_text(message):
     return message
 
 
+def display_path(value):
+    """A path as the payload shows it: ``~`` for the home root, else unchanged.
+
+    Only an absolute or already home-relative path is rewritten, so a bare
+    command name such as ``chief-on`` stays a name.
+    """
+    if not value or not isinstance(value, str):
+        return value
+    if not (value.startswith(os.sep) or value.startswith("~")):
+        return value
+    return tilde(value)
+
+
+def display_argv(value):
+    """``bin arg arg`` -> the same string with only the program shortened."""
+    if not isinstance(value, str) or not value:
+        return value
+    head, sep, tail = value.partition(" ")
+    return display_path(head) + sep + tail
+
+
+def display_fields(fields, keep_paths=False):
+    """Shorten every path-bearing field, once, for every payload this file emits.
+
+    ``command`` and ``would_run`` are argv strings, so only their first word is a
+    path. ``keep_paths`` is the documented ``--dry-run`` exception: that envelope
+    prints the exact argv.
+    """
+    out = dict(fields)
+    if keep_paths:
+        return out
+    for name in ("command", "would_run"):
+        if out.get(name):
+            out[name] = display_argv(out[name])
+    for name in ("target", "file", "tool"):
+        if out.get(name):
+            out[name] = display_path(out[name])
+    return out
+
+
 def number(value):
     if value is None or isinstance(value, bool):
         return None
@@ -161,17 +200,23 @@ def text(value, limit=None):
     return value
 
 
+def origin(args):
+    """Where this answer's data came from. The contract allows two values only."""
+    return "fixture" if getattr(args, "fixture", None) else "live"
+
+
 def envelope(source, **fields):
     payload = {"ok": True, "source": source, "generated_at": iso_now()}
-    payload.update(fields)
+    # --dry-run is the documented exception: its job is to print the exact argv.
+    payload.update(display_fields(fields, keep_paths=fields.get("dry_run") is True))
     return payload
 
 
-def failure(problem, source=SOURCE):
+def failure(args, problem):
     reason = getattr(problem, "reason", None) or str(problem)
     return {
         "ok": False,
-        "source": source,
+        "source": origin(args),
         "generated_at": iso_now(),
         "reason": tilde_text(reason),
         "kind": getattr(problem, "kind", "data"),
@@ -410,9 +455,14 @@ def status_payload(args):
     return payload
 
 
-def refusal(reason, **extra):
-    payload = {"ok": False, "source": "live", "generated_at": iso_now(), "reason": tilde_text(reason)}
-    payload.update(extra)
+def refusal(args, reason, **extra):
+    payload = {
+        "ok": False,
+        "source": origin(args),
+        "generated_at": iso_now(),
+        "reason": tilde_text(reason),
+    }
+    payload.update(display_fields(extra))
     return payload
 
 
@@ -421,12 +471,12 @@ def act(args):
     name = "chief-%s" % verb
 
     if args.fixture:
-        return refusal("fixture mode never acts; drop --fixture to reach the host", action=verb), EXIT_PROGRAMMING
+        return refusal(args, "fixture mode never acts; drop --fixture to reach the host", action=verb), EXIT_PROGRAMMING
 
     tool = resolve_tool(name, args)
     if tool is None:
         return (
-            refusal("%s not on this host" % name, action=verb, tool=name),
+            refusal(args, "%s not on this host" % name, action=verb, tool=name),
             EXIT_PROGRAMMING,
         )
 
@@ -441,10 +491,11 @@ def act(args):
     if rc != 0:
         return (
             refusal(
+                args,
                 "%s failed (exit %d): %s" % (name, rc, text(err) or text(out) or "no output"),
                 action=verb,
                 exit_code=rc,
-                command=tilde(tool),
+                command=tool,
             ),
             EXIT_PROGRAMMING,
         )
@@ -453,7 +504,7 @@ def act(args):
         "live",
         action=verb,
         exit_code=rc,
-        command=tilde(tool),
+        command=tool,
         stdout=text(out, 400),
     )
     after = None
@@ -796,7 +847,7 @@ def self_check(args):
 
     shutil.rmtree(root, ignore_errors=True)
     failed = [item for item in checks if not item["ok"]]
-    emit({"ok": not failed, "source": SOURCE, "self_check": True, "checks": checks}, args.json)
+    emit({"ok": not failed, "source": origin(args), "self_check": True, "checks": checks}, args.json)
     return 0 if not failed else 1
 
 
@@ -833,7 +884,7 @@ def main(argv=None):
     actions = [bool(args.status), bool(args.on), bool(args.off)]
     if sum(1 for item in actions if item) != 1:
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(),
+            {"ok": False, "source": origin(args), "generated_at": iso_now(),
              "reason": "choose exactly one of --status, --on, --off"},
             args.json,
         )
@@ -847,13 +898,13 @@ def main(argv=None):
             emit(payload, args.json)
             return code
     except DataProblem as exc:
-        emit(failure(exc), args.json)
+        emit(failure(args, exc), args.json)
         return EXIT_PROGRAMMING if isinstance(exc, Caller) else EXIT_OK
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:  # noqa: BLE001
         emit(
-            {"ok": False, "source": SOURCE, "generated_at": iso_now(),
+            {"ok": False, "source": origin(args), "generated_at": iso_now(),
              "reason": tilde_text("programming error: %s: %s" % (type(exc).__name__, exc)),
              "kind": "programming"},
             args.json,

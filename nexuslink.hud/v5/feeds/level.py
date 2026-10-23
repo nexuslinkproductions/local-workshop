@@ -62,7 +62,6 @@ EXIT_OK = 0
 EXIT_PROGRAMMING = 2
 
 HOME = os.path.expanduser("~")
-SOURCE = "level"
 
 CHANNELS = 2
 SAMPLE_RATE = 48000
@@ -195,17 +194,22 @@ def read_json(path, what):
         raise Malformed("%s at %s is not valid JSON: %s" % (what, shown, exc))
 
 
-def envelope(**fields):
-    payload = {"ok": True, "source": None, "generated_at": iso_ms(time.time())}
+def origin(args):
+    """Where this answer's data came from. The contract allows two values only."""
+    return "fixture" if getattr(args, "fixture", None) else "live"
+
+
+def envelope(source, **fields):
+    payload = {"ok": True, "source": source, "generated_at": iso_ms(time.time())}
     payload.update(fields)
     return payload
 
 
-def failure(problem):
+def failure(args, problem):
     reason = getattr(problem, "reason", None) or str(problem)
     return {
         "ok": False,
-        "source": SOURCE,
+        "source": origin(args),
         "generated_at": iso_ms(time.time()),
         "reason": tilde_text(reason),
         "kind": getattr(problem, "kind", "data"),
@@ -436,7 +440,7 @@ def write_fixture(path):
 
 def sample_payload(sample, source, at=None, index=None):
     payload = envelope(
-        source=source,
+        source,
         channels=CHANNELS,
         peak=sample["peak"],
         rms=sample["rms"],
@@ -823,7 +827,7 @@ def self_check(args):
 
     shutil.rmtree(root, ignore_errors=True)
     failed = [item for item in checks if not item["ok"]]
-    emit({"ok": not failed, "source": SOURCE, "self_check": True, "checks": checks},
+    emit({"ok": not failed, "source": origin(args), "self_check": True, "checks": checks},
          bool(getattr(args, "json", False)))
     return 0 if not failed else 1
 
@@ -862,11 +866,11 @@ def main(argv=None):
         try:
             write_fixture(args.make_fixture)
         except OSError as exc:
-            emit({"ok": False, "source": SOURCE, "generated_at": iso_ms(time.time()),
+            emit({"ok": False, "source": origin(args), "generated_at": iso_ms(time.time()),
                   "reason": tilde_text("cannot write %s: %s" % (args.make_fixture, exc)),
                   "kind": "caller"}, True)
             return EXIT_PROGRAMMING
-        emit({"ok": True, "source": SOURCE, "generated_at": iso_ms(time.time()),
+        emit({"ok": True, "source": origin(args), "generated_at": iso_ms(time.time()),
               "written": tilde(args.make_fixture), "samples": len(make_series()),
               "synthetic": True}, args.json)
         return EXIT_OK
@@ -884,15 +888,15 @@ def main(argv=None):
             return stream(args, rate)
         payload = once(args)
     except Caller as exc:
-        emit(failure(exc), bool(args.json))
+        emit(failure(args, exc), bool(args.json))
         return EXIT_PROGRAMMING
     except DataProblem as exc:
-        emit(failure(exc), bool(args.json))
+        emit(failure(args, exc), bool(args.json))
         return EXIT_OK
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:  # noqa: BLE001
-        emit({"ok": False, "source": SOURCE, "generated_at": iso_ms(time.time()),
+        emit({"ok": False, "source": origin(args), "generated_at": iso_ms(time.time()),
               "reason": tilde_text("programming error: %s: %s" % (type(exc).__name__, exc)),
               "kind": "programming"}, bool(args.json))
         return EXIT_PROGRAMMING
