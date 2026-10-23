@@ -55,6 +55,9 @@ Item {
     readonly property real knotCy: Tokens.knotCentreY
     readonly property real leftBandX: 420
     readonly property real rightBandX: 2150
+    // s10 slots reserved for P2 (not in the live tree yet, so nothing is placed):
+    // agents 161.2,1084 to 507.5,1213; now_playing 80,84 to 480,160; today 2060,84
+    // to 2480,200. Corners (chief/more, s10 corners_l/r) are not a live widget.
 
     // ---- pointer (deck coordinates) ---------------------------------------
     // One passive hover handler, no Timer. It only feeds the proximity field;
@@ -122,9 +125,11 @@ Item {
             running: root.shown
         }
 
+        // s10 clock box: line-box top 64.9, centre x 1287.1 (s10-spacing.json).
+        // The numeral row is centred in the widget and sits 6.1 px below its top.
         ClockWidget {
-            x: 1280 - 350
-            y: 126 - 65
+            x: 1287.1 - 350
+            y: 64.9 - 6.1
             width: 700
             height: 130
             tick: root.tick
@@ -132,10 +137,13 @@ Item {
             now: root.now
         }
 
+        // Positions: s10 box top-left minus the drawn content offset in the widget
+        // (measured at rest, drift removed): crew (0.2, 24.6), mac (0.2, 4.1),
+        // local (0.9, 4.1), storage (-0.1, 3.8). Sizes are not changed here (P2).
         CrewWidget {
             id: crewW
-            x: root.leftBandX - 180
-            y: 372 - 120
+            x: 184.4 - 0.2
+            y: 248 - 24.6
             width: 360
             height: 240
             tick: root.tick
@@ -147,8 +155,8 @@ Item {
 
         MacWidget {
             id: macW
-            x: root.leftBandX - 180
-            y: 800 - 110
+            x: 169.3 - 0.2
+            y: 692.9 - 4.1
             width: 360
             height: 220
             tick: root.tick
@@ -159,8 +167,8 @@ Item {
 
         LocalWidget {
             id: localW
-            x: root.rightBandX - 160
-            y: 800 - 110
+            x: 1991.3 - 0.9
+            y: 451.7 - 4.1
             width: 320
             height: 220
             tick: root.tick
@@ -174,8 +182,8 @@ Item {
 
         StorageWidget {
             id: storageW
-            x: root.rightBandX - 170
-            y: 1060 - 100
+            x: 2001.3 + 0.1
+            y: 773 - 3.8
             width: 340
             height: 200
             tick: root.tick
@@ -193,7 +201,8 @@ Item {
             // deck x 1280, so the whole group is mirror symmetric about it.
             x: 1280 - width / 2
             width: 1380
-            y: 1230
+            // Ring top of the end tiles sits 12.2 px above y (drift removed): s10 launcher.t 1092.5.
+            y: 1092.5 + 12.2
             tick: root.tick
             apps: root.apps
             onLaunchRequested: app => root.launchRequested(app)
@@ -243,8 +252,13 @@ Item {
     // the 380 x 68 pill takes input, so the widgets below keep their hover.
     FindPill {
         id: find
-        x: 0
-        y: 0
+        // The rest pill is drawn at 1960,338 inside this overlay (FindPill.qml). While
+        // closed, the offset puts it on the s10 find box (2000,296). Open, the overlay
+        // is back at 0,0 so the results stay centred.
+        x: root.findOpen ? 0 : 40
+        y: root.findOpen ? 0 : -42
+        Behavior on x { NumberAnimation { duration: Motion.focusInMillis; easing.type: Easing.OutCubic } }
+        Behavior on y { NumberAnimation { duration: Motion.focusInMillis; easing.type: Easing.OutCubic } }
         width: 2560
         height: 1440
         tick: root.tick
