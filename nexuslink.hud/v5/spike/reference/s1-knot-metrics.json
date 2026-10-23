@@ -1,0 +1,21 @@
+{
+  "box": [
+    1010,
+    280,
+    1550,
+    820
+  ],
+  "size": [
+    540,
+    540
+  ],
+  "coverage_thr_0.10": 0.25771262002743484,
+  "coverage_thr_0.25": 0.16191358024691357,
+  "coverage_thr_0.50": 0.09163923182441701,
+  "components": 280,
+  "dot_components_le_25px": 253,
+  "dot_area_median_px": 7.0,
+  "dot_pitch_median_px": 9.031701536978565,
+  "lum_max": 0.9716533422470093,
+  "jpeg_bytes": 107003
+}

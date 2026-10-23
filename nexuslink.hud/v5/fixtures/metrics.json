@@ -1,0 +1,45 @@
+{
+  "ts": 1792703222.1396573,
+  "ts_iso": "2026-10-22T21:07:02Z",
+  "host": {
+    "name": "omarchylink",
+    "cores": 12,
+    "loadavg": [9.14, 11.6, 14.14],
+    "load1_frac": 0.7617
+  },
+  "local_ai": {
+    "model": "embeddinggemma",
+    "quant": "Q8",
+    "size_gb": 0.33,
+    "budget_scale_gb": 4.0,
+    "budget_note": "study scale from hud-candidates/comp-r1/s1, not a measured cap",
+    "activity_cpu_s": 0.0,
+    "breath_period_s": 6.0
+  },
+  "tokens_today": {
+    "claude": 351652507,
+    "codex": 1015672,
+    "devin": 0,
+    "devin@mac": 27810998,
+    "opencode": 0,
+    "opencode-go": 180094595,
+    "opencode-go@mac": 1061494844
+  },
+  "screens": [
+    { "id": "DP-1", "workspaces": [7], "windows": 1 },
+    { "id": "DP-2", "workspaces": [4], "windows": 2 },
+    { "id": "HDMI-A-5", "workspaces": [1, 2], "windows": 2 },
+    { "id": "DP-4", "workspaces": [10], "windows": 0 }
+  ],
+  "windows": [
+    "com.github.wwmm.easyeffects",
+    "com.nousresearch.hermes",
+    "heroic",
+    "spotify",
+    "steam_app_1808500"
+  ],
+  "kanban": {
+    "vari8": { "blocked": 129, "done": 17 },
+    "mac": { "blocked": 2, "done": 47, "ready": 1, "running": 1, "todo": 2 }
+  }
+}

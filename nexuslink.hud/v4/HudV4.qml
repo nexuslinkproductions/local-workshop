@@ -67,6 +67,21 @@ Item {
 
     readonly property double startMs: Date.now()
 
+    // ---------------------------------------------------------- v5 deck flag
+    // One switch, read from the environment so a rollback needs no file edit:
+    //   NEXUSLINK_HUD_V5=1  -> the command output shows the v5 deck
+    //   unset / 0 / false   -> the v4 DeckCommand, exactly as it was
+    // Nothing else in this file changes behaviour: the v5 file is loaded lazily
+    // by URL (see commandScreenV5), so the v4 tree never imports it and a broken
+    // v5 file cannot take the v4 deck down while the flag is off.
+    readonly property bool v5Deck: {
+        var raw = Quickshell.env("NEXUSLINK_HUD_V5")
+        if (raw === null || raw === undefined)
+            return false
+        var v = String(raw).toLowerCase()
+        return v === "1" || v === "true" || v === "on"
+    }
+
     // ------------------------------------------------------------------ state
     property var stats: ({})
     property var probeMap: ({})        // static keys merged into every frame
@@ -1105,9 +1120,10 @@ Item {
                     Loader {
                         id: deckLoader
                         anchors.fill: parent
-                        sourceComponent: win.isCommand ? commandScreen
-                                       : win.isHardware ? tokensScreen
-                                       : systemScreen
+                        sourceComponent: win.isCommand
+                                         ? (hud.v5Deck ? commandScreenV5 : commandScreen)
+                                         : win.isHardware ? tokensScreen
+                                         : systemScreen
                     }
                     Component {
                         id: commandScreen
@@ -1143,6 +1159,20 @@ Item {
                             crew: hud.crew
                             screenName: win.screenName
                             shown: deck.shown
+                        }
+                    }
+
+                    // v5 deck (flag: hud.v5Deck). Loaded by URL so this module
+                    // never imports it: v5/DeckMain.qml is the only file under
+                    // v5/ that imports Quickshell, and it composes the pure-
+                    // QtQuick DeckSurface.qml that tools/qml-shot.sh renders.
+                    Component {
+                        id: commandScreenV5
+                        Loader {
+                            anchors.fill: parent
+                            source: Qt.resolvedUrl("../v5/DeckMain.qml")
+                            onStatusChanged: if (status === Loader.Error)
+                                console.warn("hud: v5 DeckMain failed to load on " + win.screenName)
                         }
                     }
 

@@ -1,0 +1,30 @@
+module NexusHud.V5
+# v5 deck kit. Singletons only in Wave 0 (C1 SCAFFOLD).
+# The integrator owns this file. Component cards never edit it: they add their
+# own .qml file and ask for the one registration line in their PR body.
+singleton Tokens 1.0 Tokens.qml
+singleton Motion 1.0 Motion.qml
+# Wave 1 registrations land below this line, one per component card.
+# I1 (integrator) registers every component that exists on v5/main-deck, with
+# the line each PR body asked for. Order: renderer, centre, orbit widgets,
+# gauges, icons, launcher, find, environment.
+Swarm 1.0 Swarm.qml
+SwarmSphere 1.0 SwarmSphere.qml
+Knot 1.0 Knot.qml
+CrewOrb 1.0 CrewOrb.qml
+PulseRing 1.0 PulseRing.qml
+DotArc 1.0 DotArc.qml
+DotBar 1.0 DotBar.qml
+LocalOrb 1.0 LocalOrb.qml
+IconTile 1.0 IconTile.qml
+LauncherArc 1.0 LauncherArc.qml
+FindField 1.0 FindField.qml
+FindResults 1.0 FindResults.qml
+Clock 1.0 Clock.qml
+Focus 1.0 Focus.qml
+IdleDrift 1.0 IdleDrift.qml
+# kit/icons/* is deliberately NOT registered (W4, PR #38): IconTile reaches the
+# 17 glyphs with `import "icons" as Icons` and Glyph maps a key to a Component,
+# so this file grows by two lines instead of nineteen and a deck of nine tiles
+# instantiates nine glyphs, not seventeen. The glyphs are library files, not
+# public types.

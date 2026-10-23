@@ -1,0 +1,11 @@
+PID	Status	Label
+63819	0	application.com.getdropbox.dropbox.655009.190378765
+-	0	io.tailscale.ipn.macsys.login-item-helper
+-	0	com.apple.SafariHistoryServiceAgent
+-	0	com.apple.enhancedloggingd
+-	-9	com.apple.progressd
+-	-9	com.apple.cloudphotod
+-	-9	com.apple.MENotificationService
+61281	-9	com.apple.homed
+-	-9	com.apple.dataaccess.dataaccessd
+-	-9	com.apple.knowledgeconstructiond

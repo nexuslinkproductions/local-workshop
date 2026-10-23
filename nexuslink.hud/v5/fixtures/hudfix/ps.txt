@@ -1,0 +1,4 @@
+    1     0 /sbin/launchd
+  733 88494 /opt/hermes/bin/python3 -m hermes gateway
+2506443 2506440 quickshell -n -p /usr/share/omarchy/shell
+2506444 2506443 /usr/bin/hud-collect --interval 10
