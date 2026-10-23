@@ -274,12 +274,13 @@ decision taken alone. Here they are.
 **Option A, the raymarch sphere branch.** Does not render. The fragment shader
 builds its view ray nearly orthographically (object xy = px / pxPerUnit) but
 places the dot centres with `project()`, which applies a perspective scale
-`camDist / (camDist - z)`; at the orb's dot pitch (3.0 px at 224, 4.3 px at 320)
-that mismatch is larger than the dot radius, so almost every fragment rejects
-every dot. Measured on this Mac with `static` probes off the same pack: the
-sphere at dotR 0.0100 and pitch 0.0268 gives max luminance 23 to 30 of 255 at 540
-and 1080 and 0 to 1 of 255 at 224 and 320, i.e. 0.0000 lit at 0.35. Its cost is
-0.50 ms at 224 and 0.51 ms at 320, which is the cost of a march that hits nothing.
+`camDist / (camDist - z)`; at the dot pitch that probe ran (0.0268, so 3.0 px at
+224 and 4.3 px at 320) that mismatch is larger than the dot radius, so almost every
+fragment rejects every dot. Measured on this Mac with `static` probes off the same
+pack: the sphere at dotR 0.0100 and pitch 0.0268 gives max luminance 23 to 30 of
+255 at 540 and 1080 and 0 to 1 of 255 at 224 and 320, i.e. 0.0000 lit at 0.35. Its
+cost is 0.50 ms at 224 and 0.51 ms at 320, which is the cost of a march that hits
+nothing.
 This is not a tuning problem (an oversized dotR 0.05 and stipple 1.0 produce a
 ring at the limb and a black middle, which is the same projection mismatch seen
 from the other side); it needs the ray construction and `project()` made
