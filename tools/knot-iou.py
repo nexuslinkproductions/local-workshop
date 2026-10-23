@@ -51,7 +51,7 @@ from collections import deque
 
 from PIL import Image, ImageFilter
 
-DEFAULT_REF = ("/Users/marcelspatz/NEXUS_AI_CENTER/04_PROJECTS/HUD/"
+DEFAULT_REF = os.environ.get("KNOT_REF") or ("/Users/marcelspatz/NEXUS_AI_CENTER/04_PROJECTS/HUD/"
                "hud-candidates/comp-r1/s2/s2-rest.png")
 DEFAULT_CLOUD = ("/Users/marcelspatz/NEXUS_AI_CENTER/04_PROJECTS/HUD/"
                  "hud-candidates/comp-r1/s2/src/knot/knot3d.json")

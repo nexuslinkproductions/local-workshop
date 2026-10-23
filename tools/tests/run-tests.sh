@@ -122,7 +122,7 @@ check "qml-shot exit" 0 "$shot_rc"
 printf 'harness: %s\n' "$LINE"
 check "image size" "2560x1440" "$(field image)"
 check "render mode" "rhi" "$(field mode)"
-check "graphics api" "metal" "$(field api)"
+check "graphics api" "${EXPECT_GFX:-metal}" "$(field api)"
 check "root kind" "item" "$(field root)"
 
 distinct=$(field distinct)

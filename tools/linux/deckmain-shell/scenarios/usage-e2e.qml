@@ -11,7 +11,9 @@ import NexusHud.V5 1.0
 //   frozen  a snapshot with state fresh and source_as_of 50 min old. Expect
 //           "Claude 5h --  STALE 50m", opacity 0.45, and no 37 on screen.
 //   error   usage.py on the fixture error gauge. Expect "ERROR usage endpoint rate limited", no digits.
-// Run: UG_USAGE_FIXTURES=<dir> tools/linux/deckmain-shell.sh --scenario usage-e2e --seconds 40
+// Run: python3 tools/linux/deckmain-shell/stubs/usage_fixtures.py <dir> (the fresh fixture is
+//      stamped at generation time and goes stale after 300 s, so regenerate it before every run), then
+//      UG_USAGE_FIXTURES=<dir> tools/linux/deckmain-shell.sh --scenario usage-e2e --seconds 40
 Item {
     id: root
 
