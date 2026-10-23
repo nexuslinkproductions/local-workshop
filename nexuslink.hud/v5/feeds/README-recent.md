@@ -4,8 +4,8 @@ One JSON object for the deck's Recent and Pinned widget: the newest downloads,
 screenshots and recent files, the pinned folders, and a census by file type.
 Python 3, standard library only, no network, no daemon, no watcher. The HUD
 polls the script; a 10 s cache keeps two live ticks from walking the tree twice.
-A fixture read is never cached and never reads the host, so its output is the
-same on every machine: a fixture file carries the tree as data, and `--fixture
+A fixture read is never cached and never reads the host: a fixture file carries
+the tree as data, so its output is the same on every machine, and `--fixture
 DIR` stands in for the whole machine, where `~` is that directory and a root
 outside it is refused rather than read (see Fixtures).
 
