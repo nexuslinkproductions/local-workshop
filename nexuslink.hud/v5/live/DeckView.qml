@@ -14,7 +14,7 @@ import "../kit"
 // 84 percent); nothing but the clock comes closer than 1.5 knot radii (405 px) to the
 // knot edge; the launcher arc lies on the bottom band.
 //
-// Time: one Timer writes `tick` at Tokens.swarmTickHz. Every other motion (knot,
+// Time: one Timer writes `tick` at Tokens.swarmTickHzMin (24 Hz, the low end of the 24 to 30 Hz band, to protect the idle budget). Every other motion (knot,
 // drift, breath, pulses) is computed from `tick` by the widgets or the shader.
 Item {
     id: root
@@ -63,7 +63,7 @@ Item {
     Timer {
         id: ticker
         property double t0: Date.now()
-        interval: Math.round(1000 / Tokens.swarmTickHz)
+        interval: Math.round(1000 / Tokens.swarmTickHzMin)
         repeat: true
         running: root.shown && root.autoTick
         onTriggered: root.tick = (Date.now() - t0) / 1000
