@@ -766,6 +766,7 @@ Item {
             text: root.hitCount() > 0 ? root.pathMarkup(root.hitAt(0)) : ""
             textFormat: Text.StyledText
             clip: true
+            elide: Text.ElideMiddle
             horizontalAlignment: Text.AlignHCenter
             color: Tokens.textCaption
             font.family: Tokens.fontFamily
@@ -921,6 +922,7 @@ Item {
             text: root.pathMarkup(root.hitAt(idx))
             textFormat: Text.StyledText
             clip: true
+            elide: Text.ElideMiddle
             horizontalAlignment: Text.AlignHCenter
             color: Tokens.textCaption
             font.family: Tokens.fontFamily
