@@ -1,0 +1,9 @@
+{
+  "ts": 1792703222.1396573,
+  "model": "ornith-chief-v3",
+  "tokens_per_s": 41.6,
+  "queue": 0,
+  "vram_used_mib": 11012,
+  "vram_total_mib": 12288,
+  "fixture_note": "shape and key names from recon/05-local-ai.md (llama-swap /running, per-pid fdinfo VRAM on the B580); the numbers are a plausible loaded-model snapshot, not a measured capture. The Linux box replaces this file with the real /run/user/1000/chief/metrics.json, which is also why metrics_age_s on this snapshot is always large: a copied file is old by construction, and the reader says so with stale:true."
+}

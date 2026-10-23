@@ -1,0 +1,24 @@
+{
+  "running": true,
+  "elapsed_s": 42.5,
+  "channels": 2,
+  "target": "~/calls/20261023-2140-standup",
+  "last": [
+    {
+      "file": "~/calls/20261022-1812-review/call.wav",
+      "started_at": "2026-10-22T16:12:03Z",
+      "duration_s": 1812.4
+    },
+    {
+      "file": "~/calls/20261021-0930-briefing/call.wav",
+      "started_at": "2026-10-21T07:30:11Z",
+      "duration_s": 941.6
+    },
+    {
+      "file": "~/calls/20261020-1705-bridge-sync/call.wav",
+      "started_at": "2026-10-20T15:05:48Z",
+      "duration_s": 3273.0
+    }
+  ],
+  "fixture_note": "the mapped payload of `callcap status` for a live recording, in the shape this reader emits; callcap itself prints text (REC or idle per directory), so there is no JSON to copy. durations follow the wrapper's 48 kHz s16 stereo format: (bytes - 44) / 192000."
+}
