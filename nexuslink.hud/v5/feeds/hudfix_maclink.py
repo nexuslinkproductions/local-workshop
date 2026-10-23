@@ -681,16 +681,16 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
         return False, "pid %r is not a number" % (pid,)
     if pid_int <= 1:
         return False, "pid %d is launchd or invalid" % pid_int
-    if pid_int in self_pids:
-        return False, "pid %d is this process or one of its ancestors" % pid_int
-    if self_card and card_id == self_card:
-        return False, "card %s is this very worker's card" % card_id
     tokens = tokens_of(body)
     lower = [token.lower() for token in tokens]
     if "gateway" in lower:
         return False, "pid %d is the gateway" % pid_int
     if "kanban" in lower and ("dispatch" in lower or "dispatcher" in lower):
         return False, "pid %d is the kanban dispatcher" % pid_int
+    if self_card and card_id == self_card:
+        return False, "card %s is this very worker's card" % card_id
+    if pid_int in self_pids:
+        return False, "pid %d is this process or one of its ancestors" % pid_int
     hermes_runtime = "hermes_cli.main" in body or any(
         os.path.basename(token) in ("hermes", "devin") for token in tokens[:3]
     )
@@ -1694,12 +1694,15 @@ def run_wake(ctx=None, confirm=None, runtime=None):
     try:
         write_pid_file(paths["caffeinate"], pid, "maclink.wake", "caffeinate -d")
     except OSError as exc:
+        _out, _err, cleanup_code = runtime.run(["kill", "-TERM", str(pid)], timeout=5.0)
         result["ok"] = False
-        result["reason"] = "caffeinate is pid %d but the pid file could not be written: %s" % (
-            pid,
-            exc,
+        result["cleanup_exit"] = cleanup_code
+        result["reason"] = (
+            "caffeinate was pid %d but the pid file could not be written (%s); the "
+            "process was stopped again so no unrecorded helper is left running"
+            % (pid, exc)
         )
-        return _run_base("maclink.wake", result, "caffeinate up, pid file failed")
+        return _run_base("maclink.wake", result, "caffeinate up, pid file failed, process stopped")
     return _run_base("maclink.wake", result, "caffeinate running as pid %d" % pid)
 
 
