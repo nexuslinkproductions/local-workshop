@@ -12,8 +12,18 @@ import NexusHud.V5 1.0
 //   QML_IMPORT_PATH=<dir with NexusHud/V5> \
 //   tools/qml-shot.sh nexuslink.hud/v5/stills/w3-gauge-harness.qml \
 //       nexuslink.hud/v5/stills/w3-gauges.png 1220 960
-// The import path is only needed until the integrator registers the four
-// components in kit/qmldir (task I1); kit/qmldir is not this card's file.
+//
+// As committed this harness does NOT render: kit/qmldir registers only the two
+// Wave 0 singletons, so the loader fails on the first component with
+// "<Name> is not a type" (qml-shot exit 2). It renders once the integrator
+// (I1) adds the four component lines to kit/qmldir:
+//   PulseRing 1.0 PulseRing.qml
+//   DotArc 1.0 DotArc.qml
+//   DotBar 1.0 DotBar.qml
+//   LocalOrb 1.0 LocalOrb.qml
+// Until then, point QML_IMPORT_PATH at a scratch copy of kit/ with those four
+// lines appended; that is how the stills on this card were rendered.
+// kit/qmldir is not this card's file.
 //
 // Fixture values (v5/fixtures/):
 //   PulseRing 7.5 ms        link.json rtt.median (breath period 2.932 s)

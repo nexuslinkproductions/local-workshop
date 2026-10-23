@@ -42,13 +42,41 @@ Item {
     // art spans 155.2 px. Kept as the unit the radii below are expressed in.
     readonly property real referenceSize: 156
     readonly property bool hasReading: value > 0
-    readonly property color dotColor: value >= 100 ? Tokens.amber : accent
+    // s2 build.py:99 switches the dots to amber at an RTT of 100 ms or more.
+    // Requested as Tokens.rttWarnMs.
+    readonly property int warnMillis: 100
+    readonly property color dotColor: value >= warnMillis ? Tokens.amber : accent
 
     // s2 build.py:27. Recomputed when value changes, never per frame.
     readonly property real pulsePeriod: hasReading
         ? Math.max(0.6, 3.4 - Math.log(Math.max(value, 5) / 5) / Math.LN2 * 0.8)
         : 0
     readonly property int pulseMillis: Math.round(pulsePeriod * 1000)
+
+    // ---- design values ---------------------------------------------------
+    // Local to this component until the integrator promotes them; each one is
+    // requested as a token in the PR body (W3). The rings table below keeps
+    // the s2 geometry and ring alphas keyed per ring instead of one property
+    // per value.
+    // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
+    readonly property real focusLift: 0.04
+    // Ring wrapper opacity: 0.90 while reading, plus 0.10 with focus; 0.45
+    // when there is no reading at all.
+    readonly property real ringAlphaBase: 0.90
+    readonly property real ringAlphaFocusGain: 0.10
+    readonly property real ringAlphaRest: 0.45
+    // s2 `pl` keyframes, build.py:152: scale 0.94 to 1.07, opacity 0.55 to 1.
+    readonly property real pulseScaleMin: 0.94
+    readonly property real pulseScaleMax: 1.07
+    readonly property real pulseAlphaMin: 0.55
+    readonly property real pulseAlphaMax: 1.0
+    // s2 build.py:99: the three rings sit a third of the period apart.
+    readonly property int ringPhases: 3
+    // Motion.curveInOut is a 4-value list, and Qt 6.12 evaluates a 4-value
+    // bezierCurve as linear (probe: 220 of 1000 at 225 ms). The brief's
+    // 6-value form carries the curve; [1.0, 1.0] closes the spline.
+    readonly property var pulseCurve: [Motion.curveInOut[0], Motion.curveInOut[1],
+                                       Motion.curveInOut[2], Motion.curveInOut[3], 1.0, 1.0]
 
     // Rings: radius and dot radius in reference px, alpha from s2.
     readonly property var rings: [
@@ -78,7 +106,7 @@ Item {
         height: root.referenceSize
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: (root.artDiameter / root.referenceSize) * (1 + 0.04 * root.focusAmount)
+        scale: (root.artDiameter / root.referenceSize) * (1 + root.focusLift * root.focusAmount)
 
         Behavior on scale {
             SpringAnimation {
@@ -100,13 +128,21 @@ Item {
                 required property int index
                 required property var modelData
                 property var ring: modelData
-                opacity: root.hasReading ? 0.9 + 0.1 * root.focusAmount : 0.45
+                opacity: root.hasReading
+                    ? root.ringAlphaBase + root.ringAlphaFocusGain * root.focusAmount
+                    : root.ringAlphaRest
 
                 Item {
                     id: ringField
                     anchors.centerIn: parent
                     width: 0
                     height: 0
+                    // The ring waits at the pulse floor (the s2 paused
+                    // keyframe) until its phase comes up, so a delayed ring
+                    // never snaps from its default value to the animation's
+                    // start value.
+                    scale: root.pulseScaleMin
+                    opacity: root.pulseAlphaMin
 
                     Repeater {
                         model: ringWrap.ring.dots
@@ -127,60 +163,67 @@ Item {
                         }
                     }
 
-                    // One breath per ring, phase shifted by a third of the
-                    // period (s2 animation-delay -k * period / 3). Easing is
-                    // the Motion in-out curve; no linear segments.
-                    ParallelAnimation {
+                    // One pulse per ring, phase shifted by a third of the
+                    // period (s2 animation-delay -k * period / 3). The pause
+                    // runs once, before the loop: inside a ParallelAnimation
+                    // it delays nothing. Easing is the Motion in-out curve in
+                    // the 6-value form Qt 6.12 needs.
+                    SequentialAnimation {
                         running: root.breath && root.hasReading
-                        loops: Animation.Infinite
 
                         PauseAnimation {
                             duration: Math.round((root.rings.length - 1 - ringWrap.index)
-                                                 * root.pulseMillis / 3)
+                                                 * root.pulseMillis / root.ringPhases)
                         }
-                        SequentialAnimation {
-                            NumberAnimation {
-                                target: ringField
-                                property: "scale"
-                                from: 0.94
-                                to: 1.07
-                                duration: Math.round(root.pulseMillis / 2)
-                                easing.type: Easing.Bezier
-                                easing.bezierCurve: Motion.curveInOut
+
+                        ParallelAnimation {
+                            loops: Animation.Infinite
+
+                            SequentialAnimation {
+                                NumberAnimation {
+                                    target: ringField
+                                    property: "scale"
+                                    from: root.pulseScaleMin
+                                    to: root.pulseScaleMax
+                                    duration: Math.round(root.pulseMillis / 2)
+                                    easing.type: Easing.Bezier
+                                    easing.bezierCurve: root.pulseCurve
+                                }
+                                NumberAnimation {
+                                    target: ringField
+                                    property: "scale"
+                                    from: root.pulseScaleMax
+                                    to: root.pulseScaleMin
+                                    duration: Math.round(root.pulseMillis / 2)
+                                    easing.type: Easing.Bezier
+                                    easing.bezierCurve: root.pulseCurve
+                                }
                             }
-                            NumberAnimation {
-                                target: ringField
-                                property: "scale"
-                                from: 1.07
-                                to: 0.94
-                                duration: Math.round(root.pulseMillis / 2)
-                                easing.type: Easing.Bezier
-                                easing.bezierCurve: Motion.curveInOut
+                            SequentialAnimation {
+                                NumberAnimation {
+                                    target: ringField
+                                    property: "opacity"
+                                    from: root.pulseAlphaMin
+                                    to: root.pulseAlphaMax
+                                    duration: Math.round(root.pulseMillis / 2)
+                                    easing.type: Easing.Bezier
+                                    easing.bezierCurve: root.pulseCurve
+                                }
+                                NumberAnimation {
+                                    target: ringField
+                                    property: "opacity"
+                                    from: root.pulseAlphaMax
+                                    to: root.pulseAlphaMin
+                                    duration: Math.round(root.pulseMillis / 2)
+                                    easing.type: Easing.Bezier
+                                    easing.bezierCurve: root.pulseCurve
+                                }
                             }
                         }
-                        SequentialAnimation {
-                            NumberAnimation {
-                                target: ringField
-                                property: "opacity"
-                                from: 0.55
-                                to: 1.0
-                                duration: Math.round(root.pulseMillis / 2)
-                                easing.type: Easing.Bezier
-                                easing.bezierCurve: Motion.curveInOut
-                            }
-                            NumberAnimation {
-                                target: ringField
-                                property: "opacity"
-                                from: 1.0
-                                to: 0.55
-                                duration: Math.round(root.pulseMillis / 2)
-                                easing.type: Easing.Bezier
-                                easing.bezierCurve: Motion.curveInOut
-                            }
-                        }
+
                         onStopped: {
-                            ringField.scale = 1.0
-                            ringField.opacity = 1.0
+                            ringField.scale = root.pulseScaleMin
+                            ringField.opacity = root.pulseAlphaMin
                         }
                     }
                 }

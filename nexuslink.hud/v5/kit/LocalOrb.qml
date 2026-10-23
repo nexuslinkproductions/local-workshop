@@ -64,6 +64,30 @@ Item {
     readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
     readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
     readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
+    // Activity clamped once, the way focusAmount clamps focusLevel.
+    readonly property real activityAmount: Math.max(0, Math.min(1, activity))
+
+    // ---- design values ---------------------------------------------------
+    // Local to this component until the integrator promotes them; each one is
+    // requested as a token in the PR body (W3).
+    // Activity lift: the sphere grows 8 percent at full activity, and the
+    // field alpha runs 0.62 to 1.0 so a busy model reads brighter.
+    readonly property real activityLift: 0.08
+    readonly property real activityAlphaBase: 0.62
+    readonly property real activityAlphaGain: 0.38
+    // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
+    readonly property real focusLift: 0.04
+    // Activity core: one dot, 4 px at rest and 18 px at full activity, alpha
+    // 0.10 to 0.95.
+    readonly property real coreSizeMin: 4
+    readonly property real coreSizeGain: 14
+    readonly property real coreAlphaMin: 0.1
+    readonly property real coreAlphaGain: 0.85
+    // Motion.curveInOut is a 4-value list, and Qt 6.12 evaluates a 4-value
+    // bezierCurve as linear (probe: 220 of 1000 at 225 ms). The brief's
+    // 6-value form carries the curve; [1.0, 1.0] closes the spline.
+    readonly property var breathCurve: [Motion.curveInOut[0], Motion.curveInOut[1],
+                                        Motion.curveInOut[2], Motion.curveInOut[3], 1.0, 1.0]
 
     // Unit sphere points with the s2 depth cues folded in. Positions are on the
     // unit sphere; the delegate multiplies by orbRadius.
@@ -114,7 +138,7 @@ Item {
                     to: 1.0 + Motion.breathScale
                     duration: Math.round(Motion.breathPeriod * 1000 / 2)
                     easing.type: Easing.Bezier
-                    easing.bezierCurve: Motion.curveInOut
+                    easing.bezierCurve: root.breathCurve
                 }
                 NumberAnimation {
                     target: breathField
@@ -123,7 +147,7 @@ Item {
                     to: 1.0 - Motion.breathScale
                     duration: Math.round(Motion.breathPeriod * 1000 / 2)
                     easing.type: Easing.Bezier
-                    easing.bezierCurve: Motion.curveInOut
+                    easing.bezierCurve: root.breathCurve
                 }
             }
 
@@ -132,8 +156,9 @@ Item {
                 anchors.centerIn: parent
                 width: 0
                 height: 0
-                scale: (1 + 0.08 * Math.max(0, Math.min(1, root.activity))) * (1 + 0.04 * root.focusAmount)
-                opacity: 0.62 + 0.38 * Math.max(0, Math.min(1, root.activity))
+                scale: (1 + root.activityLift * root.activityAmount)
+                       * (1 + root.focusLift * root.focusAmount)
+                opacity: root.activityAlphaBase + root.activityAlphaGain * root.activityAmount
 
                 Behavior on scale {
                     SpringAnimation {
@@ -166,11 +191,11 @@ Item {
             // load, the same grammar as a session core in the crew orb.
             Rectangle {
                 anchors.centerIn: parent
-                width: 4 + 14 * Math.max(0, Math.min(1, root.activity))
+                width: root.coreSizeMin + root.coreSizeGain * root.activityAmount
                 height: width
                 radius: width / 2
                 color: root.accent
-                opacity: 0.1 + 0.85 * Math.max(0, Math.min(1, root.activity))
+                opacity: root.coreAlphaMin + root.coreAlphaGain * root.activityAmount
                 antialiasing: true
             }
         }

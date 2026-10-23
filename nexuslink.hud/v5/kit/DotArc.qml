@@ -38,6 +38,18 @@ Item {
     readonly property real startDegrees: 115
     readonly property real spanDegrees: 310
 
+    // ---- design values ---------------------------------------------------
+    // Local to this component until the integrator promotes them; each one is
+    // requested as a token in the PR body (W3).
+    // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
+    readonly property real focusLift: 0.04
+    // s2 build.py:102 draws lit dots at full alpha and unlit at 0.2. The deck
+    // holds the lit dots just under full, and lifts the unlit ones with focus
+    // so a dimmed gauge still reads.
+    readonly property real litAlpha: 0.95
+    readonly property real unlitAlpha: 0.18
+    readonly property real unlitFocusGain: 0.14
+
     // One animation owns level changes. The feed writes `level`, this property
     // follows it through a single NumberAnimation.
     property real shownLevel: Math.max(0, Math.min(1, level))
@@ -65,7 +77,7 @@ Item {
         height: root.referenceSize
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: (root.artDiameter / root.referenceSize) * (1 + 0.04 * root.focusAmount)
+        scale: (root.artDiameter / root.referenceSize) * (1 + root.focusLift * root.focusAmount)
 
         Behavior on scale {
             SpringAnimation {
@@ -92,7 +104,7 @@ Item {
                 x: root.referenceSize / 2 + Math.cos(angle) * root.arcRadius - dotDiameter / 2
                 y: root.referenceSize / 2 + Math.sin(angle) * root.arcRadius - dotDiameter / 2
                 color: root.accent
-                opacity: lit ? 0.95 : 0.18 + 0.14 * root.focusAmount
+                opacity: lit ? root.litAlpha : root.unlitAlpha + root.unlitFocusGain * root.focusAmount
                 antialiasing: true
             }
         }

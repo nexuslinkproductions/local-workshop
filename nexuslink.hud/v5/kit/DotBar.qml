@@ -37,6 +37,17 @@ Item {
     readonly property real dimDiameter: pitch * 0.40
     readonly property real barHeight: litDiameter * 1.1
 
+    // ---- design values ---------------------------------------------------
+    // Local to this component until the integrator promotes them; each one is
+    // requested as a token in the PR body (W3).
+    // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
+    readonly property real focusLift: 0.04
+    // s2 build.py:104 draws lit dots at full alpha and unlit at 0.16; focus
+    // lifts the unlit ones so a dimmed gauge still reads.
+    readonly property real litAlpha: 1.0
+    readonly property real unlitAlpha: 0.16
+    readonly property real unlitFocusGain: 0.14
+
     readonly property real textBlock: !showValue
         ? 0
         : Tokens.sp1 + Tokens.sizeLabel + (label !== "" ? Tokens.sp1 + Tokens.sizeCaption : 0)
@@ -62,7 +73,7 @@ Item {
         height: root.barHeight
         anchors.horizontalCenter: parent.horizontalCenter
         y: 0
-        scale: 1 + 0.04 * root.focusAmount
+        scale: 1 + root.focusLift * root.focusAmount
         transformOrigin: Item.Center
 
         Behavior on scale {
@@ -87,7 +98,7 @@ Item {
                 x: (index + 0.5) * root.pitch - dotDiameter / 2
                 y: (root.barHeight - dotDiameter) / 2
                 color: root.accent
-                opacity: lit ? 1.0 : 0.16 + 0.14 * root.focusAmount
+                opacity: lit ? root.litAlpha : root.unlitAlpha + root.unlitFocusGain * root.focusAmount
                 antialiasing: true
             }
         }
