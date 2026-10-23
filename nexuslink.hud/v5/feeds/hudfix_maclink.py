@@ -809,6 +809,11 @@ def self_process_chain(runtime):
     pids = {os.getpid(), os.getppid(), 1}
     try:
         table = runtime.ps_table()
+    except Malformed:
+        # A ps table this reader cannot read exactly is not "no table": the
+        # chain it would prove is the protection against signalling this very
+        # process or its ancestors, so the read is refused, not guessed.
+        raise
     except DataProblem:
         return pids
     parents = {}
@@ -2083,6 +2088,10 @@ def run_wake(ctx=None, confirm=None, runtime=None):
                 "caffeinate is already running as pid %d; not starting a second one"
                 % again["pid"],
             )
+    except Malformed:
+        # The pid file was readable at plan time and is hostile now: refuse the
+        # run rather than start a second helper over a file we cannot read.
+        raise
     except DataProblem:
         pass
     try:
@@ -3216,6 +3225,33 @@ def self_check():
         and lossy_plan.get("kind") == "malformed"
         and "not valid UTF-8" in (lossy_plan.get("reason") or ""),
         one_line(stdout, 240),
+    )
+    # Even with no card to examine: the ps chain is part of the safety proof, so
+    # an unreadable table is refused instead of quietly falling back.
+    empty_db = os.path.join(root, "kanban-empty.db")
+    empty_conn = sqlite3.connect(empty_db)
+    empty_conn.execute(
+        "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, "
+        "worker_pid INTEGER, last_heartbeat_at INTEGER, current_run_id INTEGER, started_at INTEGER)"
+    )
+    empty_conn.commit()
+    empty_conn.close()
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--json", "--db", empty_db, "--state-dir", lossy_state],
+        lossy_env,
+    )
+    try:
+        lossy_empty = json.loads(stdout)
+    except ValueError:
+        lossy_empty = None
+    check(
+        "lossy-ps-malformed-with-empty-board",
+        code == 0
+        and len(stdout.strip().splitlines()) == 1
+        and isinstance(lossy_empty, dict)
+        and lossy_empty.get("kind") == "malformed"
+        and "Traceback" not in stderr,
+        "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 160)),
     )
     code, stdout, stderr = _cli(
         ["run", "maclink.kick-bot", "--confirm", "maclink.kick-bot", "--json",
