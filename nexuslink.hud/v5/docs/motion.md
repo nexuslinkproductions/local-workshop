@@ -42,6 +42,10 @@ Reading the table:
 * **Idle drift** peaks at 1.891 px on `Motion.driftAmpMax` = 2.0, with an x range
   of ~1.71 px and a y range of ~3.1 px over the capture: two sine terms at
   period and period × phi, so the deck is never fully still and never repeats.
+  A second `IdleDrift` instance moves the launcher and find pill on its own phase
+  (`phaseOffset` 0.37, `Motion.driftAmpMin`, period × phi), so the chrome and the
+  widget band never move in step. The 96 px clock is the one fixed element: a
+  2 px wobble on type that large reads as broken typography, not as life.
 * **Breath** measured 5.839 / 5.825 / 5.808 s against `Motion.breathPeriod` =
   5.8 s, i.e. mid-level crossings timed across two full cycles. The shell
   renders it in the swarm shader at a 30 Hz tick, not in a wrapper animation.

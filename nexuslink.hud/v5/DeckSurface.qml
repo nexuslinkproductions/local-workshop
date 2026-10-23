@@ -489,46 +489,64 @@ Item {
             }
         }
 
-        // ------------------------------------------------------------ launcher
-        LauncherArc {
-            id: launcher
+        // ------------------------------------------------------- launcher, find
+        // The right-hand chrome drifts too, on its own phase and the *minimum*
+        // amplitude: "nothing on the deck is ever fully still". The 96 px clock
+        // is the one exception - a wobble on type that large reads as broken
+        // typography, not as life.
+        Item {
+            id: chromeGroup
 
-            x: deck.launcherX
-            y: deck.launcherY
-            width: deck.launcherW
-            height: deck.launcherH
-            apps: deck.apps
-            allApps: deck.allApps
-            hero: deck.hero
-            expanded: deck.focusId === "launcher"
+            anchors.fill: parent
 
-            onLaunch: deck.launchRequested(slug)
-        }
+            IdleDrift {
+                target: chromeGroup
+                amplitude: Motion.driftAmpMin
+                period: Motion.driftPeriodMin * Tokens.phi
+                phaseOffset: 0.37
+                previewTime: deck.benchPhase >= 0 ? deck.benchPhase : -1
+                enabled: deck.animate
+            }
 
-        // ---------------------------------------------------------------- find
-        FindField {
-            id: findField
+            LauncherArc {
+                id: launcher
 
-            x: deck.findX
-            y: deck.findY
-            width: deck.findBoxW
-            active: deck.focusId === "find"
-            query: deck.findQuery
-            filter: deck.findFilter
-            placeholder: "Find"
+                x: deck.launcherX
+                y: deck.launcherY
+                width: deck.launcherW
+                height: deck.launcherH
+                apps: deck.apps
+                allApps: deck.allApps
+                hero: deck.hero
+                expanded: deck.focusId === "launcher"
 
-            onFilterRequested: deck.findFilter = requested
-        }
+                onLaunch: deck.launchRequested(slug)
+            }
 
-        FindResults {
-            id: findResults
+            FindField {
+                id: findField
 
-            x: deck.findX + (deck.findBoxW - width) / 2
-            y: deck.findY + deck.findFieldHeight + Tokens.sp3
-            results: deck.findResults
-            filter: deck.findFilter
-            query: deck.findQuery
-            visible: deck.focusId === "find"
+                x: deck.findX
+                y: deck.findY
+                width: deck.findBoxW
+                active: deck.focusId === "find"
+                query: deck.findQuery
+                filter: deck.findFilter
+                placeholder: "Find"
+
+                onFilterRequested: deck.findFilter = requested
+            }
+
+            FindResults {
+                id: findResults
+
+                x: deck.findX + (deck.findBoxW - width) / 2
+                y: deck.findY + deck.findFieldHeight + Tokens.sp3
+                results: deck.findResults
+                filter: deck.findFilter
+                query: deck.findQuery
+                visible: deck.focusId === "find"
+            }
         }
 
         // ---------------------------------------------------------------- clock
