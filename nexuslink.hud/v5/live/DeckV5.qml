@@ -29,6 +29,8 @@ Item {
     // ---- scale to fit ------------------------------------------------------
     readonly property real fit: Math.min(root.width / 2560, root.height / 1440)
 
+    Component.onCompleted: console.log("v5 deck loaded, host " + root.width + "x" + root.height + ", scale " + root.fit.toFixed(3))
+
     // ---- clock: minute precision, one wake per minute ----------------------
     SystemClock {
         id: clock
