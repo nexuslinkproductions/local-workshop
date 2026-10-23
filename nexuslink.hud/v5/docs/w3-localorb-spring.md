@@ -146,7 +146,9 @@ parameters the component publishes at run time, so it cannot drift from the QML.
   1.0800 at 347 ms and stays there.
 - Runtime measurement of the same run (offscreen, 4 ms sampler, the QML runtime
   delivers a 11 to 62 ms grid): peak 1.083732 = **4.67 percent**, settle 292 ms,
-  `max|v|` 1.0837. The coarser grid explains the difference; both are in band.
+  `max|v|` 1.0837. The coarser grid explains the difference; across runs the
+  measured peak sits between 4.4 and 4.9 percent and the closed form is the exact
+  value, so the runtime number is corroboration, not the specification.
 - Focus lift (4 percent, `focusLevel` 0 -> 1): peak 1.041776 runtime / 1.041950
   closed form = **4.44 / 4.87 percent**, settle 278 / 288 ms.
 - Return (activity 1 -> 0, 1.0800 -> 1.0000): minimum 1.000000, **0.00 percent
