@@ -3,8 +3,10 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import "../kit"
 
-// CrewWidget.qml - v5 rest form: CREW label, big session count, and a
-// non-spherical dot lattice with one bright cluster per session.
+// CrewWidget.qml - v5 rest form, drawn to the approved s10 mockup: CREW label,
+// big session count, and a diamond lattice of dots (a square lattice cut to
+// |a| + |b| <= N, the s10 crew_svg shape). One node per session, busiest first,
+// on the five s10 cells; a live node is acid, the others white.
 //
 // Input: `crew` is the raw v4 crew object (~/.local/state/nexuslink/crew.json):
 //   { generated, bots: [{ name, model, provider, state, last_active,
@@ -15,6 +17,11 @@ import "../kit"
 // feed shape). Everything else (undefined, null, {}, junk entries) yields an
 // honest empty state: count 0, lattice dim, the word idle.
 //
+// Freshness: crew.json carries `generated` (tokens/crew.py writes it every 60 s).
+//   fresh: age <= staleAfterS, or no timestamp in the input: count bright.
+//   stale: age > staleAfterS: count dim, lattice dim, age text "stale 10m".
+//   error: crew.error is a non-empty value: no number, amber "error: <reason>".
+//
 // live is decided as: the activity string says streaming/receiving/starting a
 // turn, OR the session was active within the last 60 s. Raw bot events have no
 // activity string, so an open event (end === null) whose idle is <= 60 s is
@@ -22,12 +29,29 @@ import "../kit"
 //
 // Tokens for bot-derived rows: crew.json only carries a per-bot 24 h total, so
 // that total is divided evenly across that bot's listed events (documented
-// estimate; it only sets dot cluster size, never a printed number).
+// estimate; it only sets node size, never a printed number).
 WidgetBase {
     id: root
 
     property var crew: ({})
     readonly property int count: sessions.length
+
+    // ---- s10 geometry (deck px, 2560 x 1440 space) -----------------------
+    // Crew box in s10-spacing.json: l 184.4, t 248, r 592, b 552. DeckView
+    // places this widget at (184.2, 223.4); `stage` shifts deck px back into
+    // widget px, so the drawn shape lands on its s10 box at rest. Tokens has no
+    // crew or lattice entries, so these s10 constants live here.
+    readonly property real originX: 184.2
+    readonly property real originY: 223.4
+    readonly property real centreX: 440        // s10 GL, crew centre
+    readonly property real centreY: 400
+    readonly property real textRight: 250      // s10 TXL, text column edge
+    readonly property real pitch: 10           // s10 U, one lattice pitch
+    readonly property int latticeN: 15         // diamond half-diagonal, pitches
+    readonly property real dotScale: 1.1       // svg radius = 1.1 * r
+    readonly property real staleAfterS: 180    // three crew.json cycles
+    // Node cells (a, b) in lattice pitches, busiest first (s10 crew_svg pos).
+    readonly property var slotCells: [[1, 0], [-5, -4], [6, -5], [-4, 6], [5, 6]]
 
     // ---- adapter ---------------------------------------------------------
     function str(v) {
@@ -143,7 +167,33 @@ WidgetBase {
     }
     readonly property var sessions: root.adapt(root.crew)
 
-    // ---- stable hash and cluster geometry --------------------------------
+    // ---- freshness and error ---------------------------------------------
+    // Age of the snapshot in seconds, -1 when the input carries no timestamp.
+    // tick is passed in so the binding re-reads the wall clock every tick.
+    function ageAt(t) {
+        var g = (root.crew && typeof root.crew === "object" && !Array.isArray(root.crew))
+              ? Number(root.crew.generated) : NaN
+        if (!isFinite(g) || g <= 0)
+            return -1
+        return Math.max(0, Date.now() / 1000 - g)
+    }
+    readonly property real ageS: root.ageAt(root.tick)
+    readonly property bool stale: root.ageS > root.staleAfterS
+    readonly property string ageLabel: {
+        var s = Math.floor(root.ageS)
+        if (s < 60) return s + "s"
+        if (s < 3600) return Math.floor(s / 60) + "m"
+        if (s < 86400) return Math.floor(s / 3600) + "h"
+        return Math.floor(s / 86400) + "d"
+    }
+    readonly property string errorText: {
+        var e = (root.crew && typeof root.crew === "object" && !Array.isArray(root.crew))
+              ? root.crew.error : undefined
+        return (e === undefined || e === null) ? "" : String(e).trim()
+    }
+    readonly property bool errored: root.errorText !== ""
+
+    // ---- stable hash and node cells --------------------------------------
     function hashId(s) {
         var h = 2166136261
         for (var i = 0; i < s.length; i++) {
@@ -153,155 +203,185 @@ WidgetBase {
         return h >>> 0
     }
 
-    // Square lattice clipped to a rounded-rectangle silhouette, integer maths.
-    // 12 columns x 11 rows with the four corner blocks cut: 120 dots.
-    readonly property var lattice: {
-        var pts = []
-        var w = 220, h = 200, step = 18, inset = 9
-        for (var y = inset; y <= h - inset; y += step) {
-            for (var x = inset; x <= w - inset; x += step) {
-                var dx = Math.abs(x - w * 0.5)
-                var dy = Math.abs(y - h * 0.5)
-                if (dx > 78 && dy > 62)
-                    continue
-                pts.push({ "x": x, "y": y })
-            }
-        }
-        return pts
-    }
-
-    // At most 10 clusters: live first, then by tokens. The count stays the
-    // real session count; the lattice only makes the busiest ten visible.
-    readonly property var clusters: {
-        var src = root.sessions.slice(0)
-        src.sort(function (a, b) {
-            if (a.live !== b.live) return a.live ? -1 : 1
-            if (a.tokens !== b.tokens) return b.tokens - a.tokens
-            return a.id < b.id ? -1 : 1
+    // At most 10 nodes: live first, then by tokens (the count stays the real
+    // session count). The chosen nodes are then laid out busiest first on the
+    // s10 cells; sessions past the five cells take a hashed cell inside the
+    // diamond, so a node does not move when the feed reorders.
+    readonly property var nodes: {
+        var all = root.sessions
+        var mx = 0
+        for (var i = 0; i < all.length; i++)
+            mx = Math.max(mx, all[i].tokens)
+        var src = all.slice(0)
+        src.sort(function (x, y) {
+            if (x.live !== y.live) return x.live ? -1 : 1
+            if (x.tokens !== y.tokens) return y.tokens - x.tokens
+            return x.id < y.id ? -1 : 1
         })
         var picked = src.slice(0, 10)
-        var placed = {}
+        picked.sort(function (x, y) {
+            if (x.tokens !== y.tokens) return y.tokens - x.tokens
+            return x.id < y.id ? -1 : 1
+        })
+        var N = root.latticeN
         var out = []
-        for (var i = 0; i < picked.length; i++) {
-            var s = picked[i]
-            var h = root.hashId(s.id)
-            var px = 30 + (h % 160)
-            var py = 30 + ((h >>> 9) % 140)
-            if (s.parent !== "" && placed[s.parent] !== undefined) {
-                var p = placed[s.parent]
-                px = Math.max(26, Math.min(194, p.x + 26))
-                py = Math.max(26, Math.min(174, p.y + 16))
+        for (var j = 0; j < picked.length; j++) {
+            var s = picked[j]
+            var cell
+            if (j < root.slotCells.length) {
+                cell = root.slotCells[j]
+            } else {
+                var h = root.hashId(s.id)
+                var a = (h % 17) - 8
+                var b = ((h >>> 9) % 17) - 8
+                if (Math.abs(a) + Math.abs(b) > N - 3) {
+                    a = Math.round(a * 0.6)
+                    b = Math.round(b * 0.6)
+                }
+                cell = [a, b]
             }
-            var n = Math.max(3, Math.min(9, Math.round(
-                2 + Math.log(1 + s.tokens / 1000) / Math.LN10 * 2)))
-            placed[s.id] = { "x": px, "y": py, "n": n }
-            out.push({ "x": px, "y": py, "n": n,
-                       "live": s.live, "id": s.id })
+            var r = mx > 0 ? 3.8 + 3.4 * Math.sqrt(s.tokens / mx) : 3.8
+            out.push({ "a": cell[0], "b": cell[1], "r": r, "live": s.live })
         }
         return out
     }
 
-    // Flat dot lists so the whole rest form is two Repeaters.
-    readonly property var clusterDots: {
-        var ox = [0, 7, -7, 0, 0, 7, -7, 7, -7]
-        var oy = [0, 0, 0, 7, -7, 7, -7, -7, 7]
+    // ---- dots: the whole diamond in one list -----------------------------
+    // Ambient dots brighten toward the upper left (light at -0.30, -0.35 of the
+    // half-diagonal). Edge dots are smaller and dimmer. Dots next to a node are
+    // white halo; a node cell is the node itself.
+    function buildDots(list) {
+        var N = root.latticeN
+        var p = root.pitch
+        var at = {}
+        var near = {}
+        for (var i = 0; i < list.length; i++) {
+            var nd = list[i]
+            at[nd.a + "," + nd.b] = i
+            for (var da = -2; da <= 2; da++)
+                for (var db = -2; db <= 2; db++)
+                    if (Math.abs(da) + Math.abs(db) <= 2)
+                        near[(nd.a + da) + "," + (nd.b + db)] = true
+        }
         var out = []
-        for (var i = 0; i < root.clusters.length; i++) {
-            var c = root.clusters[i]
-            for (var j = 0; j < c.n; j++) {
+        for (var a = -N; a <= N; a++) {
+            var aa = Math.abs(a)
+            for (var b = -N + aa; b <= N - aa; b++) {
+                var key = a + "," + b
+                var k = Math.max(0, 1 - Math.hypot(a / N + 0.30, b / N + 0.35) / 1.45)
+                var r = 1.6 + 1.7 * k
+                var op = 0.50 + 0.48 * k
+                var c = Tokens.ice
+                var m = aa + Math.abs(b)
+                if (m >= N - 1) {
+                    r = 1.8
+                    op = (m === N) ? 0.64 : 0.52
+                }
+                if (near[key] === true) {
+                    r = 2.9
+                    op = 0.97
+                    c = Tokens.white
+                }
+                if (at[key] !== undefined) {
+                    var n2 = list[at[key]]
+                    r = n2.r
+                    op = 1
+                    c = n2.live ? Tokens.acid : Tokens.white
+                }
                 out.push({
-                    "x": c.x + ox[j] - 2.5,
-                    "y": c.y + oy[j] - 2.5,
-                    "s": 5,
-                    "c": c.live ? Tokens.acid : Tokens.ice,
-                    "o": c.live ? 0.95 : 0.8
+                    "cx": root.centreX + a * p,
+                    "cy": root.centreY + b * p,
+                    "d": 2 * root.dotScale * r,
+                    "c": c,
+                    "o": op
                 })
             }
-            // white core dot, one per cluster
-            out.push({ "x": c.x - 2, "y": c.y - 2, "s": 4,
-                       "c": Tokens.white, "o": 0.95 })
         }
         return out
     }
+    readonly property var dots: root.buildDots(root.nodes)
 
-    // ---- rest layout -----------------------------------------------------
+    // ---- rest layout (deck px inside `stage`, see originX/originY) -------
     Item {
-        id: leftBlock
-        x: 0
-        y: 56
-        width: 128
-        height: 128
+        id: stage
+        x: -root.originX
+        y: -root.originY
+        width: 0
+        height: 0
+
+        Item {
+            id: latticeBox
+            x: 0
+            y: 0
+            opacity: root.errored ? 0.45 : (root.stale ? 0.5
+                   : (root.count === 0 ? 0.7 : 1))
+
+            Repeater {
+                model: root.dots
+                Rectangle {
+                    required property var modelData
+                    x: modelData.cx - modelData.d / 2
+                    y: modelData.cy - modelData.d / 2
+                    width: modelData.d
+                    height: modelData.d
+                    radius: modelData.d / 2
+                    color: modelData.c
+                    opacity: modelData.o
+                }
+            }
+        }
 
         Text {
             id: label
             x: 0
-            y: 0
+            y: 345
+            width: root.textRight
+            horizontalAlignment: Text.AlignRight
             text: qsTr("CREW")
             color: Tokens.textLabel
             font.family: Tokens.fontFamily
-            font.weight: Tokens.weightMedium
-            font.pixelSize: 16
-            font.letterSpacing: Tokens.trackLabel * 16
+            font.weight: Tokens.weightBold
+            font.pixelSize: Tokens.sizeCaption
+            font.letterSpacing: Tokens.trackLabel * Tokens.sizeCaption
             renderType: Text.NativeRendering
         }
+
         Text {
             id: bigCount
-            x: -2
-            y: 20
-            text: String(root.count)
-            color: Tokens.ink
-            font.family: Tokens.fontFamily
-            font.weight: Tokens.weightRegular
-            font.pixelSize: 68
-            renderType: Text.NativeRendering
-        }
-        Text {
-            id: idleWord
             x: 0
-            y: 112
-            visible: root.count === 0
-            text: qsTr("idle")
-            color: Tokens.textDim
+            y: 363
+            width: root.textRight
+            height: 68
+            visible: !root.errored
+            horizontalAlignment: Text.AlignRight
+            verticalAlignment: Text.AlignTop
+            lineHeight: 68
+            lineHeightMode: Text.FixedHeight
+            text: String(root.count)
+            color: root.stale ? Tokens.textDim : Tokens.white
             font.family: Tokens.fontFamily
-            font.weight: Tokens.weightRegular
-            font.pixelSize: 16
+            font.weight: Tokens.weightMedium
+            font.pixelSize: Tokens.sizeHero
+            font.letterSpacing: -Tokens.trackClock * Tokens.sizeHero
             renderType: Text.NativeRendering
         }
-    }
 
-    Item {
-        id: latticeBox
-        x: 128
-        y: 20
-        width: 220
-        height: 200
-        opacity: root.count === 0 ? 0.7 : 1
-
-        Repeater {
-            model: root.lattice
-            Rectangle {
-                required property var modelData
-                x: modelData.x - 4
-                y: modelData.y - 4
-                width: 8
-                height: 8
-                radius: 4
-                color: Tokens.ice
-                opacity: 0.22
-            }
-        }
-        Repeater {
-            model: root.clusterDots
-            Rectangle {
-                required property var modelData
-                x: modelData.x
-                y: modelData.y
-                width: modelData.s
-                height: modelData.s
-                radius: modelData.s * 0.5
-                color: modelData.c
-                opacity: modelData.o
-            }
+        // One line under the count: error (amber, no number), stale age, or idle.
+        Text {
+            id: stateLine
+            x: 0
+            y: 440
+            width: root.textRight
+            visible: root.errored || root.stale || root.count === 0
+            horizontalAlignment: Text.AlignRight
+            elide: Text.ElideRight
+            text: root.errored ? ("error: " + root.errorText)
+                : (root.stale ? ("stale " + root.ageLabel) : qsTr("idle"))
+            color: root.errored ? Tokens.amber : Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.weight: Tokens.weightRegular
+            font.pixelSize: Tokens.sizeCaption
+            renderType: Text.NativeRendering
         }
     }
 }
