@@ -1191,7 +1191,6 @@ Item {
                     anchors.fill: parent
                     active: win.bleed
                     source: Qt.resolvedUrl("../v5/live/Environment.qml")
-                    initialProperties: ({ objectName: String(win.modelData.name) })
                     onLoaded: Qt.callLater(win.logEnvironment)
                     onStatusChanged: {
                         if (status === Loader.Error)
@@ -1210,6 +1209,14 @@ Item {
                     property: "world"
                     when: envHost.status === Loader.Ready
                     value: hud.desktopWorld
+                }
+                // Loader has no initialProperties property (Qt 6); the output
+                // name for the evidence line is set through a binding instead.
+                Binding {
+                    target: envHost.item
+                    property: "objectName"
+                    when: envHost.status === Loader.Ready
+                    value: String(win.modelData.name)
                 }
 
                 // snapped drop preview while a move gesture is live
