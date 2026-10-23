@@ -565,6 +565,16 @@ Item {
         if (ins.length > 0 && navScreenObj === null)
             navScreenObj = ins[0].screen
     }
+    // the command window's live DeckV5, or null when v5 is off / not loaded.
+    // Root level on purpose: the IPC handler below must not live in the
+    // per-screen Variants delegate (duplicate IPC targets collide).
+    function commandDeck() {
+        var ins = winVariants.instances
+        for (var i = 0; i < ins.length; i++)
+            if (ins[i].isCommand)
+                return ins[i].v5Deck
+        return null
+    }
     Connections {
         target: winVariants
         function onInstancesChanged() { hud.resolveNavScreen() }
@@ -607,13 +617,22 @@ Item {
             readonly property bool isHardware: role === "hardware"
             readonly property string deckId: isCommand ? "hub" : isHardware ? "board" : "bench"
             readonly property var roleIds: [deckId]
+            // the command window's DeckV5 instance, or null (root IPC entry)
+            readonly property var v5Deck: (isCommand && hud.v5Enabled && deckLoader.item)
+                                           ? deckLoader.item.deckItem : null
 
             anchors { top: true; bottom: true; left: true; right: true }
             color: "transparent"
             exclusionMode: ExclusionMode.Auto
             WlrLayershell.namespace: "nexuslink-hud"
             WlrLayershell.layer: WlrLayer.Background
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+            // Keyboard: None by default. The v5 Find pill needs the keyboard
+            // while it is open, and a layer surface can only ask for that
+            // through its own keyboard mode, so DeckV5 mirrors its open state
+            // onto findKeysWanted (the property below) and this binding is the
+            // single place the surface asks for keys.
+            property bool findKeysWanted: false
+            WlrLayershell.keyboardFocus: win.findKeysWanted ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
             // Only the drawn deck (and the drop ghost while a drag is live)
             // accepts pointer input — every other pixel of this screen-sized
@@ -1128,6 +1147,9 @@ Item {
                         id: v5Screen
                         Item {
                             anchors.fill: parent
+                            // the loaded DeckV5, for the root IPC handler
+                            // (ids inside a Component are not visible outside it)
+                            readonly property alias deckItem: v5Loader.item
                             Loader {
                                 id: v5Loader
                                 anchors.fill: parent
@@ -1251,6 +1273,27 @@ Item {
         target: "nexuslink.hud"
 
         function version(): string { return "v4" }
+        // ---- Find (v5 deck). findOpen is the single source of truth in the
+        // deck; openFind/closeFind also drive the keyboard grab and the
+        // layer-shell keyboard mode, so IPC can never desync the two.
+        function find(): string {
+            var d = hud.commandDeck()
+            if (!d) return "no v5 deck"
+            return d.openFind() ? "ok" : "deck not shown"
+        }
+        function close(): string {
+            var d = hud.commandDeck()
+            if (!d) return "no v5 deck"
+            d.closeFind()
+            return "ok"
+        }
+        function toggle(): string {
+            var d = hud.commandDeck()
+            if (!d) return "no v5 deck"
+            if (d.findOpen) d.closeFind()
+            else d.openFind()
+            return "ok"
+        }
         function status(): string {
             return JSON.stringify({
                 version: "v4",
@@ -1267,6 +1310,7 @@ Item {
                 procs: hud.procCount,
                 tokProviders: hud.tokProviderCount,
                 navOpen: nav.navOpen,
+                findOpen: hud.commandDeck() ? hud.commandDeck().findOpen : false,
                 monitors: winVariants.instances.length
             })
         }

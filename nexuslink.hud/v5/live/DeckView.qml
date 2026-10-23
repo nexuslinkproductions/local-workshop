@@ -35,6 +35,7 @@ Item {
     property string findFilter: "all"
     property var findResults: []
     property bool findBusy: false
+    property string findNote: ""
 
     // ---- view state ------------------------------------------------------
     // "" rest, "crew" or "storage" expanded panel. Find opens through findOpen.
@@ -52,6 +53,35 @@ Item {
     readonly property real knotCy: Tokens.knotCentreY
     readonly property real leftBandX: 420
     readonly property real rightBandX: 2150
+
+    // ---- pointer (deck coordinates) ---------------------------------------
+    // One passive hover handler, no Timer. It only feeds the proximity field;
+    // widgets keep their own MouseArea for clicks and hover.
+    readonly property bool pointerInside: pointerOverride ? pointerForcedInside : deckPointer.hovered
+    readonly property real pointerX: pointerOverride ? pointerForcedX
+        : (deckPointer.hovered ? deckPointer.point.position.x : root.lastPointerX)
+    readonly property real pointerY: pointerOverride ? pointerForcedY
+        : (deckPointer.hovered ? deckPointer.point.position.y : root.lastPointerY)
+    // Last position while inside, kept so a leave drags the field home from the
+    // edge it left through instead of from nowhere.
+    property real lastPointerX: -1000000
+    property real lastPointerY: -1000000
+    // Tests and stills: drive the field from fixed numbers.
+    property bool pointerOverride: false
+    property real pointerForcedX: -1000000
+    property real pointerForcedY: -1000000
+    property bool pointerForcedInside: false
+
+    HoverHandler {
+        id: deckPointer
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
+        onPointChanged: {
+            if (!root.pointerOverride && hovered) {
+                root.lastPointerX = point.position.x
+                root.lastPointerY = point.position.y
+            }
+        }
+    }
 
     // ---- fonts -----------------------------------------------------------
     FontLoader { source: Qt.resolvedUrl("../fonts/Satoshi-Regular.ttf") }
@@ -101,6 +131,7 @@ Item {
         }
 
         CrewWidget {
+            id: crewW
             x: root.leftBandX - 180
             y: 372 - 120
             width: 360
@@ -113,6 +144,7 @@ Item {
         }
 
         MacWidget {
+            id: macW
             x: root.leftBandX - 180
             y: 800 - 110
             width: 360
@@ -124,6 +156,7 @@ Item {
         }
 
         LocalWidget {
+            id: localW
             x: root.rightBandX - 160
             y: 800 - 110
             width: 320
@@ -138,6 +171,7 @@ Item {
         }
 
         StorageWidget {
+            id: storageW
             x: root.rightBandX - 170
             y: 1060 - 100
             width: 340
@@ -160,34 +194,66 @@ Item {
         }
     }
 
+    // ---- proximity field --------------------------------------------------
+    // One invisible field, no Timer. It reads the pointer and writes proximity,
+    // pushX and pushY into the four widgets; the knot is not in the list, so it
+    // is never pushed. FindPill is left out because its rest pill opens the
+    // search by click and it is being rewritten in parallel.
+    ProximityField {
+        id: proxField
+        pointerX: root.pointerX
+        pointerY: root.pointerY
+        inside: root.pointerInside
+        widgets: [crewW, macW, localW, storageW]
+    }
+
+    // Read-only handles for tests and measurement (proximity, pushX, pushY,
+    // grow). The deck itself never reads them.
+    readonly property Item crewWidget: crewW
+    readonly property Item macWidget: macW
+    readonly property Item localWidget: localW
+    readonly property Item storageWidget: storageW
+
+    // ---- Find backdrop -----------------------------------------------------
+    // The result tiles are soft fills, so while Find is open the deck behind
+    // them nearly disappears (s3 shows no knot or widgets behind the results).
+    Rectangle {
+        anchors.fill: parent
+        color: Tokens.field
+        opacity: root.findOpen ? 0.92 : 0
+        visible: opacity > 0.002
+        Behavior on opacity {
+            NumberAnimation {
+                duration: root.findOpen ? Motion.focusInMillis : Motion.focusOutMillis
+                easing.type: root.findOpen ? Easing.OutCubic : Easing.InOutQuad
+            }
+        }
+    }
+
     // ---- Find (outside the dim so its open state stays sharp) -------------
+    // The overlay is deck sized (0,0, 2560 x 1440) and draws the rest pill at
+    // 1960,338 and the s3 results view in deck coordinates. While closed only
+    // the 380 x 68 pill takes input, so the widgets below keep their hover.
     FindPill {
         id: find
-        x: 1960
-        y: 372 - 34
-        width: 504
-        height: 640
+        x: 0
+        y: 0
+        width: 2560
+        height: 1440
         tick: root.tick
         open: root.findOpen
         query: root.findQuery
         filter: root.findFilter
         results: root.findResults
         busy: root.findBusy
+        note: root.findNote
         opacity: (root.view === "") ? 1 : Tokens.focusDim
         Behavior on opacity { NumberAnimation { duration: Motion.focusInMillis; easing.type: Easing.OutCubic } }
+        onOpenRequested: root.findOpen = true
         onQueryEdited: q => root.findQueryEdited(q)
         onFilterPicked: f => root.findFilterPicked(f)
         onHitActivated: hit => root.findHitActivated(hit)
         onCloseRequested: root.findOpen = false
-    }
-    // rest pill opens the search
-    MouseArea {
-        x: 1960
-        y: 372 - 34
-        width: 380
-        height: 68
-        enabled: !root.findOpen && root.view === ""
-        onClicked: root.findOpen = true
     }
 
     // ---- dismiss layer and expanded panels --------------------------------
