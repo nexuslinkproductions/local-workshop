@@ -7,26 +7,30 @@
 // are killed in the fragment stage by comparing a flat copy of the point id
 // with an interpolated copy.
 //
-// Motion (spec KNOT-SPEC sections A to G, addendum v2.1 items 1 to 5):
-//  A  small global pose (yaw 12, pitch 7) + 0.8 percent scale pulse
-//  B  three lobes breathing on their own clocks (5.0 / 6.1 / 7.0 s), slow FM
-//     plus a small per point phase offset so a lobe never pulses as one block
-//  C  peristaltic wavefronts along the strand (swell with a trailing trough)
+// Motion (KNOT-SPEC-R4, round 4: soft and gentle, plus the morph):
+//  A  global pose only: pitch 1.6 deg (71 s and 97 s), roll 1.6 deg
+//     (83 s and 113 s), NO yaw and no side to side translation, global
+//     scale pulse 0.8 percent peak to peak with a 7 s period
+//  B  three lobes breathing in thickness on their own clocks (9 / 11 / 13 s),
+//     each with slow FM and a per point phase offset
+//  C  peristaltic wavefronts along the strand, one travelling gaussian bulge
+//     with a small trailing trough; loops are 11 and 15 s (ribbon) and 12 and
+//     16 s (ring), window 0.10 u wide, no stepping
 //  D  curl-noise micro-currents, small groups swirl together
-//  E  local events: a ring swelling out from a hashed point, every 4 to 9 s
+//  E  local events: a ring swelling out from a hashed point, one every 9 or
+//     13 s, slow 3 s rise, gone before the slot restarts
 //  F  five acid sparks gliding along the strands
-// v3 (repair K): a per strand activity envelope (static 3 lobe term plus two
-// slow drifting terms, periods 29 and 37 s) multiplies the strand terms C and D,
-// so different segments are more or less active over time; the local terms are
-// 2 to 3 times larger than v2 and soft limited at 10 percent of R (G, exp form, see KNOT-SPEC-ADD item 4); the
-// point set is even (knot-points3.png) and texel4.b carries a crowd weight that
-// keeps stacked depth layers from adding up to white blobs at the crossings.
-// v4 (repair round 3): the strand fronts are single travelling bulges (gaussian
-// window 0.075 u, tube swell along the point normal N3 plus a push along dirW,
-// brightness crest and bigger dots on the crest), the lobes breathe in
-// THICKNESS (dots move along N3, so the ribbon width changes, not only the
-// brightness), depth brightness is flattened and per dot alpha is capped so
-// no pixel group clips to white.
+//  G  morph between the triquetra and two alternate forms, baked per point
+//     into knot-points4.png (texels 5..10), blended here
+//
+// Round 4 runs about 40 percent of the round 3 local motion, with longer
+// periods and wider windows, and the summed local term is soft limited at
+// 4 percent of R (18 units, 10.8 px at knotPx 540). A per strand activity
+// envelope (static 3 lobe term plus two slow drifting terms, periods 29 and
+// 37 s) still multiplies the strand terms C and D. Texel4.b carries a crowd
+// weight that keeps stacked depth layers from adding up to white blobs at
+// the crossings, depth brightness is flattened and per dot alpha is capped
+// so no pixel group clips to white.
 
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec4 qt_MultiTexCoord0;
@@ -51,13 +55,16 @@ layout(std140, binding = 0) uniform buf {
 layout(binding = 1) uniform sampler2D src;
 
 // ---- point texture layout, keep in sync with KnotSwarm.qml ---------------
-// v2 (K3, shaders/knot-points2.png, 2048 x 11):
-//   t0 = P.xy (16 bit each), t1 = P.z (16 bit) + spare,
-//   t2 = N3 (8 bit per axis), t3 = u, q, cls + spare,
-//   t4 = (u * 255, occl * 255, 0). u is the true arc length per class and
-//   occl the under strand weight (0 away from the crossings).
-const float TEXEL_STRIDE = 5.0;   // texels per point
-const float TEX_ROWS = 11.0;      // texture rows
+// v4 (shaders/knot-points4.png, 2048 x 24, 11 texels per point):
+//   t0  = P.xy (16 bit each), t1 = P.z (16 bit) + spare,
+//   t2  = N3 (8 bit per axis), t3 = u, q, cls + spare,
+//   t4  = (u * 255, occl * 255, crowd * 255). u is the true arc length per
+//   class, occl the under strand weight (0 away from the crossings).
+//   t5,t6 = form 1 position (same 16 bit encoding), t7 = form 1 normal,
+//   t8,t9 = form 2 position, t10 = form 2 normal.
+//   Texels 0..4 are byte for byte the round 3 data (knot-points3.png).
+const float TEXEL_STRIDE = 11.0;  // texels per point
+const float TEX_ROWS = 24.0;      // texture rows
 const float TEX_WIDTH = 2048.0;   // texture width
 
 const float PI = 3.141592653589793;
@@ -67,6 +74,13 @@ const float R = 450.0;            // knot radius in knot units
 const float DEPTH_K = 0.35;       // how much of the z depth cue survives (1 = old)
 const float ALPHA_CAP = 0.80;     // per dot alpha ceiling, acid sparks excepted
 
+// morph schedule, mirrors MORPH_* in tools/linux/measure/knot/knot_port.py
+const float CYC = 60.0;           // full alternation cycle, s
+const float HOLD_A = 33.0;        // hold on the triquetra, s
+const float LEG = 12.0;           // one leg, s
+const float HOLD_B = 3.0;         // hold on the form, s
+const float STAGGER = 0.20;       // per point stagger, share of the leg
+
 vec4 texAt(float i) {
     float px = mod(i, TEX_WIDTH);
     float row = floor(i / TEX_WIDTH);
@@ -75,18 +89,33 @@ vec4 texAt(float i) {
 
 float b255(float v) { return floor(v * 255.0 + 0.5); }
 
-// slow wander, three incommensurate sines per axis, 12 s return toward front
-float returnGain(float tt) {
-    float w = 0.5 - 0.5 * cos(TAU * tt / 12.0);
-    return 0.18 + 0.82 * smoothstep(0.12, 0.8, w);
+// 16 bit position decode, same encoding as texels 0 and 1
+vec3 posDecode(vec4 a, vec4 b) {
+    vec3 v;
+    v.x = b255(a.r) * 256.0 + b255(a.g);
+    v.y = b255(a.b) * 256.0 + b255(b.r);
+    v.z = b255(b.g) * 256.0 + b255(b.b);
+    return v / 65535.0 * 1024.0 - 512.0;
 }
 
-// 5.5 s breath, 40 percent inhale, 60 percent exhale, sine eased both ways
-float breathAt(float tt, float ph) {
-    float u = fract(tt / 5.5 + ph);
-    return u < 0.4
-        ? 0.5 - 0.5 * cos(PI * u / 0.4)
-        : 0.5 + 0.5 * cos(PI * (u - 0.4) / 0.6);
+// sine eased breath, one full cycle per period, smooth both ways
+float breathAt(float tt, float ph, float period) {
+    return 0.5 - 0.5 * cos(TAU * fract(tt / period + ph));
+}
+
+// smootherstep, no overshoot, zero slope at both ends
+float smootherstep01(float e) {
+    e = clamp(e, 0.0, 1.0);
+    return e * e * e * (e * (6.0 * e - 15.0) + 10.0);
+}
+
+// morph weight 0..1 for the whole knot at time tt
+float morphX(float tt) {
+    float tau = fract(tt / CYC) * CYC;
+    if (tau < HOLD_A) return 0.0;
+    if (tau < HOLD_A + LEG) return (tau - HOLD_A) / LEG;
+    if (tau < HOLD_A + LEG + HOLD_B) return 1.0;
+    return 1.0 - (tau - HOLD_A - LEG - HOLD_B) / LEG;
 }
 
 // shortest signed difference between two angles, in radians
@@ -99,9 +128,9 @@ float angDiff(float a, float b) {
 float frontG(float uu, float o, float dir, float period, float tt) {
     float f = fract(o + dir * tt / period);
     float d = fract(uu - f + 0.5) - 0.5;
-    float a = exp(-(d / 0.065) * (d / 0.065));
-    float b = exp(-((d + 0.09 * dir) / 0.065) * ((d + 0.09 * dir) / 0.065));
-    return a - 0.20 * b;
+    float a = exp(-(d / 0.10) * (d / 0.10));
+    float b = exp(-((d + 0.09 * dir) / 0.10) * ((d + 0.09 * dir) / 0.10));
+    return a - 0.15 * b;
 }
 
 // per strand activity envelope, mean 1: a static 3 lobe term and two slow
@@ -148,18 +177,14 @@ void main() {
         return;
     }
 
-    vec4 t0 = texAt(TEXEL_STRIDE * pid + 0.0);
-    vec4 t1 = texAt(TEXEL_STRIDE * pid + 1.0);
-    vec4 t2 = texAt(TEXEL_STRIDE * pid + 2.0);
-    vec4 t3 = texAt(TEXEL_STRIDE * pid + 3.0);
-    vec4 t4 = texAt(TEXEL_STRIDE * pid + 4.0);
+    float base = TEXEL_STRIDE * pid;
+    vec4 t0 = texAt(base + 0.0);
+    vec4 t1 = texAt(base + 1.0);
+    vec4 t2 = texAt(base + 2.0);
+    vec4 t3 = texAt(base + 3.0);
+    vec4 t4 = texAt(base + 4.0);
 
-    vec3 P;
-    P.x = b255(t0.r) * 256.0 + b255(t0.g);
-    P.y = b255(t0.b) * 256.0 + b255(t1.r);
-    P.z = b255(t1.g) * 256.0 + b255(t1.b);
-    P = P / 65535.0 * 1024.0 - 512.0;
-
+    vec3 P = posDecode(t0, t1);
     vec3 N3 = t2.rgb * 2.0 - 1.0;
     float q = t3.g;
     float cls = t3.b;
@@ -172,22 +197,8 @@ void main() {
     // another pass stacks behind it in projection
     float crowd = t4.b;
 
-    vec3 er = normalize(vec3(P.x, P.y, 0.0));
-    vec3 dirW = normalize(er * 0.8 + N3 * 0.45);
-
-    // ---- A: smaller global pose, 0.8 percent scale pulse ----------------
-    float ny = (sin(TAU * t / 31.0) + 0.55 * sin(TAU * t / 26.0 + 1.1)
-              + 0.32 * sin(TAU * t / 38.0 + 2.3)) / 1.87;
-    float np = (sin(TAU * t / 34.0 + 0.7) + 0.55 * sin(TAU * t / 27.5 + 2.1)
-              + 0.32 * sin(TAU * t / 39.0 + 4.0)) / 1.87;
-    float gn = returnGain(t);
-    float yaw = ny * gn * radians(12.0);
-    float pitch = np * gn * radians(7.0);
-
-    float br0 = breathAt(t, 0.0);
-    vec3 Q = P * (1.0 + 0.008 * br0);
-
-    // ---- B: three lobes, each on its own clock (measured tip angles) ----
+    // ---- B: lobe weights, from the ORIGINAL P so the clocks never jump ---
+    // (they also drive the per point morph stagger below)
     float ang = atan(P.y, P.x);
     float a0 = radians(34.0), a1 = radians(142.4), a2 = radians(266.4);
     float d0 = angDiff(ang, a0) / 0.55;
@@ -198,6 +209,51 @@ void main() {
     float w2 = exp(-d2 * d2);
     float wsum = max(w0 + w1 + w2, 1e-5);
 
+    // ---- G: morph, form of this cycle, then the per point weight ---------
+    // cycle k is form 1 when k is even, form 2 when k is odd
+    float kcyc = floor(t / CYC);
+    float fsel = mod(kcyc, 2.0);
+    vec4 t5 = texAt(base + 5.0);
+    vec4 t6 = texAt(base + 6.0);
+    vec4 t7 = texAt(base + 7.0);
+    vec4 t8 = texAt(base + 8.0);
+    vec4 t9 = texAt(base + 9.0);
+    vec4 t10 = texAt(base + 10.0);
+    vec3 Pform = posDecode(mix(t5, t8, fsel), mix(t6, t9, fsel));
+    vec3 Nform = mix(t7, t10, fsel).rgb * 2.0 - 1.0;
+    // keep the baked form normal in the same hemisphere as N3: a mix through
+    // zero would make Nm (and dirW, and the local push along it) flip in one
+    // frame for a dot whose two normals are nearly opposite
+    if (dot(N3, Nform) < 0.0) Nform = -Nform;
+
+    float xm = morphX(t);
+    // stagger: lobe 0 leads, lobe 2 trails, so the morph travels round the knot
+    float hstag = (0.0 * w0 + 0.5 * w1 + 1.0 * w2) / wsum;
+    float sm = smootherstep01((xm - STAGGER * hstag) / (1.0 - STAGGER));
+
+    vec3 Pm = mix(P, Pform, sm);
+    vec3 Nm = normalize(mix(N3, Nform, sm));
+    // both fades go to neutral as the point reaches the form
+    occl2 *= (1.0 - sm);
+    crowd = mix(crowd, 1.0, sm);
+
+    vec3 er = normalize(vec3(Pm.x, Pm.y, 0.0));
+    // er * 0.8 + Nm * 0.45 goes through zero if the blended normal turns almost
+    // antiparallel to er mid morph (dirW would flip in one frame); fall back
+    // to er there, the magnitude is the same either way
+    vec3 dw = er * 0.8 + Nm * 0.45;
+    vec3 dirW = length(dw) < 0.15 ? er : normalize(dw);
+
+    // ---- A: quiet global pose, no yaw, 0.8 percent scale pulse ----------
+    float pitch = radians(1.6) * (sin(TAU * t / 71.0 + 0.7)
+                + 0.5 * sin(TAU * t / 97.0 + 2.1)) / 1.5;
+    float roll = radians(1.6) * (sin(TAU * t / 83.0 + 1.9)
+               + 0.5 * sin(TAU * t / 113.0 + 0.4)) / 1.5;
+
+    float br0 = 0.5 - 0.5 * cos(TAU * t / 7.0);
+    vec3 Q = Pm * (1.0 + 0.008 * br0);
+
+    // ---- B: three lobes, each on its own clock (9 / 11 / 13 s) ----------
     // slow frequency modulation per lobe clock, plus a small deterministic
     // per point phase offset so a lobe does not pulse as one solid block
     float fm0 = 0.06 * sin(TAU * t / 31.0) + 0.00;
@@ -205,40 +261,47 @@ void main() {
     float fm2 = 0.06 * sin(TAU * t / 45.0 + 4.0) + 0.00;
     float pp = 0.035 * (fract(sin(pid * 12.9898) * 43758.5453) - 0.5);
 
-    float bl = (w0 * breathAt(t * 5.5 / 5.0, 0.00 + fm0 + pp)
-              + w1 * breathAt(t * 5.5 / 6.1, 0.37 + fm1 + pp)
-              + w2 * breathAt(t * 5.5 / 7.0, 0.71 + fm2 + pp)) / wsum;
+    float bl = (w0 * breathAt(t, 0.00 + fm0 + pp, 9.0)
+              + w1 * breathAt(t, 0.37 + fm1 + pp, 11.0)
+              + w2 * breathAt(t, 0.71 + fm2 + pp, 13.0)) / wsum;
     float lb = 2.0 * bl - 1.0;
 
     // ---- C: peristaltic fronts along the strand (u) ---------------------
     float g;
     if (cls < 0.5) {
-        g = frontG(su, 0.10, 1.0, 8.5, t)
-          + frontG(su, 0.60, -1.0, 11.5, t);
+        g = frontG(su, 0.10, 1.0, 11.0, t)
+          + frontG(su, 0.60, -1.0, 15.0, t);
     } else {
-        g = 0.5 * (frontG(su, 0.20, 1.0, 9.5, t)
-                 + frontG(su, 0.60, -1.0, 13.0, t));
+        g = 0.5 * (frontG(su, 0.20, 1.0, 12.0, t)
+                 + frontG(su, 0.60, -1.0, 16.0, t));
     }
-    // the bulge keeps most of its height all the way round: only 60 percent of the
-    // strand envelope reaches the front, clamped to 0.5 .. 1.5
+    // only 60 percent of the strand envelope reaches the front, clamp 0.5 .. 1.5
     float env = envU(su, t);
     g *= clamp(mix(1.0, env, 0.6), 0.5, 1.5);
-    // two fronts meeting must not double the bulge (and its speed): soft saturation
+    // two fronts meeting must not double the bulge (and its speed)
     g = g * inversesqrt(1.0 + (g / 1.5) * (g / 1.5));
-    // tube radius in knot units (ribbon 20, ring 5.5), used for the thickness terms
+    // tube radius in knot units (ribbon 20, ring 5.5), for the thickness terms
     float rr = cls < 0.5 ? 20.0 : 5.5;
 
     // ---- D: curl-noise micro-currents -----------------------------------
-    vec3 vel = curlA(P / 55.0, t);
-    vec3 dD = vel * (R * 0.054 * env);
+    vec3 vel = curlA(Pm / 55.0, t);
+    vec3 dD = vel * (R * 0.022 * env);
     float dl0 = length(dD);
-    float dlim = R * 0.062;
-    dD *= dlim * (1.0 - exp(-dl0 / dlim)) / max(dl0, 1e-4);
+    float dlim = R * 0.025;
+    // R4: saturate the curl with tanh, not the exponential cap used before.
+    // The curl field is driven 4 to 5 times past the knee (about half of the
+    // dots sit on the plateau), and the exponential cap still has 1.4 percent
+    // slope out there, so where the field dips near a critical point the
+    // plateau ends in a one frame step in speed (measured 0.39 px/frame^2 on
+    // one ring dot). tanh's plateau is flat (sech^2 < 1e-3 above 4x) and its
+    // shoulder is smooth, which brings the same measurement to 0.11.
+    float u0 = clamp(dl0 / dlim, 0.0, 20.0);
+    dD *= dlim * (1.0 - 2.0 / (exp(2.0 * u0) + 1.0)) / max(dl0, 1e-4);
 
     // ---- E: local events, a ring travelling away from a hashed point ----
     float ev = 0.0;
     for (int j = 0; j < 2; j++) {
-        float L = j == 0 ? 5.3 : 8.1;
+        float L = j == 0 ? 9.0 : 13.0;
         float off = j == 0 ? 0.0 : 2.9;
         float tt = t + off;
         float ei = floor(tt / L);
@@ -246,51 +309,48 @@ void main() {
         float s0 = fract(sin(ei * 12.9898 + float(j) * 78.233) * 43758.5453);
         float d = abs(fract(su - s0 + 0.5) - 0.5);
         float front = age * 0.05;
-        float x = (d - front) / 0.07;
-        float r = exp(-x * x) * smoothstep(0.0, 1.6, age) * exp(-age / 3.0)
-                * (1.0 - smoothstep(0.6 * L, L, age));   // gone before the slot restarts: no pop
+        float x = (d - front) / 0.10;
+        float r = exp(-x * x) * smoothstep(0.0, 3.0, age) * exp(-age / 3.0)
+                * (1.0 - smoothstep(0.6 * L, L, age));   // gone before the slot restarts
         ev = max(ev, r);
     }
     float evK = cls < 0.5 ? 1.0 : 0.5;   // the ring moves at half amplitude
 
-    // ---- sum the local terms, soft limited at 10 percent of R ------------
-    // B: lobe scale about the centre plus lobe THICKNESS (dots along N3)
-    // C/E: bulge = tube swell along N3 + push along dirW
+    // ---- sum the local terms, soft limited at 4 percent of R ------------
+    // B: lobe scale about the centre plus lobe THICKNESS (dots along Nm)
+    // C/E: bulge = tube swell along Nm + push along dirW
     float ringK = cls < 0.5 ? 1.0 : 0.5;
-    vec3 dloc = vec3(P.x, P.y, 0.0) * (0.024 * lb)
-              + N3 * (rr * 0.80 * lb)
-              + N3 * (R * 0.055 * g * ringK + R * 0.040 * ev * evK)
-              + dirW * (R * 0.035 * g + R * 0.030 * ev * evK)
+    vec3 dloc = vec3(Pm.x, Pm.y, 0.0) * (0.010 * lb)
+              + Nm * (rr * 0.32 * lb)
+              + Nm * (R * 0.022 * g * ringK + R * 0.016 * ev * evK)
+              + dirW * (R * 0.014 * g + R * 0.012 * ev * evK)
               + dD;
-    float lim = R * 0.10;
+    float lim = R * 0.04;
     float dl = length(dloc);
     dloc *= lim * (1.0 - exp(-dl / lim)) / max(dl, 1e-4);
     Q += dloc;
 
     // ---- brightness and size from the same local terms ------------------
     float crest = max(g, 0.0);
-    float bfac = (1.0 + 0.15 * lb) * (1.0 + 0.75 * g) * (1.0 + 0.60 * ev * evK);
-    float rfac = (1.0 + 0.10 * lb) * (1.0 + 0.35 * crest) * (1.0 + 0.40 * ev * evK);
+    float bfac = (1.0 + 0.08 * lb) * (1.0 + 0.40 * g) * (1.0 + 0.30 * ev * evK);
+    float rfac = (1.0 + 0.05 * lb) * (1.0 + 0.18 * crest) * (1.0 + 0.20 * ev * evK);
     bfac = clamp(bfac, 0.60, 1.90);
     rfac = clamp(rfac, 0.75, 1.50);
 
     // v2 under strand dimming: the weave reads at the three crossings
-    // (addendum item 3: radius shrinks, alpha dims further down)
     rfac = clamp(rfac * (1.0 - 0.25 * occl2), 0.60, 1.80);
 
-    // ---- project --------------------------------------------------------
-    float cyw = cos(yaw), syw = sin(yaw);
+    // ---- project: pitch about x, then roll in the screen plane ----------
     float cpt = cos(pitch), spt = sin(pitch);
+    float crl = cos(roll), srl = sin(roll);
 
-    float x1 = Q.x * cyw + Q.z * syw;
-    float z1 = -Q.x * syw + Q.z * cyw;
-    float y1 = Q.y * cpt - z1 * spt;
-    float z2 = Q.y * spt + z1 * cpt;
+    float y1 = Q.y * cpt - Q.z * spt;
+    float z2 = Q.y * spt + Q.z * cpt;
+    float x1 = Q.x;
+    float xr = x1 * crl - y1 * srl;
+    float yr = x1 * srl + y1 * crl;
 
-    float nx1 = N3.x * cyw + N3.z * syw;
-    float nz1 = -N3.x * syw + N3.z * cyw;
-    float ny1 = N3.y * cpt - nz1 * spt;
-    float nz2 = N3.y * spt + nz1 * cpt;
+    float nz2 = Nm.y * spt + Nm.z * cpt;
 
     float camD = 2.7 * KNOT_H;
     float k = camD / (camD - z2);
@@ -316,11 +376,9 @@ void main() {
         float ds = fract(su - sh + 0.5) - 0.5;   // signed, in loop units
         float head = exp(-(ds / 0.002) * (ds / 0.002));
         float behind = -ds * dir;                // > 0 behind the head
-        // tail only behind the head; ahead of it behind is <= 0 and must give 0
-        // (exp(0) = 1 there tinted half of the loop acid green)
+        // tail only behind the head, ahead of it behind is <= 0 and must give 0
         float tail = behind > 0.0 ? exp(-behind / 0.012) : 0.0;
-        // the head is a small cluster of carrier dots (about 4 in 10 points of the
-        // head), not a solid band across the strand: 4 to 6 acid dots like the mockup
+        // the head is a small cluster of carrier dots, not a solid band
         head *= carrier;
         spark = max(spark, max(head, 0.55 * tail));
     }
@@ -356,7 +414,7 @@ void main() {
     float hh = rpx + 1.5;
 
     vec2 centre = vec2(uW, uH) * 0.5;
-    vec2 spos = centre + vec2(x1, y1) * k * (knotPx / KNOT_H);
+    vec2 spos = centre + vec2(xr, yr) * k * (knotPx / KNOT_H);
     vec2 pos = spos + corner * hh;
 
     v_local = corner * hh;

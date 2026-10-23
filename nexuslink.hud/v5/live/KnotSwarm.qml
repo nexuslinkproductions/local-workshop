@@ -19,19 +19,20 @@ Item {
     readonly property int gridColumns: pointCount * 2
     // point texture layout, keep in sync with TEXEL_STRIDE / TEX_ROWS /
     // TEX_WIDTH at the top of shaders/knot.vert. The production set is
-    // knot-points2-keep.png (5 texels per point, 11 rows); the source is a property
-    // so a scene can swap the point set without editing the shader.
-    property url pointsSource: Qt.resolvedUrl("shaders/knot-points3.png")
-    readonly property int texelStride: 5
-    readonly property int texRows: 11
+    // knot-points4.png (11 texels per point: the triquetra plus the two morph
+    // targets, 24 rows); the source is a property so a scene can swap the
+    // point set without editing the shader.
+    property url pointsSource: Qt.resolvedUrl("shaders/knot-points4.png")
+    readonly property int texelStride: 11
+    readonly property int texRows: 24
     readonly property int texWidth: 2048
 
     width: 700
     height: 700
 
     // point data: xyz 16 bit, normal, arc length u, density threshold, class,
-    // then (u, occl). nearest sampling, no mipmap: the vertex stage reads
-    // exact texels. A scene can swap the whole point set through pointsSource.
+    // then (u, occl, crowd), then the two morph target positions and normals.
+    // nearest sampling, no mipmap: the vertex stage reads exact texels. A scene can swap the whole point set through pointsSource.
     Image {
         id: points
         width: root.texWidth

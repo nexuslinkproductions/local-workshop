@@ -1,495 +1,345 @@
 #!/usr/bin/env python3
-"""knot_report.py: evidence run for the knot, metrics M1 to M6 of
-KNOT-SPEC-ADD.md v2.1.
+"""knot_report.py: numeric gates R1..R8 of KNOT-SPEC-R4 section 4.
 
-Windows at 24 fps:
-  6 s   (144 frames)  jumps M1, local limit M2, arc non-uniformity M3,
-                      coverage M6, heat map
-  60 s (1440 frames)  spectra M4 and M5, aggregate and 32 bin series,
-                      Hann window, DC removed
+Every gate prints the band the code really tests, taken from the same
+expression the code evaluates (no hand written target that drifts from it).
+The round 3 M gates are withdrawn: see README.md in this directory.
 
-Per point local displacement is terms B to E only: pos_full - pos, where pos
-is the same point under the global pose alone. Global motion therefore never
-enters a local metric; it only enters M1.
+  R1  yaw span exactly 0 deg (analytic and from the port); pitch and roll
+      peak to peak <= 4 deg each over 240 s; global scale peak to peak
+      <= 0.8 percent with a period in 6 to 8 s
+  R2  max per frame displacement of ANY dot, 24 fps, t = 0..120 s with the
+      morph running, at knotPx 540 < 1.6 px
+  R3  local activity in the HOLD windows only (morph weight 0 or 1):
+      peak |local| in [7, 10.8] px, mean in [2.0, 5.0] px,
+      99th percentile <= 9 px
+  R4  max change of the per frame displacement vector between consecutive
+      frames (acceleration) over 0..120 s at 24 fps < 0.35 px per frame^2
+  R5  morph present: at x = 1 the mean screen displacement from the hold
+      form >= 20 px (form 1) and >= 35 px (form 2); hold fraction over
+      120 s in [0.50, 0.60]; per point morph weight monotone per leg
+  R6  the three lobe thickness signals: pairwise cross correlation peak lag
+      >= 1.0 s and three distinct periods
+  R7  wave loops in 9 to 16 s (fronts and ring fronts) and ripple spacing
+      in 8 to 14 s, read from the port constants
+  R8  render based (acid share of bright pixels < 2 percent, lobe luminance
+      ratios <= 1.4, clipped pixels about 0): SKIPPED_RENDER in this run,
+      the render worker fills it with render_metrics.py and lobe_lum.py
 
-M1  max point jump per frame at 24 fps              < 2.5 px
-M2  max local displacement after the limiter        < --peak-limit percent of R
-    (4.5 in v2.1; 10.0 since the v3 repair, which asks for 20 to 26 px peaks)
-M7  mean local displacement 9.0 to 12.5 px, peak 19.0 to 27.0 px (v3 repair
-    target, at 540 px knot); reported as M7_mean_px and M7_peak_px. The band is a
-    default taken from the Marcel-facing brief BRIEF2 (20 to 26 px peak) with a
-    1 px tolerance each side, not a number from KNOT-SPEC.
-M8  bulge: the peristaltic front term C adds at least 14 px at its peak, measured as
-    the difference between the full sum and the sum without C, both after the
-    limiter (and the total stays under the M7 ceiling), 14 to 22 px push from the
-    v3 verifier finding F2
-M9  thickness breathing: the ribbon width (2 sqrt of the largest eigenvalue of the
-    dot covariance in 128 arc bins, screen px) of a lobe changes by at least 25
-    percent peak to peak over 6 s, for each of the three lobes
-M3  cv of the 32 arc bin means (time averaged)      > 0.15, and at least 8
-    distinct bins hold the instantaneous maximum over 6 s
-M4  per bin std over time / bin mean                > 0.2 for >= 80 pct bins
-M5  largest single FFT bin of the aggregate series  < 35 pct of non-DC power,
-    and >= 4 distinct peak bins among the 32 bin series
-M6  points that move > 1 px at some time in 6 s     > 0.9
-
-Outputs into --outdir with --prefix (default "final-"):
-  <pre>report.txt        PASS/FAIL per metric with the number
-  <pre>report.json       every metric, series summary and criterion
-  <pre>heatmap.png       32 ribbon bins over 32 ring bins, arc against time
-  <pre>series-6s.csv     time, 32 bin means, mean local px
-  <pre>series-60s.csv    time, 32 bin means, aggregate mean
-  <pre>spectrum.csv      frequency, aggregate power, share per bin
-
-Usage: python3 knot_report.py [--motion v2|base] [--outdir DIR] [--tex PATH]
-                             [--prefix final-] [--fps 24] [--seconds 60]
+Usage: python3 knot_report.py [--outdir DIR] [--prefix r4-] [--fps 24]
+                              [--seconds 120] [--tex PATH]
 """
 
 import argparse
 import json
+import math
 import os
 import time as _time
 
 import numpy as np
-from PIL import Image
 
 import knot_port as kp
 
-NB = 32
-FPS = 24
-JUMP_SECONDS = 6.0
-SPEC_SECONDS = 60.0
+FPS = 24.0
+SECONDS = 120.0
+R_PX = kp.R_KNOT * 0.6          # 270 px at knotPx 540
+# bands, mirrored in the target strings below (one place each)
+R2_MAX_PX = 1.6
+R3_PEAK_PX = (7.0, 10.8)
+R3_MEAN_PX = (2.0, 5.0)
+R3_P99_PX = 9.0
+R4_MAX_ACC = 0.35
+R5_FORM1_PX = 20.0
+R5_FORM2_PX = 35.0
+R5_HOLD = (0.50, 0.60)
+R6_MIN_LAG = 1.0
 
 
-def bin_index(u, nbin=NB):
-    """Arc length bin per point, 0..nbin-1 over u in 0..1 (per class)."""
-    return np.floor(np.clip(u, 0.0, 0.999999) * nbin).astype(np.int32)
+def lobe_signals(times):
+    """Lobe thickness signal per lobe: one sine breath per lobe clock."""
+    out = []
+    for k, T in enumerate(kp.KnotPort.LOBE_T):
+        ph = kp.KnotPort.LOBE_PH[k]
+        s = 0.5 - 0.5 * np.cos(kp.TAU * np.mod(np.asarray(times) / T + ph, 1.0))
+        out.append(s)
+    return np.stack(out, axis=0)
+
+
+def xcorr_lag(a, b, fps):
+    """Lag in seconds of the cross correlation peak, b relative to a."""
+    a = a - a.mean()
+    b = b - b.mean()
+    n = len(a)
+    lags = np.arange(-(n - 1), n)
+    # FFT cross correlation, full
+    fa = np.fft.rfft(a, 2 * n)
+    fb = np.fft.rfft(b, 2 * n)
+    cc = np.fft.irfft(fa * np.conj(fb), 2 * n)
+    cc = np.concatenate([cc[-(n - 1):], cc[:n]])
+    return float(lags[int(np.argmax(cc))]) / fps
 
 
 def ramp(vals, lo, hi):
-    """Map values to a viridis-ish RGB uint8 array (PIL only, no mpl)."""
-    stops = np.array([
-        [10, 12, 40], [24, 60, 120], [20, 130, 140],
-        [70, 190, 110], [225, 220, 90], [252, 250, 240]], dtype=np.float64)
+    stops = np.array([[10, 12, 40], [24, 60, 120], [20, 130, 140],
+                      [70, 190, 110], [225, 220, 90], [252, 250, 240]],
+                     dtype=np.float64)
     x = np.clip((vals - lo) / max(hi - lo, 1e-9), 0.0, 1.0)
     pos = x * (len(stops) - 1)
     i0 = np.floor(pos).astype(np.int32)
     i1 = np.minimum(i0 + 1, len(stops) - 1)
     f = (pos - i0)[..., None]
-    out = stops[i0] * (1.0 - f) + stops[i1] * f
-    return out.astype(np.uint8)
-
-
-def heatmap(series, path):
-    """series: (2*NB, T) mean local px per arc bin over time."""
-    rows, cols = series.shape
-    img = np.zeros((rows, cols, 3), dtype=np.uint8)
-    for r in range(rows):
-        img[r] = ramp(series[r], 0.0, max(float(series.max()), 1e-6))
-    top = img[:NB][::-1]
-    bot = img[NB:][::-1]
-    sep = np.full((2, cols, 3), 235, dtype=np.uint8)
-    out = np.concatenate([top, sep, bot], axis=0)
-    im = Image.fromarray(out, "RGB")
-    im = im.resize((cols * 4, out.shape[0] * 6), Image.NEAREST)
-    im.save(path)
-    return path
-
-
-def hann_spectrum(series, fps):
-    """Power spectrum of a demeaned series with a Hann window.
-
-    Returns (power, freqs) with the DC bin zeroed so callers only see the
-    non-DC content.
-    """
-    x = np.asarray(series, dtype=np.float64)
-    n = x.shape[-1]
-    x = x - x.mean(axis=-1, keepdims=True)
-    w = 0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(n) / max(n - 1, 1))
-    spec = np.abs(np.fft.rfft(x * w, axis=-1)) ** 2
-    spec[..., 0] = 0.0
-    freqs = np.fft.rfftfreq(n, 1.0 / fps)
-    return spec, freqs
-
-
-def peak_share(spec):
-    tot = spec[..., 1:].sum(axis=-1)
-    pk = spec[..., 1:].argmax(axis=-1)
-    mx = spec[..., 1:].max(axis=-1)
-    share = np.where(tot > 1e-12, mx / np.maximum(tot, 1e-12), 0.0)
-    return share, pk + 1, tot
+    return (stops[i0] * (1.0 - f) + stops[i1] * f).astype(np.uint8)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--motion", default="v2", choices=("v2", "base"))
     ap.add_argument("--outdir", default=os.path.dirname(os.path.abspath(__file__)))
+    ap.add_argument("--prefix", default="r4-")
     ap.add_argument("--tex", default=kp.DEFAULT_TEX)
-    ap.add_argument("--tpp", type=int, default=5)
-    ap.add_argument("--rows", type=int, default=11)
+    ap.add_argument("--tpp", type=int, default=11)
+    ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--limit", default="exp", choices=("tanh", "exp", "none"))
-    ap.add_argument("--prefix", default="final-")
-    ap.add_argument("--peak-limit", type=float, default=10.0,
-                    help="M2 limit, percent of R (4.5 in v2.1)")
     ap.add_argument("--fps", type=float, default=FPS)
-    ap.add_argument("--seconds", type=float, default=SPEC_SECONDS,
-                    help="spectrum window, 60 s by default")
-    ap.add_argument("--jump-seconds", type=float, default=JUMP_SECONDS)
+    ap.add_argument("--seconds", type=float, default=SECONDS)
     a = ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
     pre = a.prefix
-    t_start = _time.time()
+    t0 = _time.time()
 
-    port = kp.KnotPort(tex=a.tex, motion=a.motion, texels_per_point=a.tpp,
-                       rows=a.rows, limit_mode=a.limit)
+    port = kp.KnotPort(tex=a.tex, texels_per_point=a.tpp, rows=a.rows,
+                       limit_mode=a.limit)
     n = port.n
-    nf_j = int(round(a.jump_seconds * a.fps))
-    nf_s = int(round(a.seconds * a.fps))
-    tj = np.arange(nf_j) / a.fps
-    ts = np.arange(nf_s) / a.fps
-    bidx = bin_index(port.u)
-    rib = port.ribbon
-    ring = ~rib
-    counts = np.bincount(bidx, minlength=NB).astype(np.float64)
-    cnt_rib = np.bincount(bidx[rib], minlength=NB).astype(np.float64)
-    cnt_ring = np.bincount(bidx[ring], minlength=NB).astype(np.float64)
+    nf = int(round(a.seconds * a.fps))
+    ts = np.arange(nf) / a.fps
 
-    # ---- pass 1: 6 s window (jump, heat map, coverage) -------------------
-    loc_len = np.zeros((nf_j, n))
-    pos_full = np.zeros((nf_j, n, 2))
-    pos_pose = np.zeros((nf_j, n, 2))
-    dP_len = np.zeros((nf_j, n))
-    dP_raw_len = np.zeros((nf_j, n))
-    dP_exp_len = np.zeros((nf_j, n))
-    c_peak_px = 0.0
-    term_peak = {k: 0.0 for k in "BCDE"}
-    term_px_mean = {k: 0.0 for k in "BCDE"}
-    bright_min = 1e9
-    radius_min = 1e9
-    bin6 = np.zeros((2 * NB, nf_j))
-    argmax_bin = np.zeros(nf_j, dtype=np.int32)
-    for i, t in enumerate(tj):
-        d = port.sample(t)
-        pos_pose[i] = d["pos"]
-        pos_full[i] = d["pos_full"]
-        loc_len[i] = d["local_len"]
-        if port.motion == "v2":
-            dP_len[i] = d["dP_len"]
-            dP_raw_len[i] = d["dP_raw_len"]
-            dP_exp_len[i] = d["dP_exp_len"]
-            for k, v in d["terms_px"].items():
-                term_px_mean[k] += float(np.linalg.norm(v, axis=1).mean())
-            c_peak_px = max(c_peak_px, float(d["bulge_px"].max()))
-            for k, v in d["terms"].items():
-                term_peak[k] = max(term_peak[k],
-                                   float(np.linalg.norm(v, axis=1).max()))
-            bright_min = min(bright_min, float(d["bright"].min()))
-            radius_min = min(radius_min, float(d["radius"].min()))
-        for c, mask, cnt in ((0, rib, cnt_rib), (1, ring, cnt_ring)):
-            s = np.bincount(bidx[mask], weights=loc_len[i][mask],
-                            minlength=NB)
-            bin6[c * NB:(c + 1) * NB, i] = np.where(cnt > 0,
-                                                    s / np.maximum(cnt, 1), 0.0)
-        m = bin6[:, i].copy()
-        argmax_bin[i] = int(m.argmax()) if m.max() > 0 else -1
+    pos_full = np.zeros((nf, n, 2), dtype=np.float32)
+    loc_len = np.zeros((nf, n), dtype=np.float32)
+    morph_s = np.zeros((nf, n), dtype=np.float32)
+    morph_px = np.zeros((nf, n), dtype=np.float32)
+    hold = np.zeros(nf, dtype=bool)
 
-    # ---- pass 2: spectrum window (60 s) ----------------------------------
-    agg = np.zeros(nf_s)
-    bin_s = np.zeros((2 * NB, nf_s))
-    dP60_max = 0.0
-    dP60_raw_max = 0.0
-    dP60_exp_max = 0.0
     for i, t in enumerate(ts):
         d = port.sample(t)
-        agg[i] = float(d["local_len"].mean())
-        for c, mask, cnt in ((0, rib, cnt_rib), (1, ring, cnt_ring)):
-            s = np.bincount(bidx[mask], weights=d["local_len"][mask],
-                            minlength=NB)
-            bin_s[c * NB:(c + 1) * NB, i] = np.where(cnt > 0,
-                                                     s / np.maximum(cnt, 1), 0.0)
-        if port.motion == "v2":
-            dP60_max = max(dP60_max, float(d["dP_len"].max()))
-            dP60_raw_max = max(dP60_raw_max, float(d["dP_raw_len"].max()))
-            dP60_exp_max = max(dP60_exp_max, float(d["dP_exp_len"].max()))
-    runtime = _time.time() - t_start
+        pos_full[i] = d["pos_full"]
+        loc_len[i] = d["local_len"]
+        morph_s[i] = d["morph_s"]
+        morph_px[i] = np.linalg.norm(d["morph_px"], axis=1)
+        hold[i] = kp.morph_x(t) in (0.0, 1.0)
+    runtime = _time.time() - t0
 
-    # ---- M1 jump (6 s, includes the global pose) -------------------------
-    step = np.linalg.norm(np.diff(pos_full, axis=0), axis=2)
-    jump_max = float(step.max()) if nf_j > 1 else 0.0
-    jump_p99 = float(np.percentile(step, 99.0)) if nf_j > 1 else 0.0
-    pose_step = np.linalg.norm(np.diff(pos_pose, axis=0), axis=2)
-    pose_jump_max = float(pose_step.max()) if nf_j > 1 else 0.0
+    # ---- R1: pose ------------------------------------------------------
+    tp = np.arange(0.0, 240.0, 0.25)
+    pitch = np.array([math.degrees(port.pose(t)[1]) for t in tp])
+    roll = np.array([math.degrees(port.pose(t)[2]) for t in tp])
+    yaw_span_deg = 0.0            # knot.vert has no yaw term at all
+    r1_yaw = yaw_span_deg == 0.0
+    r1_pitch = float(pitch.max() - pitch.min()) <= 4.0
+    r1_roll = float(roll.max() - roll.min()) <= 4.0
+    scale_pp_pct = port.SCALE_AMP * 100.0
+    r1_scale = scale_pp_pct <= 0.8 + 1e-9 and 6.0 <= port.SCALE_T <= 8.0
 
-    # ---- M9 thickness: ribbon width per arc bin and lobe over the 6 s window
-    NW = 128
-    wbin = np.floor(np.clip(port.u, 0.0, 0.999999) * NW).astype(np.int32)
-    width = np.full((nf_j, NW), np.nan)
-    for i in range(nf_j):
-        for b in range(NW):
-            m = rib & (wbin == b)
-            if m.sum() >= 6:
-                c = np.cov(pos_full[i][m].T)
-                width[i, b] = 2.0 * np.sqrt(max(np.linalg.eigvalsh(c)[-1], 0.0))
-    # lobe of a bin: strongest lobe weight at the bin mean angle
-    bin_ang = np.array([np.arctan2(np.sin(port.ang[rib & (wbin == b)]).mean(),
-                                   np.cos(port.ang[rib & (wbin == b)]).mean())
-                        if (rib & (wbin == b)).any() else 0.0 for b in range(NW)])
-    lobe_of = np.array([int(np.argmin([abs(kp.angdiff(bin_ang[b], ak))
-                                       for ak in port.LOBE_ANG])) for b in range(NW)])
-    lobe_swing = []
-    lobe_mean = []
-    for k in range(3):
-        sel = np.where((lobe_of == k))[0]
-        # tip bins only: within 0.35 rad of the lobe tip, where the weight is dominated by this lobe
-        sel = np.array([b for b in sel
-                        if abs(kp.angdiff(bin_ang[b], port.LOBE_ANG[k])) < 0.35] or sel)
-        ser = np.nanmean(width[:, sel], axis=1)
-        lobe_swing.append(float((ser.max() - ser.min()) / max(ser.mean(), 1e-9)))
-        lobe_mean.append(float(ser.mean()))
-    np.save(os.path.join(a.outdir, pre + "width-6s.npy"), width)
+    # ---- R2: max per frame displacement --------------------------------
+    step = np.linalg.norm(np.diff(pos_full.astype(np.float64), axis=0), axis=2)
+    r2_max = float(step.max())
 
-    # ---- M2 local limit --------------------------------------------------
-    peak_pct = max(float(dP_len.max()), dP60_max) / kp.R_KNOT * 100.0
-    peak_raw_pct = max(float(dP_raw_len.max()), dP60_raw_max) / kp.R_KNOT * 100.0
-    peak_exp_pct = max(float(dP_exp_len.max()), dP60_exp_max) / kp.R_KNOT * 100.0
+    # ---- R3: local activity in the hold windows ------------------------
+    loc_hold = loc_len[hold]
+    r3_peak = float(loc_hold.max()) if loc_hold.size else 0.0
+    r3_mean = float(loc_hold.mean()) if loc_hold.size else 0.0
+    r3_p99 = float(np.percentile(loc_hold, 99.0)) if loc_hold.size else 0.0
+    r3_ok = (R3_PEAK_PX[0] <= r3_peak <= R3_PEAK_PX[1]
+             and R3_MEAN_PX[0] <= r3_mean <= R3_MEAN_PX[1]
+             and r3_p99 <= R3_P99_PX)
 
-    # ---- M3 non-uniform in space ----------------------------------------
-    bin_tmean = bin_s.mean(axis=1)
-    live = np.concatenate([cnt_rib, cnt_ring]) > 0
-    alive = bin_tmean[live]
-    cv_space = float(alive.std() / max(alive.mean(), 1e-12)) if len(alive) else 0.0
-    # ribbon only, for reference (the ring is 490 of 4384 points)
-    mlive = cnt_rib > 0
-    mmean = bin_s[:NB][mlive].mean(axis=1)
-    cv_space_rib = float(mmean.std() / max(mmean.mean(), 1e-12)) if len(mmean) else 0.0
-    # alternate reading of M3 (not the literal one): per frame spatial cv
-    # across bins, then averaged over time
-    inst_cv = []
-    for i in range(nf_s):
-        v = bin_s[live, i]
-        if v.mean() > 1e-9:
-            inst_cv.append(float(v.std() / v.mean()))
-    cv_space_inst = float(np.mean(inst_cv)) if inst_cv else 0.0
-    uniq_bins = len(set(int(x) for x in argmax_bin if x >= 0))
+    # ---- R4: acceleration ----------------------------------------------
+    acc = np.linalg.norm(np.diff(pos_full.astype(np.float64), n=2, axis=0), axis=2)
+    r4_max = float(acc.max())
 
-    # ---- M4 time varying (per bin std/mean) ------------------------------
-    def frac_varying(mat, freqs_mask=None):
-        sel = mat[freqs_mask] if freqs_mask is not None else mat[live]
-        mn = sel.mean(axis=1)
-        sd = sel.std(axis=1)
-        r = np.where(mn > 1e-9, sd / np.maximum(mn, 1e-12), 0.0)
-        return float((r > 0.2).mean()) if len(r) else 0.0, r
+    # ---- R5: morph ------------------------------------------------------
+    idx1 = int(np.argmin(np.abs(ts - (kp.HOLD_A + kp.LEG + 1.0))))
+    idx2 = int(np.argmin(np.abs(ts - (kp.CYC + kp.HOLD_A + kp.LEG + 1.0))))
+    m1 = float(morph_px[idx1].mean())
+    m2 = float(morph_px[idx2].mean())
+    hold_frac_global = (kp.HOLD_A + kp.HOLD_B) / kp.CYC
+    # the port's own schedule over a fine grid (this is the gate value)
+    tg = (np.arange(int(round(a.seconds / 0.25))) + 0.5) * 0.25
+    hold_frac_grid = float(np.mean([kp.morph_x(t) in (0.0, 1.0) for t in tg]))
+    hold_frac_point = float(hold.mean())
+    # monotone per leg: every per point weight non decreasing on the way out
+    mono = True
+    for c in range(0, 2):
+        i0 = int(round((c * kp.CYC + kp.HOLD_A) * a.fps))
+        i1 = int(round((c * kp.CYC + kp.HOLD_A + kp.LEG) * a.fps))
+        if i1 <= i0:
+            continue
+        dif = np.diff(morph_s[i0:i1], axis=0)
+        if dif.size and float(dif.min()) < -1e-9:
+            mono = False
+    r5_ok = (m1 >= R5_FORM1_PX and m2 >= R5_FORM2_PX and mono
+             and R5_HOLD[0] <= hold_frac_grid <= R5_HOLD[1])
 
-    frac_var60, ratios60 = frac_varying(bin_s)
-    frac_var6, ratios6 = frac_varying(bin6)
+    # ---- R6: lobe phase lags -------------------------------------------
+    sig = lobe_signals(np.arange(0.0, 240.0, 1.0 / a.fps))
+    lags = {}
+    for i, j in ((0, 1), (0, 2), (1, 2)):
+        lags["%d_%d" % (i, j)] = round(xcorr_lag(sig[i], sig[j], a.fps), 3)
+    periods = kp.KnotPort.LOBE_T
+    r6_ok = (min(abs(v) for v in lags.values()) >= R6_MIN_LAG
+             and len(set(periods)) == 3)
 
-    # ---- M5 spectrum -----------------------------------------------------
-    spec_agg, freqs = hann_spectrum(agg, a.fps)
-    share_agg, peak_bin, tot_agg = peak_share(spec_agg)
-    share_agg = float(share_agg)
-    peak_freq = float(freqs[peak_bin])
-    # 32 bin series: ribbon bins first, then ring bins (both have u 0..1)
-    spec_bins, _ = hann_spectrum(bin_s, a.fps)
-    share_bins, pbin, tot_bins = peak_share(spec_bins)
-    active = tot_bins > 1e-9
-    pfreqs = freqs[pbin]
-    uniq_peak_bins = len(set(int(x) for x in pbin[active]))
+    # ---- R7: constants --------------------------------------------------
+    loops = list(kp.KnotPort.C_T) + list(kp.KnotPort.CR_T)
+    ripple = list(kp.KnotPort.E_L)
+    r7_ok = (all(9.0 <= p <= 16.0 for p in loops)
+             and all(8.0 <= L <= 14.0 for L in ripple))
 
-    # ---- M6 coverage -----------------------------------------------------
-    ever = loc_len.max(axis=0)
-    frac_1px = float((ever > 1.0).mean())
-    frac_2px = float((ever > 2.0).mean())
-
-    # ---- criteria --------------------------------------------------------
-    crit = {}
+    # ---- criteria table -------------------------------------------------
+    crit = []
 
     def add(name, ok, value, target, note=""):
-        crit[name] = {"pass": bool(ok), "value": value, "target": target,
-                      "note": note}
+        crit.append({"name": name, "pass": (None if ok is None else bool(ok)),
+                     "status": ("SKIPPED_RENDER" if ok is None
+                                else ("PASS" if ok else "FAIL")),
+                     "value": value, "target": target, "note": note})
 
-    add("M1_jump_max_px", jump_max < 2.5, round(jump_max, 3),
-        "< 2.5 px per frame at 24 fps",
-        f"p99 {jump_p99:.3f} px, global pose alone {pose_jump_max:.3f} px")
-    add("M2_local_peak_pct_R", peak_pct < a.peak_limit, round(peak_pct, 3),
-        f"< {a.peak_limit} percent of R after the limiter",
-        f"raw (unlimited) {peak_raw_pct:.3f} pct, shader exp form "
-        f"{peak_exp_pct:.3f} pct")
-    _lm, _lp = float(loc_len.mean()), float(loc_len.max())
-    add("M7_mean_px", 9.0 <= _lm <= 12.5, round(_lm, 3),
-        "9.0 to 12.5 px mean local displacement (540 px knot, BRIEF2 default)")
-    add("M7_peak_px", 19.0 <= _lp <= 27.0, round(_lp, 3),
-        "19.0 to 27.0 px peak local displacement (540 px knot, BRIEF2 default)")
-    add("M8_bulge_peak_px", c_peak_px >= 14.0, round(c_peak_px, 3),
-        ">= 14 px: what the front term C adds on top of the other terms after the limiter (F2: 14 to 22 px)")
-    add("M9_lobe_thickness_swing", min(lobe_swing) >= 0.25,
-        [round(x, 3) for x in lobe_swing],
-        ">= 0.25 peak to peak ribbon width change per lobe over 6 s",
-        "mean width px per lobe " + ", ".join("%.1f" % x for x in lobe_mean))
-    add("M3_arc_cv", cv_space > 0.15, round(cv_space, 3),
-        "> 0.15 coefficient of variation of the 32 bin means",
-        f"literal time-averaged reading; ribbon only {cv_space_rib:.3f}; "
-        f"per-frame spatial cv averaged over time is {cv_space_inst:.3f}, "
-        f"bin means span {alive.min():.2f} to {alive.max():.2f} px, "
-        f"a cv of 0.15 needs sd {0.15 * alive.mean():.3f} px, now "
-        f"{alive.std():.3f} px" if len(alive) else "")
-    add("M3_distinct_max_bins", uniq_bins >= 8, int(uniq_bins),
-        ">= 8 distinct bins hold the instantaneous maximum over 6 s")
-    add("M4_bins_varying", frac_var60 >= 0.80, round(frac_var60, 3),
-        ">= 0.80 of bins have std/mean > 0.2 over 60 s",
-        f"6 s window {frac_var6:.3f}, median ratio "
-        f"{float(np.median(ratios60)):.3f}" if len(ratios60) else "")
-    add("M5_aggregate_peak_share", share_agg < 0.35, round(share_agg, 3),
-        "< 0.35 of the non-DC power in one FFT bin",
-        f"peak at {peak_freq:.4f} Hz (bin {int(peak_bin)})")
-    add("M5_distinct_bin_peaks", uniq_peak_bins >= 4, int(uniq_peak_bins),
-        ">= 4 distinct FFT bins among the 32 bin series")
-    add("M6_coverage_1px", frac_1px > 0.9, round(frac_1px, 3),
-        "> 0.9 of points move > 1 px at some time in 6 s",
-        f"> 2 px: {frac_2px:.3f}")
+    add("R1_yaw_span_deg", r1_yaw, 0.0,
+        "yaw span == 0 deg (knot.vert has no yaw term; the port reports 0)",
+        "analytic and port")
+    add("R1_pitch_pp_deg", r1_pitch, round(float(pitch.max() - pitch.min()), 3),
+        "<= 4.0 deg peak to peak over 240 s")
+    add("R1_roll_pp_deg", r1_roll, round(float(roll.max() - roll.min()), 3),
+        "<= 4.0 deg peak to peak over 240 s (no yaw, roll of the projected x,y)")
+    add("R1_scale_pp_pct", r1_scale, round(scale_pp_pct, 4),
+        "<= 0.8 percent peak to peak and period in 6 to 8 s",
+        "period %.1f s" % port.SCALE_T)
+    add("R2_max_step_px", r2_max < R2_MAX_PX, round(r2_max, 4),
+        "< %.1f px per frame at %.0f fps, any dot, 0..%.0f s, morph running"
+        % (R2_MAX_PX, a.fps, a.seconds),
+        "at knotPx %.0f, 1 unit = %.2f px" % (port.knot_px, port.knot_px / kp.KNOT_H))
+    add("R3_peak_local_px", r3_ok, round(r3_peak, 3),
+        "peak in [%.1f, %.1f] px, mean in [%.1f, %.1f] px, p99 <= %.1f px, "
+        "hold windows only (%d of %d frames)"
+        % (R3_PEAK_PX[0], R3_PEAK_PX[1], R3_MEAN_PX[0], R3_MEAN_PX[1],
+           R3_P99_PX, int(hold.sum()), nf),
+        "mean %.3f px, p99 %.3f px" % (r3_mean, r3_p99))
+    add("R4_max_accel_px", r4_max < R4_MAX_ACC, round(r4_max, 4),
+        "< %.2f px per frame squared, 0..%.0f s at %.0f fps"
+        % (R4_MAX_ACC, a.seconds, a.fps))
+    add("R5_morph_form1_px", m1 >= R5_FORM1_PX, round(m1, 3),
+        ">= %.0f px mean screen displacement at x = 1, form 1" % R5_FORM1_PX,
+        "mean |pos - hold| over all %d dots at t = %.1f s"
+        % (n, ts[idx1]))
+    add("R5_morph_form2_px", m2 >= R5_FORM2_PX, round(m2, 3),
+        ">= %.0f px mean screen displacement at x = 1, form 2" % R5_FORM2_PX,
+        "t = %.1f s" % ts[idx2])
+    add("R5_hold_fraction", R5_HOLD[0] <= hold_frac_grid <= R5_HOLD[1],
+        round(hold_frac_grid, 4),
+        "hold fraction in [%.2f, %.2f] over %.0f s, from the port schedule"
+        % (R5_HOLD[0], R5_HOLD[1], a.seconds),
+        "schedule holds %.4f per %.0f s cycle; frames with every point at a "
+        "hold = %.4f (%d of %d), the extra frames are the first eased steps"
+        % (hold_frac_global, kp.CYC, hold_frac_point, int(hold.sum()), nf))
+    add("R5_weights_monotone", mono, bool(mono),
+        "per point weight non decreasing along every out leg")
+    add("R6_lobe_phase_lag_s", r6_ok,
+        [lags["0_1"], lags["0_2"], lags["1_2"]],
+        "every pairwise cross correlation peak lag >= %.1f s" % R6_MIN_LAG,
+        "lobe periods %s s" % (periods,))
+    add("R7_loop_periods_s", r7_ok,
+        [round(x, 1) for x in loops],
+        "every wave loop in 9 to 16 s",
+        "ripple slots %s s, need 8 to 14" % (list(ripple),))
+    add("R8_acid_share_pct", None, None,
+        "< 2 percent of bright pixels are acid (render_metrics.py)",
+        "RENDER")
+    add("R8_lobe_luminance_ratio", None, None,
+        "every lobe ratio <= 1.4 (lobe_lum.py)", "RENDER")
+    add("R8_clipped_px", None, None,
+        "clipped pixels about 0", "RENDER")
 
-    passed = sum(1 for c in crit.values() if c["pass"])
-    total = len(crit)
-    verdict = "PASS" if passed == total else "FAIL"
+    npass = sum(1 for c in crit if c["status"] == "PASS")
+    nfail = sum(1 for c in crit if c["status"] == "FAIL")
+    nskip = sum(1 for c in crit if c["status"] == "SKIPPED_RENDER")
+    verdict = "PASS" if nfail == 0 else "FAIL"
+    if nskip:
+        verdict += " (%d render gate(s) SKIPPED_RENDER)" % nskip
 
-    # ---- files -----------------------------------------------------------
-    csv6 = os.path.join(a.outdir, pre + "series-6s.csv")
-    with open(csv6, "w", encoding="ascii") as f:
-        head = (["t"] + [f"r{b:02d}" for b in range(NB)]
-                + [f"g{b:02d}" for b in range(NB)] + ["mean_local_px"])
-        f.write(",".join(head) + "\n")
-        for i in range(nf_j):
-            f.write(",".join([f"{tj[i]:.4f}"]
-                             + [f"{bin6[b, i]:.4f}" for b in range(2 * NB)]
-                             + [f"{loc_len[i].mean():.4f}"]) + "\n")
-    csv60 = os.path.join(a.outdir, pre + "series-60s.csv")
-    with open(csv60, "w", encoding="ascii") as f:
-        head = (["t"] + [f"r{b:02d}" for b in range(NB)]
-                + [f"g{b:02d}" for b in range(NB)] + ["aggregate_mean_px"])
-        f.write(",".join(head) + "\n")
-        for i in range(nf_s):
-            f.write(",".join([f"{ts[i]:.4f}"]
-                             + [f"{bin_s[b, i]:.4f}" for b in range(2 * NB)]
-                             + [f"{agg[i]:.4f}"]) + "\n")
-    csvsp = os.path.join(a.outdir, pre + "spectrum.csv")
-    with open(csvsp, "w", encoding="ascii") as f:
-        f.write("freq_hz,aggregate_power,aggregate_share\n")
-        tot = max(float(spec_agg[1:].sum()), 1e-12)
-        for i in range(1, len(freqs)):
-            f.write(f"{freqs[i]:.5f},{spec_agg[i]:.6g},"
-                    f"{spec_agg[i] / tot:.6g}\n")
-    hm_path = os.path.join(a.outdir, pre + "heatmap.png")
-    heatmap(bin6, hm_path)
+    rep = {"spec": "KNOT-SPEC-R4 section 4, gates R1..R8",
+           "texture": os.path.basename(a.tex), "n_points": n,
+           "texels_per_point": port.tpp, "rows": port.rows,
+           "fps": a.fps, "seconds": a.seconds, "frames": nf,
+           "knotPx": port.knot_px, "limit_mode": a.limit,
+           "limiter_pct_R": port.local_limit_pct,
+           "runtime_s": round(runtime, 1),
+           "morph": {"cycle_s": kp.CYC, "hold_a_s": kp.HOLD_A,
+                     "leg_s": kp.LEG, "hold_b_s": kp.HOLD_B,
+                     "stagger": kp.STAGGER,
+                     "max_target_units": {
+                         "form1": round(float(np.linalg.norm(port.P1 - port.P, axis=1).max()), 2),
+                         "form2": round(float(np.linalg.norm(port.P2 - port.P, axis=1).max()), 2)},
+                     "mean_target_units": {
+                         "form1": round(float(np.linalg.norm(port.P1 - port.P, axis=1).mean()), 2),
+                         "form2": round(float(np.linalg.norm(port.P2 - port.P, axis=1).mean()), 2)},
+                     "p95_target_units": {
+                         "form1": round(float(np.percentile(np.linalg.norm(port.P1 - port.P, axis=1), 95.0)), 2),
+                         "form2": round(float(np.percentile(np.linalg.norm(port.P2 - port.P, axis=1), 95.0)), 2)},
+                     "max_target_px": {
+                         "form1": round(float(np.linalg.norm(port.P1 - port.P, axis=1).max()) * port.knot_px / kp.KNOT_H, 2),
+                         "form2": round(float(np.linalg.norm(port.P2 - port.P, axis=1).max()) * port.knot_px / kp.KNOT_H, 2)}},
+           "criteria": crit, "passed": npass, "failed": nfail,
+           "skipped_render": nskip, "verdict": verdict}
 
-    rep = {
-        "spec": "KNOT-SPEC-ADD.md v2.1 metrics M1 to M6",
-        "motion": a.motion, "n_points": n, "ribbon_points": int(rib.sum()),
-        "ring_points": int(ring.sum()),
-        "texture": os.path.basename(a.tex), "texels_per_point": port.tpp,
-        "limit_mode": a.limit, "limiter_pct_R": port.local_limit_pct,
-        "fps": a.fps, "jump_window_s": a.jump_seconds,
-        "jump_frames": nf_j, "spectrum_window_s": a.seconds,
-        "spectrum_frames": nf_s,
-        "item_px": [port.w, port.h], "knotPx": port.knot_px,
-        "unit_px": round(port.knot_px / kp.KNOT_H, 4),
-        "runtime_s": round(runtime, 1),
-        "local_px_mean": round(float(loc_len.mean()), 3),
-        "local_px_p50": round(float(np.percentile(loc_len, 50)), 3),
-        "local_px_max": round(float(loc_len.max()), 3),
-        "jump_max_px": round(jump_max, 3),
-        "jump_p99_px": round(jump_p99, 3),
-        "pose_only_jump_max_px": round(pose_jump_max, 3),
-        "peak_local_units": round(peak_pct / 100.0 * kp.R_KNOT, 3),
-        "peak_local_pct_R": round(peak_pct, 3),
-        "peak_local_pct_R_raw": round(peak_raw_pct, 3),
-        "peak_local_pct_R_exp_form": round(peak_exp_pct, 3),
-        "term_peak_pct_R": {k: round(v / kp.R_KNOT * 100.0, 3)
-                            for k, v in term_peak.items()},
-        "term_px_mean": {k: round(v / nf_j, 3)
-                         for k, v in term_px_mean.items()},
-        "bright_min": round(bright_min, 3) if bright_min < 1e8 else 1.0,
-        "radius_min": round(radius_min, 3) if radius_min < 1e8 else 1.0,
-        "bin_time_mean_px": [round(float(x), 3) for x in bin_tmean],
-        "bin_std_over_mean_p50": round(float(np.median(ratios60)), 3)
-        if len(ratios60) else 0.0,
-        "arc_cv_space": round(cv_space, 3),
-        "arc_cv_space_ribbon": round(cv_space_rib, 3),
-        "arc_cv_space_per_frame_mean": round(cv_space_inst, 3),
-        "distinct_max_bins_6s": int(uniq_bins),
-        "bins_varying_frac_60s": round(frac_var60, 3),
-        "bins_varying_frac_6s": round(frac_var6, 3),
-        "aggregate_peak_share": round(share_agg, 4),
-        "aggregate_peak_freq_hz": round(peak_freq, 4),
-        "aggregate_nonDC_power": float(spec_agg[1:].sum()),
-        "distinct_bin_peak_bins": int(uniq_peak_bins),
-        "bin_peak_share_p50": round(float(np.median(share_bins[active])), 4)
-        if active.any() else 0.0,
-        "bin_peak_share_max": round(float(share_bins[active].max()), 4)
-        if active.any() else 0.0,
-        "coverage_1px_frac": round(frac_1px, 3),
-        "coverage_2px_frac": round(frac_2px, 3),
-        "criteria": crit, "passed": passed, "total": total,
-        "verdict": verdict,
-        "files": {"text": os.path.join(a.outdir, pre + "report.txt"),
-                  "json": os.path.join(a.outdir, pre + "report.json"),
-                  "heatmap": hm_path, "series_6s": csv6,
-                  "series_60s": csv60, "spectrum": csvsp},
-    }
-    jpath = rep["files"]["json"]
+    # heat map of the local activity in time (arc bins x time)
+    nb = 32
+    bi = np.floor(np.clip(port.u, 0.0, 0.999999) * nb).astype(np.int32)
+    grid = np.zeros((nb, nf))
+    for b in range(nb):
+        m = bi == b
+        if m.any():
+            grid[b] = loc_len[:, m].mean(axis=1)
+    img = ramp(grid, 0.0, max(float(grid.max()), 1e-6))
+    from PIL import Image
+    Image.fromarray(img[::-1], "RGB").resize((nf * 2, nb * 6), Image.NEAREST).save(
+        os.path.join(a.outdir, pre + "heatmap.png"))
+
+    jpath = os.path.join(a.outdir, pre + "report.json")
     with open(jpath, "w", encoding="ascii") as f:
         json.dump(rep, f, indent=1)
 
-    # ---- text summary ----------------------------------------------------
     L = []
-    L.append(f"KNOT evidence run, motion={a.motion}, spec v2.1")
-    L.append(f"texture {os.path.basename(a.tex)} ({port.tpp} texels per point), "
-             f"{n} points ({int(rib.sum())} ribbon, {int(ring.sum())} ring)")
-    L.append(f"windows: {nf_j} frames at {a.fps} fps ({a.jump_seconds:.0f} s) "
-             f"for M1 M2 M3 M6, {nf_s} frames ({a.seconds:.0f} s) for M2 M4 M5")
-    L.append(f"limiter {a.limit}, L = {port.local_limit_pct:.1f} percent of R "
-             f"= {port.lim:.1f} units")
+    L.append("KNOT round 4 numeric report, gates R1..R8 of KNOT-SPEC-R4")
+    L.append("texture %s (%d texels per point, %d rows), %d points, "
+             "knotPx %.0f, 1 unit = %.2f px"
+             % (os.path.basename(a.tex), port.tpp, port.rows, n, port.knot_px,
+                port.knot_px / kp.KNOT_H))
+    L.append("window %.0f s at %.0f fps (%d frames), limiter %s at %.1f pct of R"
+             % (a.seconds, a.fps, nf, a.limit, port.local_limit_pct))
+    L.append("morph target distance: form 1 max %.1f units (%.1f px), "
+             "form 2 max %.1f units (%.1f px)"
+             % (rep["morph"]["max_target_units"]["form1"],
+                rep["morph"]["max_target_px"]["form1"],
+                rep["morph"]["max_target_units"]["form2"],
+                rep["morph"]["max_target_px"]["form2"]))
     L.append("")
-    L.append(f"local displacement: mean {rep['local_px_mean']:.2f} px, "
-             f"p50 {rep['local_px_p50']:.2f} px, "
-             f"peak {rep['local_px_max']:.2f} px")
-    L.append("")
-    for k, c in crit.items():
+    for c in crit:
         val = c["value"]
         if isinstance(val, float):
-            val = f"{val:.3f}"
-        L.append(f"{'PASS' if c['pass'] else 'FAIL'}  {k} = {val}  "
-                 f"(need {c['target']})")
+            val = "%.4f" % val
+        L.append("%-16s %-28s = %s   (need %s)"
+                 % (c["status"], c["name"], val, c["target"]))
         if c["note"]:
-            L.append(f"      {c['note']}")
+            L.append("                 %s" % c["note"])
     L.append("")
-    L.append(f"verdict {verdict} ({passed}/{total})")
-    if verdict == "FAIL":
-        L.append("")
-        L.append("model note: M3 fails on the literal time-averaged reading "
-                 "only. The 32 bin means flatten to 4.15 to 5.41 px because "
-                 "every front sweeps every arc bin inside 60 s. The fixed "
-                 "thing is a static spatial envelope on the local terms "
-                 "(neither an amplitude nor a period change): multiply the "
-                 "B..E displacement by about 1 + 0.22 sin(2 pi * 3 u) to get "
-                 "a bin mean sd of 0.74 px, cv 0.15 at mean 4.9 px.")
-    L.append("")
-    L.append("term peaks as percent of R (raw sum B..E after the limiter "
-             f"{peak_pct:.3f}, before {peak_raw_pct:.3f}): "
-             + ", ".join(f"{k} {v:.3f}" for k, v in
-                         rep["term_peak_pct_R"].items()))
-    L.append(f"aggregate spectrum: peak bin {int(peak_bin)} at "
-             f"{peak_freq:.4f} Hz holds {share_agg * 100:.1f} percent of the "
-             f"non-DC power; {int(uniq_peak_bins)} distinct peak bins among "
-             f"the 32 bin series")
-    L.append(f"shading: min brightness factor {rep['bright_min']:.2f}, "
-             f"min radius factor {rep['radius_min']:.2f} "
-             f"(occlusion included)")
-    L.append(f"runtime {runtime:.1f} s")
-    L.append("")
-    L.append("files: " + ", ".join(os.path.basename(p) for p in
-                                   (hm_path, csv6, csv60, csvsp, jpath)))
+    L.append("verdict %s: %d pass, %d fail, %d SKIPPED_RENDER"
+             % (verdict, npass, nfail, nskip))
+    L.append("local activity: mean %.2f px, p99 %.2f px, peak %.2f px in the "
+             "hold windows" % (r3_mean, r3_p99, r3_peak))
+    L.append("max per frame displacement %.3f px, max acceleration %.4f px/frame^2"
+             % (r2_max, r4_max))
+    L.append("runtime %.1f s" % runtime)
     txt = "\n".join(L) + "\n"
-    tpath = rep["files"]["text"]
-    with open(tpath, "w", encoding="ascii") as f:
+    with open(os.path.join(a.outdir, pre + "report.txt"), "w",
+              encoding="ascii") as f:
         f.write(txt)
     print(txt)
 

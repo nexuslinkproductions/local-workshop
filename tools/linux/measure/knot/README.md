@@ -85,6 +85,114 @@ yuv420p). 144 frames give a 700x700, 24 fps, 1.79 MB six second loop.
 knot-scene-tmpl.qml in work2/K2 is work2/K1/knot-scene.qml with the t property
 set to TVALUE, so the same scene renders at any instant.
 
+## v5 additions (round 4, KNOT-SPEC-R4)
+
+knot_port.py mirrors round 4: no yaw, pitch 1.6 deg (71/97 s) and roll 1.6 deg
+(83/113 s), a 7 s scale pulse of 0.8 percent peak to peak, lobe clocks at
+9/11/13 s, fronts at 11/15 s (ribbon) and 12/16 s (ring) with a 0.10 window,
+events in 9/13 s slots with a 3 s rise, curl 0.022 R, and the summed local
+limiter at 4 percent of R. Default texture is knot-points4.png (11 texels per
+point, 24 rows): texels 0..4 are the round 3 data, 5..7 are form 1 (position in
+two texels, normal in the third) and 8..10 are form 2. The port also decodes
+the morph schedule (60 s cycle: 33 s hold, 12 s out, 3 s hold, 12 s back) and
+the per point stagger from the lobe weights, it negates a baked form
+normal that points away from N3 so the blended normal never passes through
+zero, and it falls back to er when the dirW sum would be degenerate mid morph
+(the shader does the same).
+
+knot_report.py now runs gates R1 to R8 of section 4 and prints, for every gate,
+the band the code actually compares against. R8 needs a render (acid share of
+bright pixels, lobe luminance ratios, clipped pixels) and prints
+SKIPPED_RENDER when no render metrics are supplied; render_metrics.py and
+lobe_lum.py fill it in the render run.
+
+    python3 knot_report.py --outdir <dir> --prefix r4-
+
+Gate bands the code compares against (knot_report.py, constants at the top:
+R2_MAX_STEP = 1.6 px, R4_MAX_ACC = 0.35 px/frame^2, R3 band [7.0, 10.8] px
+peak / [2.0, 5.0] px mean / 9.0 px p99, R5 >= 20 px form 1 and >= 35 px form 2,
+hold fraction [0.50, 0.60], R1 4 deg p2p and 0.8 percent at 6 to 8 s, R6 lag
+>= 1.0 s, R7 loops 9 to 16 s with ripples 8 to 14 s, R8 acid share < 2 percent
+and lobe luminance ratio <= 1.4):
+
+    R1  yaw span 0.000 deg (must be 0), pitch p2p <= 4.0 deg, roll p2p <= 4.0 deg,
+        scale p2p <= 0.80 percent with period 6.0 to 8.0 s
+    R2  max per frame step of any dot < 1.6 px
+    R3  hold windows only: peak local in [7.0, 10.8] px, mean in [2.0, 5.0] px,
+        99th percentile <= 9.0 px
+    R4  max per frame change of the step vector < 0.35 px per frame squared
+    R5  mean screen displacement at x = 1 >= 20 px (form 1), >= 35 px (form 2),
+        hold fraction in [0.50, 0.60], weights non decreasing per leg
+    R6  pairwise lobe breath lag >= 1.0 s and three distinct periods
+    R7  every wave loop in [9, 16] s, ripple slots in [8, 14] s
+    R8  acid share of bright pixels < 2 percent, lobe luminance ratio <= 1.4,
+        clipped pixels about 0 (render metrics only)
+
+Measured on 2026-10-23 on the final knot-points4.png (sha1 bc15e194, 120 s at
+24 fps, exp limiter, L = 4 percent of R, runtime 11.8 s): R1 pass (yaw 0.000,
+pitch 3.122, roll 2.983 deg p2p, scale 0.800 percent at 7.0 s), R2 pass
+0.9372 px, R3 pass (peak 9.450 px, mean 3.501 px, p99 7.314 px), R4 pass
+0.1131 px/frame^2, R5 pass form 1 25.998 px and form 2 41.504 px, hold 0.6000
+(0.6014 counted on the frame grid), weights monotone, R6 pass (lags 217.3 /
+165.8 / 132.9 s), R7 pass (11/15/12/16 s loops, 9 and 13 s ripples), R8
+SKIPPED_RENDER. Verdict PASS, 13 pass, 0 fail.
+
+### R4: what the acceleration gate caught
+
+The first round 4 run failed R4 at 0.3906 px/frame^2 on one ring dot at
+t = 56.17 s (the second png moved it to 0.4720 at t = 56.29 s), while the next
+largest frame was 0.336 and the p99 was 0.0139. The probe (work3/B2/
+probe_r4c.py) isolated it to the curl term D: that dot's curl displacement sat
+exactly on the curl cap (R * 0.025 = 11.25 units, a hard plateau) for five
+frames and the cap released in one frame, so the term's own acceleration was
+0.905 px/frame^2 while B, C, E and the morph together were under 0.02. About
+half of all dots sit on that plateau, because the curl field is driven 4 to 5
+times past the knee. The old saturation was an exponential soft cap,
+`dlim * (1 - exp(-dl0/dlim))`, which still has a 1.4 percent slope at 4x the
+knee, so where the curl field dips near a critical point the plateau ends in a
+one frame step in speed.
+
+Fix: saturate with tanh instead, `dlim * tanh(dl0/dlim)` (written as
+1 - 2/(exp(2u)+1) in both knot.vert and knot_port.py so the two agree to
+float precision). tanh's shoulder is 35 times flatter at 4x the knee and has no
+corner anywhere. R4 went 0.3906 -> 0.1131 and R3 stayed in band (peak 9.472 ->
+9.450 px, mean 3.706 -> 3.501 px): the curl's working point is unchanged, only
+the kink at the edge of the plateau is gone. This was a limiter kink, not a
+position discontinuity: no dot ever jumps, the step vector changes by less
+than 1 px per frame and the total step is 0.94 px.
+
+### Why the round 3 numeric targets are withdrawn
+
+Marcel: "The knot is now moving too much, it must be soft and gentle and its
+missing the morphing animations, less swaying left/right that looks weird."
+
+The old targets were assistant defaults, not numbers Marcel ever asked for:
+20 to 26 px local peaks came from the round 2 brief, the M7 band 9.0 to 12.5 px
+mean and 19.0 to 27.0 px peak were derived from it, M1 (jump < 2.5 px) and
+M2 (local peak < 10 percent of R) followed the same amplitude, and M8/M9 were
+invented in round 3 to describe the bulge and the lobe breathing. They all
+gate on how MUCH the knot moves and on how fast the side to side sway goes,
+which is exactly what Marcel rejected. Round 4 replaces them:
+
+- yaw is gone entirely (R1 pins the span to 0, the old M1 only capped the
+  step it caused), so there is no left/right sway left to be "too much"
+- the local motion is gated by a band that is now the design intent, not a
+  borrowed default: R3 asks for 7 to 10.8 px peak and 2 to 5 px mean in the
+  hold windows, which is the 40 percent reduction the spec asks for; the old
+  M7 band would FAIL round 4 by design
+- R2 and R4 gate smoothness instead of size: no dot may step more than 1.6 px
+  in a frame and the per frame displacement may not change by more than
+  0.35 px per frame squared, so "gentle" is a property of the curve, not of an
+  amplitude
+- R5 is new and gates the thing that was missing: the morph must actually
+  travel (>= 20 px for form 1, >= 35 px for form 2), must hold 50 to 60 percent
+  of the time and must be monotone per leg
+- R6 and R7 pin the time structure (lobe lags >= 1 s, loops 9 to 16 s,
+  ripples 8 to 14 s) so a slow, wide motion cannot be faked by shrinking
+  amplitudes
+- R8 keeps the render gates of round 3 (acid share, lobe luminance, clipping)
+  because they are about the picture, not about the motion amount
+
 ## v4 additions (repair round 3)
 
 - knot_report.py: M8 (bulge peak px of the front term C, measured as full sum minus

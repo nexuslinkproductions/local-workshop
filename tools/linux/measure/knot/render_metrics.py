@@ -17,7 +17,12 @@ from scipy.ndimage import uniform_filter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOT = os.path.join(HERE, "..", "..", "v5-shot.sh")
-TMPL = "/home/nexuslink/.hermes/cache/scratch/hud-live/work2/K2/knot-scene-tmpl.qml"
+# Scene template with the literal TVALUE. KNOT_TMPL overrides; the round 3 K2
+# scene is kept as the fallback, the round 4 scene lives in work3/B3.
+TMPL = os.environ.get("KNOT_TMPL",
+                      "/home/nexuslink/.hermes/cache/scratch/hud-live/work3/B3/scene.qml")
+if not os.path.exists(TMPL):
+    TMPL = "/home/nexuslink/.hermes/cache/scratch/hud-live/work2/K2/knot-scene-tmpl.qml"
 KIT = os.environ.get("KNOT_KIT", "/home/nexuslink/hud-wt/v5-live/nexuslink.hud/v5/kit")
 LIVE = os.environ.get("KNOT_LIVE", "/home/nexuslink/hud-wt/v5-live/nexuslink.hud/v5/live")
 
