@@ -24,6 +24,14 @@ QtObject {
     property var parts: ({})     // dynamic kind:"part" records from blk{i}p{j}_* keys
     property var nodeList: []    // `nodes` values in scaffold (tree) order
     property var flowRates: ({}) // flowId -> {a,b,rx,tx,rate,unit,active,src}
+    // dev_usb_<vid:pid>_name keys with no scaffold leaf: [{vidpid,name,batt}],
+    // sorted by vid:pid. Reassigned only when the set changes, so a view's
+    // Repeater keeps item identity across 1 Hz frames.
+    property var unmatchedUsb: []
+    // Live PipeWire capture inputs (dev_src{i}*, monitor sources excluded):
+    // [{name,src,vol,match}] in collector index order. `match` is the
+    // _audioMatch id the Name claimed, "" when none fits.
+    property var audioInputs: []
 
     readonly property int scaffoldCount: 78
     property int nodeCount: 0    // count of `nodes` — equals 78 once built
@@ -54,6 +62,21 @@ QtObject {
             return unknown;
         var n = Number(v);
         return isFinite(n) ? n : unknown;
+    }
+
+    // First _audioMatch entry whose token fits the node Name and is not
+    // already claimed by an earlier sink/source this frame; "" otherwise.
+    function _matchAudio(name, claimed) {
+        for (var pid in _audioMatch) {
+            if (claimed[pid] === true)
+                continue;
+            var toks = _audioMatch[pid];
+            for (var ti = 0; ti < toks.length; ti++) {
+                if (name.indexOf(toks[ti]) >= 0)
+                    return pid;
+            }
+        }
+        return "";
     }
 
     function byId(id) {
@@ -161,14 +184,24 @@ QtObject {
         "flash_kingston": "0951:1666"
     })
 
-    // dev_audio{i}_name substring -> pw node id.
+    // Audio node identity. Tokens match the PipeWire node NAME
+    // (dev_audio{i}_sink / dev_src{i}_src), never the Description: the
+    // Description is prose ("Scarlett 2i2 4th Gen Headphones / Line 1-2")
+    // that no token ever fitted, so every pw_* node starved at `unknown`.
+    // Order matters — the first entry whose token fits and is unclaimed
+    // wins — so device-specific tokens sit above class-wide ones, and no
+    // token may be a prefix of another device's Name ("alsa_output.usb"
+    // would swallow any USB sink, Scarlett included). The two pw_src_*
+    // ids below have no scaffold node; they surface via `audioInputs`.
     readonly property var _audioMatch: ({
-        "pw_sink_hdmi": ["hdmi-stereo", "04_00.0"],
+        "pw_src_mke600": ["mke600_voice"],
+        "pw_src_scarlett": ["HiFi__Mic1__source"],
+        "pw_src_kiyo": ["Razer_Kiyo"],
+        "pw_src_corsair": ["alsa_input.usb-Corsair"],
+        "pw_src_analog": ["alsa_input.pci-0000_14_00.6"],
+        "pw_sink_hdmi": ["hdmi-stereo"],
         "pw_sink_analog": ["14_00.6.analog-stereo", "alsa_output.pci-0000_14_00.6"],
-        "pw_sink_corsair": ["usb-Corsair", "alsa_output.usb"],
-        "pw_src_corsair": ["alsa_input.usb-Corsair", "mono-fallback"],
-        "pw_src_kiyo": ["Razer_Kiyo", "alsa_input.usb"],
-        "pw_src_analog": ["alsa_input.pci-0000_14_00.6", "14_00.6.analog"]
+        "pw_sink_corsair": ["usb-Corsair"]
     })
 
     readonly property var _ifname: ({ "net_eth": "enp15s0", "net_wifi": "wlp16s0", "net_lo": "lo" })
@@ -283,6 +316,10 @@ QtObject {
     // counters needing deltas between frames
     property var _prev: ({})
     property double _lastT: 0
+    // content signatures: the published lists above are reassigned only
+    // when these change, so 1 Hz frames do not churn view delegates
+    property string _usbSig: ""
+    property string _audioSig: ""
 
     // QtObject's default `data` is list<QtObject> — Quickshell's FileView is a
     // plain QObject, so it must ride a typed property, not a child slot.
@@ -670,6 +707,37 @@ QtObject {
             if (spd !== unknown)
                 n.link = String(spd) + " Mb/s";
         }
+        // ---- usb devices with no scaffold leaf: the generic bay list ----
+        // The key IS the datum: a present dev_usb_<vid:pid>_name that no
+        // _vidPid entry claims becomes an unmatchedUsb record; the key's
+        // absence removes it. Sorted by vid:pid so card order is stable.
+        var un = [];
+        var usig = "";
+        for (var uk2 in s) {
+            var um = /^dev_usb_([0-9a-fA-F]+:[0-9a-fA-F]+)_name$/.exec(uk2);
+            if (um === null)
+                continue;
+            var uvp = um[1];
+            var claimed = false;
+            for (var vk in _vidPid) {
+                if (_vidPid[vk] === uvp) {
+                    claimed = true;
+                    break;
+                }
+            }
+            if (claimed)
+                continue;
+            un.push({ vidpid: uvp, name: String(s[uk2]),
+                      batt: pickNum(s, ["dev_usb_" + uvp + "_batt"]) });
+        }
+        un.sort(function (a2, b2) { return a2.vidpid < b2.vidpid ? -1 : (a2.vidpid > b2.vidpid ? 1 : 0) });
+        for (var ui = 0; ui < un.length; ui++)
+            usig += un[ui].vidpid + "|" + un[ui].name + "|" + un[ui].batt + ";";
+        if (usig !== _usbSig) {
+            _usbSig = usig;
+            unmatchedUsb = un;
+        }
+
         // G502 battery lives behind the receiver; legacy hidpp fallback.
         var hb = _hidppBatt(s);
         if (hb !== unknown) {
@@ -677,34 +745,68 @@ QtObject {
             nd.input_mouse.extra.batt_pct = hb;
         }
 
-        // ---- pipewire nodes via dev_audio{i}_{name,sink,vol} ----
+        // ---- pipewire audio: sinks (dev_audio{i}) + inputs (dev_src{i}) ----
+        // Tokens match the node Name (see _audioMatch). Every dev_src key
+        // also lands in `audioInputs`, matched or not. The fold into the
+        // scaffold only touches ids that actually have a node — the two
+        // Scarlett/MKE ids do not — so a match without a node is data for
+        // the bay, never a crash.
         var seenAudio = {};
-        for (var ai = 0; ai < 10; ai++) {
-            var an = s["dev_audio" + ai + "_name"];
-            if (an === undefined)
+        for (var ai = 0; ai < 16; ai++) {
+            var sk = s["dev_audio" + ai + "_sink"];
+            if (sk === undefined)
                 break;
-            an = String(an);
-            for (var pid in _audioMatch) {
-                var toks = _audioMatch[pid];
-                for (var ti = 0; ti < toks.length; ti++) {
-                    if (an.indexOf(toks[ti]) >= 0 && !seenAudio[pid]) {
-                        seenAudio[pid] = true;
-                        var pn = nd[pid];
-                        pn.state = "present";
-                        pn.extra.audioName = an;
-                        var vol = pickNum(s, ["dev_audio" + ai + "_vol"]);
-                        if (vol !== unknown)
-                            pn.extra.vol_pct = vol;
-                        var sk = pick(s, ["dev_audio" + ai + "_sink"]);
-                        if (sk !== unknown)
-                            pn.extra.sink = sk;
-                    }
-                }
+            sk = String(sk);
+            var anm = has(s, "dev_audio" + ai + "_name") ? String(s["dev_audio" + ai + "_name"]) : "";
+            var apid = _matchAudio(sk, seenAudio);
+            if (apid === "")
+                continue;
+            seenAudio[apid] = true;
+            var pn = nd[apid];
+            if (pn !== undefined) {
+                pn.state = "present";
+                if (anm !== "")
+                    pn.extra.audioName = anm;
+                var avol = pickNum(s, ["dev_audio" + ai + "_vol"]);
+                if (avol !== unknown)
+                    pn.extra.vol_pct = avol;
+                pn.extra.sink = sk;
             }
         }
+        var ain = [];
+        var asig = "";
+        for (var si = 0; si < 16; si++) {
+            var ssrc = s["dev_src" + si + "_src"];
+            if (ssrc === undefined)
+                break;
+            ssrc = String(ssrc);
+            if (ssrc.substr(-8) === ".monitor")
+                continue;             // the collector skips these too; belt + braces
+            var snm = has(s, "dev_src" + si + "_name") ? String(s["dev_src" + si + "_name"]) : "";
+            var svol = pickNum(s, ["dev_src" + si + "_vol"]);
+            var spid = _matchAudio(ssrc, seenAudio);
+            if (spid !== "") {
+                seenAudio[spid] = true;
+                var sn2 = nd[spid];
+                if (sn2 !== undefined) {
+                    sn2.state = "present";
+                    if (snm !== "")
+                        sn2.extra.audioName = snm;
+                    if (svol !== unknown)
+                        sn2.extra.vol_pct = svol;
+                    sn2.extra.src = ssrc;
+                }
+            }
+            ain.push({ name: snm, src: ssrc, vol: svol, match: spid });
+            asig += snm + "|" + ssrc + "|" + svol + "|" + spid + ";";
+        }
         for (var pk in _audioMatch) {
-            if (!seenAudio[pk])
+            if (!seenAudio[pk] && nd[pk] !== undefined)
                 nd[pk].state = unknown;
+        }
+        if (asig !== _audioSig) {
+            _audioSig = asig;
+            audioInputs = ain;
         }
 
         // ---- bluetooth controller ----

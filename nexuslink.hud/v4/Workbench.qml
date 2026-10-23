@@ -8,9 +8,10 @@ import Quickshell.Widgets
 // Workbench.qml — HDMI-A-3 "WORKBENCH + APPS NAV" (lane D3).
 // Visual spec: candidates/mock2/B/hdmi.html. Left column is the operations
 // ledger (workspaces+windows with click-to-focus, agent sessions, process
-// ledger, github activity, token ledger). Right column is a tabbed pane —
-// APPS NAVIGATOR (AppGrid.qml — installed .desktop apps, type-to-filter,
-// gtk-launch) | DEVICES (DeviceBay.qml — connected peripherals, lane W1).
+// ledger, github activity, token ledger). Right column stacks two panes —
+// DEVICES (DeviceBay.qml — connected peripherals + hotplug cards, lane W1)
+// over APPS NAVIGATOR (AppGrid.qml — installed .desktop apps,
+// type-to-filter, gtk-launch). No tab gate: both render at all times.
 // A shared UtilityDock strip anchors the bottom (owned by lane D1).
 // Lane W1 additions: static-lit KnotField watermark behind the panes,
 // window-row app icons, tightened ledger density, and the token ledger's
@@ -20,7 +21,7 @@ import Quickshell.Widgets
 // LANE-SB2 (visual quality pass) — the same screen, built on one grid:
 //   * met (pad/headH/footH/innerGap/gap + the hover wash) is the only place
 //     the rhythm is written down; GlassPane's own `padding` owns the pane
-//     inset, so the five ledger panes, the tab strip and DeviceBay all sit
+//     inset, so the five ledger panes and the two right-column panes all sit
 //     on the same 12px column.
 //   * PaneHead / PaneFoot / EmptyNote are the chassis primitives: accent tick
 //     + Michroma title + quiet mono sub, a hairline + status line, and one
@@ -274,8 +275,6 @@ Item {
     }
     // process ledger selection (click = select/detail; no kill actions)
     property int selProc: -1
-    // right pane tab: 0 = APPS (default), 1 = DEVICES (DeviceBay, lane W1)
-    property int rightTab: 0
 
     // ------------------------------------------------ workspaces/windows
     // -1 = key absent → unknown (the glyph renders downstream), never a
@@ -2165,132 +2164,44 @@ Item {
                 }
             }
 
-            // ======================= RIGHT : APPS | DEVICES
+            // ======================= RIGHT : DEVICES + APPS
+            // DEVICES first, always rendered: hotplug is the live signal and
+            // the bay must be readable without a click (HANDOFF item 5).
+            // The bay asks for the height its grid needs (DeviceBay.natHeight,
+            // rows at the nominal card size); APPS takes the remainder under a
+            // floor so the launcher stays usable. Both children keep the
+            // self-sizing contract — GlassPane reparents them into its content
+            // item, so nothing anchors to a pane id here.
             Column {
                 id: rightCol
                 width: grid.width - leftCol.width - grid.spacing
                 height: grid.height
                 spacing: met.gap
 
-                // ---- tabbed pane (lane W1): APPS NAVIGATOR (AppGrid.qml —
-                // lane D3, stays the default tab) | DEVICES (DeviceBay.qml —
-                // connected peripherals). Both share the pane's full extent
-                // below a small pill tab strip; each self-sizes to its parent
-                // (the GlassPane content-reparenting workaround — never
-                // anchor to the pane id here). `padding` stays 0 here: the tab
-                // strip owns its own inset so the two tab pages keep the
-                // geometry AppGrid already lays out for.
+                GlassPane {
+                    id: devPanel
+                    width: rightCol.width
+                    // when the bay asks for more than the column can give, the
+                    // pane stops at the cap and the grid compresses toward
+                    // DeviceBay.cardMinH before anything clips
+                    height: Math.max(devPanel.floor, Math.min(devBay.natHeight, rightCol.height - devPanel.appsFloor - rightCol.spacing))
+                    busy: false
+                    readonly property int appsFloor: 200   // APPS pane minimum
+                    readonly property int floor: 320        // DEVICES pane minimum
+
+                    DeviceBay {
+                        id: devBay
+                        stats: root.stats
+                    }
+                }
+
                 GlassPane {
                     id: appsPanel
                     width: rightCol.width
-                    height: rightCol.height
+                    height: Math.max(0, rightCol.height - devPanel.height - rightCol.spacing)
                     busy: false
 
-                    Column {
-                        id: appsBody
-                        width: parent ? parent.width : 0
-                        height: parent ? parent.height : 0
-                        spacing: 0
-
-                        // ---- tab strip
-                        Item {
-                            id: tabStrip
-                            width: appsBody.width
-                            height: 36
-
-                            Row {
-                                id: tabRow
-                                anchors.left: parent.left
-                                anchors.leftMargin: met.pad
-                                anchors.bottom: parent.bottom
-                                anchors.bottomMargin: 9
-                                spacing: 6
-                                Repeater {
-                                    model: ["APPS", "DEVICES"]
-                                    delegate: Rectangle {
-                                        id: tabChip
-                                        required property int index
-                                        required property string modelData
-                                        readonly property bool active: root.rightTab === tabChip.index
-                                        width: tabTxt.implicitWidth + 24
-                                        height: 20
-                                        radius: 10
-                                        color: tabChip.active ? pal.ink : (tabMa.containsMouse ? pal.well : "transparent")
-                                        border.width: 1
-                                        border.color: tabChip.active ? pal.accent : (tabMa.containsMouse ? met.litLine : "transparent")
-                                        Text {
-                                            id: tabTxt
-                                            anchors.centerIn: parent
-                                            font.family: pal.fDisp
-                                            font.pixelSize: root.fs("pxTag", 9)
-                                            font.letterSpacing: met.lsTag
-                                            color: tabChip.active ? pal.accent : (tabMa.containsMouse ? pal.txt : pal.t55)
-                                            text: tabChip.modelData
-                                        }
-                                        // active marker: a 2px accent bar riding
-                                        // the strip's own hairline, so the
-                                        // selected tab is legible even when the
-                                        // two pills sit side by side
-                                        Rectangle {
-                                            visible: tabChip.active
-                                            anchors.horizontalCenter: parent.horizontalCenter
-                                            y: parent.height - 2
-                                            width: parent.width - 8
-                                            height: 2
-                                            radius: 1
-                                            color: pal.accent
-                                        }
-                                        MouseArea {
-                                            id: tabMa
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            onClicked: root.rightTab = tabChip.index
-                                        }
-                                    }
-                                }
-                            }
-                            // right-hand hint, baseline-matched to the chips
-                            // and elided against them so a long subtitle can
-                            // never shove the tabs off the pane
-                            Text {
-                                anchors.left: tabRow.right
-                                anchors.leftMargin: met.pad
-                                anchors.right: parent.right
-                                anchors.rightMargin: met.pad
-                                anchors.verticalCenter: tabRow.verticalCenter
-                                font.family: pal.fMono
-                                font.pixelSize: root.fs("pxMicro", 8)
-                                color: pal.t40
-                                elide: Text.ElideRight
-                                text: root.rightTab === 0 ? "installed apps · gtk-launch" : "usb · hid · audio · bt"
-                            }
-                            // hairline under the strip
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                anchors.leftMargin: met.pad
-                                anchors.rightMargin: met.pad
-                                height: 1
-                                color: pal.edge
-                            }
-                        }
-
-                        // ---- tab pages (both stay alive; visibility swaps)
-                        Item {
-                            id: tabStack
-                            width: appsBody.width
-                            height: Math.max(0, appsBody.height - tabStrip.height)
-
-                            AppGrid {
-                                visible: root.rightTab === 0
-                            }
-                            DeviceBay {
-                                visible: root.rightTab === 1
-                                stats: root.stats
-                            }
-                        }
-                    }
+                    AppGrid {}
                 }
             }
         }

@@ -2,10 +2,10 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 
-// DeviceBay.qml — HDMI-A-3 workbench DEVICES tab (lane W1), shares the
-// right-column pane with AppGrid behind the APPS|DEVICES strip.
-// Connected peripherals as glyph-drawn cards — Canvas pictograms, never
-// emoji, never text rows:
+// DeviceBay.qml — HDMI-A-3 workbench DEVICES pane (lane W1, WS-07). Always
+// rendered: it is the top pane of the right column, beside AppGrid, with no
+// tab gate. Connected peripherals as glyph-drawn cards — Canvas pictograms,
+// never emoji, never text rows:
 //   mouse   = oval + scroll line + button split   (G502 X PLUS)
 //   keys    = deck + key grid + spacebar          (ASUS TUF K7)
 //   headset = band + cups + mic boom              (Corsair HS on Slipstream)
@@ -13,6 +13,14 @@ import QtQuick
 //   cam     = lens rings + mount foot             (Razer Kiyo)
 //   flash   = USB plug silhouette + shell         (Kingston DataTraveler)
 //   bt      = rune + radiating arcs               (MT7922 hci0)
+//   usbplug = USB trident                          (any unmatched USB device)
+//   mic     = capsule + grille + body              (Scarlett Mic1, MKE600)
+//
+// Two card classes beyond the curated seven, both driven by keys that only
+// exist while the hardware does (Topology.unmatchedUsb / .audioInputs):
+// a generic card per dev_usb_<vid:pid>_name no scaffold leaf claims, and the
+// audio-in pair whose dev_src{i}_src Name matches a _audioMatch token. No
+// key -> no card; presence is the whole datum, never a fabricated 0.
 //
 // Telemetry overlay per card comes from the Topology singleton (dev_* and
 // legacy stats keys are already merged there by HudV4's refresh()); raw
@@ -174,19 +182,68 @@ Item {
         }
     ]
 
+    // ---- key-backed cards: unmatched USB + the audio-in pair ---------------
+    // Assembled from Topology's published lists; a record exists exactly
+    // while its key exists. `live` marks key-backed presence (no node
+    // folding), `gen` carries the source record, `rows` feeds the popover.
+    readonly property var hotDevs: buildHotDevs(Topology.unmatchedUsb, Topology.audioInputs)
+    // _audioMatch id -> the card that input earns. Only inputs a token
+    // claimed get a card; the rest of the source list stays raw data.
+    readonly property var audioMeta: ({
+        "pw_src_scarlett": { label: "SCARLETT MIC1", sub: "focusrite 2i2 · input 1" },
+        "pw_src_mke600": { label: "MKE600 VOICE", sub: "sennheiser · voice chain" }
+    })
+    function buildHotDevs(un, ai) {
+        var out = [];
+        for (var i = 0; i < un.length; i++) {
+            var e = un[i];
+            var rows = [{ k: "usb", v: e.name }, { k: "vid:pid", v: e.vidpid }];
+            if (!isU(e.batt))
+                rows.push({ k: "battery", v: Math.round(Number(e.batt)) + "%" });
+            rows.push({ k: "key", v: "dev_usb_" + e.vidpid + "_name" });
+            out.push({
+                id: "usb_" + e.vidpid, kind: "usbplug", label: e.name,
+                sub: e.vidpid + " · usb", nodeIds: [], live: true, gen: e, rows: rows
+            });
+        }
+        for (var j = 0; j < ai.length; j++) {
+            var a = ai[j];
+            var meta = audioMeta[a.match];
+            if (meta === undefined)
+                continue;
+            var arows = [{ k: "node", v: a.src }];
+            if (a.name !== "")
+                arows.push({ k: "desc", v: a.name });
+            if (!isU(a.vol))
+                arows.push({ k: "vol", v: Math.round(Number(a.vol)) + "%" });
+            out.push({
+                id: "in_" + a.match, kind: "mic", label: meta.label,
+                sub: meta.sub, nodeIds: [], live: true, gen: a, rows: arows
+            });
+        }
+        return out;
+    }
+    // The single model the grid renders: curated seven, then whatever the
+    // bus and the PipeWire source list currently claim.
+    readonly property var cards: root.devs.concat(hotDevs)
+
     function devById(id) {
-        for (var i = 0; i < devs.length; i++)
-            if (devs[i].id === id)
-                return devs[i];
+        var cs = root.cards;
+        for (var i = 0; i < cs.length; i++)
+            if (cs[i].id === id)
+                return cs[i];
         return null;
     }
 
     // "up" = any folded node reports a live state; "unknown" = collector has
     // not enumerated it (hot-removable leaves start there); "down" = nodes
-    // answered but nothing is live.
+    // answered but nothing is live. Key-backed cards (`live`) carry no nodes:
+    // the key's existence is the presence datum, so they are always "up".
     function devState(d) {
         if (!Topology.ready)
             return "unknown";       // scaffold not built yet — honest unknown
+        if (d.live === true)
+            return "up";
         var sawLive = false, sawUnk = false, sawNode = false;
         for (var i = 0; i < d.nodeIds.length; i++) {
             var n = node(d.nodeIds[i]);
@@ -218,6 +275,16 @@ Item {
 
     // ---- per-card one-line telemetry overlay ------------------------------
     function tele(d) {
+        // key-backed cards read straight off their record: battery only
+        // when the _batt key exists, volume only from the source's _vol
+        if (d.kind === "usbplug") {
+            var ub = d.gen.batt;
+            return joinParts([["USB", true], ["BAT " + Math.round(Number(ub)) + "%", !isU(ub)]]);
+        }
+        if (d.kind === "mic") {
+            var uv = d.gen.vol;
+            return joinParts([["VOL " + Math.round(Number(uv)) + "%", !isU(uv)]]);
+        }
         switch (d.id) {
         case "g502": {
             var b = firstKnown(extra(node("input_mouse"), "batt_pct"),
@@ -476,6 +543,72 @@ Item {
             ctx.stroke();
             break;
         }
+        case "usbplug": {
+            // USB trident: plug circle, two pronged forks, arrow at the
+            // host end — the family mark for a device with no silhouette
+            var pT = cy - u * 0.30, pB = cy + u * 0.32;
+            var fY = pT + u * 0.15;
+            ctx.beginPath();
+            ctx.moveTo(cx, pT + u * 0.06);
+            ctx.lineTo(cx, pB - u * 0.03);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(cx, pT, u * 0.06, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - u * 0.03);
+            ctx.lineTo(cx - u * 0.20, fY);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + u * 0.05);
+            ctx.lineTo(cx + u * 0.20, fY + u * 0.11);
+            ctx.stroke();
+            // prong ends: square left, circle right (the two shapes the
+            // charge lines carry)
+            ctx.fillRect(cx - u * 0.245, fY - u * 0.045, u * 0.09, u * 0.09);
+            ctx.beginPath();
+            ctx.arc(cx + u * 0.20, fY + u * 0.165, u * 0.045, 0, Math.PI * 2);
+            ctx.fill();
+            // host arrow
+            ctx.beginPath();
+            ctx.moveTo(cx - u * 0.075, pB - u * 0.11);
+            ctx.lineTo(cx + u * 0.075, pB - u * 0.11);
+            ctx.lineTo(cx, pB + u * 0.02);
+            ctx.closePath();
+            ctx.fill();
+            break;
+        }
+        case "mic": {
+            // capture input: capsule with grille ribs, tapered body,
+            // stand stub
+            var mR = u * 0.16, mcy = cy - u * 0.17;
+            var baseY = cy + u * 0.30;
+            ctx.beginPath();
+            ctx.arc(cx, mcy, mR, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.strokeStyle = dim;
+            ctx.lineWidth = 1.2;
+            for (var gr = -1; gr <= 1; gr++) {
+                ctx.beginPath();
+                ctx.moveTo(cx + gr * mR * 0.42, mcy - mR * 0.64);
+                ctx.lineTo(cx + gr * mR * 0.42, mcy + mR * 0.64);
+                ctx.stroke();
+            }
+            ctx.strokeStyle = ink;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx - mR * 0.62, mcy + mR * 0.78);
+            ctx.lineTo(cx - mR * 0.30, baseY);
+            ctx.lineTo(cx + mR * 0.30, baseY);
+            ctx.lineTo(cx + mR * 0.62, mcy + mR * 0.78);
+            ctx.stroke();
+            ctx.strokeStyle = dim;
+            ctx.beginPath();
+            ctx.moveTo(cx, baseY);
+            ctx.lineTo(cx, baseY + u * 0.10);
+            ctx.stroke();
+            break;
+        }
         }
         ctx.restore();
     }
@@ -490,6 +623,12 @@ Item {
         var d = devById(selDev);
         if (d === null)
             return out;
+        if (d.rows !== undefined) {     // key-backed cards carry their own table
+            out.push({ k: d.sub, v: d.label, head: true });
+            for (var ri = 0; ri < d.rows.length; ri++)
+                out.push(d.rows[ri]);
+            return out;
+        }
         for (var i = 0; i < d.nodeIds.length; i++) {
             var id = d.nodeIds[i];
             var n = node(id);
@@ -542,18 +681,22 @@ Item {
 
     // ============================================================== layout
     // Card geometry, one place: the grid is a fixed two-up flow whose row
-    // count comes from the model (the old hardcoded /4 only happened to be
-    // right for seven devices), and every card derives its bands from these
-    // numbers so the pictogram, the telemetry chip and the head always share
-    // one vertical rhythm. No head/foot band wraps the grid — the tab strip
-    // above already names the tab, and a second "PERIPHERALS" header under
-    // an "DEVICES" chip is exactly the kind of leftover this pass removes.
+    // count comes from the whole model — curated seven plus every key-backed
+    // card — and every card derives its bands from these numbers so the
+    // pictogram, the telemetry chip and the head always share one vertical
+    // rhythm. natHeight is what the host pane sizes to; when the host must
+    // go smaller, cardH compresses toward cardMinH before anything clips.
+    // No head/foot band wraps the grid: the bay is the pane's identity.
     readonly property int colW: 12          // card content inset
     readonly property int headH: 22         // label + sub block
     readonly property int chipH: 18         // telemetry pill
     readonly property int rowGap: 10        // gap between card rows
-    readonly property int gridRows: Math.max(1, Math.ceil(root.devs.length / 2))
-    readonly property int cardH: Math.max(132, Math.floor((root.height - 24 - (root.gridRows - 1) * root.rowGap) / root.gridRows))
+    readonly property int gridRows: Math.max(1, Math.ceil(root.cards.length / 2))
+    readonly property int cardNomH: 132     // nominal card height
+    readonly property int cardMinH: 118     // compress floor before the bands collide
+    // 2 + 2*colW = body margins + the GlassPane edge per side
+    readonly property int natHeight: 2 * root.colW + 2 + root.gridRows * root.cardNomH + (root.gridRows - 1) * root.rowGap
+    readonly property int cardH: Math.max(root.cardMinH, Math.floor((root.height - 2 * root.colW - (root.gridRows - 1) * root.rowGap) / root.gridRows))
 
     Item {
         id: body
@@ -566,7 +709,7 @@ Item {
             spacing: root.rowGap
 
             Repeater {
-                model: root.devs
+                model: root.cards
                 delegate: Rectangle {
                     id: card
                     required property int index
@@ -574,7 +717,7 @@ Item {
                     readonly property var dev: card.modelData
                     readonly property bool sel: root.selDev === card.dev.id
                     // an odd tail card spans the row so the grid has no hole
-                    width: (card.index === root.devs.length - 1 && root.devs.length % 2 === 1) ? cardFlow.width : Math.floor((cardFlow.width - cardFlow.spacing) / 2)
+                    width: (card.index === root.cards.length - 1 && root.cards.length % 2 === 1) ? cardFlow.width : Math.floor((cardFlow.width - cardFlow.spacing) / 2)
                     height: root.cardH
                     radius: 8
                     clip: true
