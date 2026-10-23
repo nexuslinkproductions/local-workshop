@@ -208,6 +208,35 @@ def collect_omarchy(led):
         for r in j.get("recentDays") or []:
             if isinstance(r, dict) and r.get("date"):
                 led.snap(prov, str(r["date"]), msgs=r.get("messageCount"))
+    merge_gauge_contract(led)
+
+
+GAUGE_PROVIDERS = (("claude", "claude"), ("devin", "devin"), ("opencode-go", "opencode-go"))
+
+
+def merge_gauge_contract(led):
+    """Limits from the gauges collector (gauges.py), per provider, when it has an answer.
+
+    Omarchy's record keeps the last good numbers forever once the sign-in lapses.
+    An error from the collector replaces them with nothing; meta.gauge carries the
+    state, age (fetchedAt + ttl) and reason, so the HUD can show error or stale.
+    Contract values are percent (limit 100); ledger limits are fractions 0..1.
+    """
+    base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "gauges"
+    for name, pid in GAUGE_PROVIDERS:
+        try:
+            g = json.loads((base / f"{name}.json").read_text())
+        except (OSError, ValueError):
+            continue
+        m = led.meta.setdefault(pid, {})
+        m["gauge"] = {"state": g.get("state"), "fetchedAt": g.get("fetchedAt"),
+                      "ttl": g.get("ttl"), "error": g.get("error")}
+        if g.get("state") == "error":
+            m["limits"] = []
+        else:
+            m["limits"] = [{"label": w["label"], "percent": w["value"] / 100, "resetsAt": w.get("resetsAt")}
+                           for w in g.get("windows") or []
+                           if w.get("unit") == "%" and w.get("value") is not None]
 
 
 def _ro_db(path):
@@ -738,7 +767,7 @@ def build(led, now):
         m = {"label": entry["label"], "kind": entry["kind"]}
         for k in ("ready", "tier", "status", "today_tokens", "today_prompts",
                   "today_sessions", "limits", "limits_as_of", "today_by_model",
-                  "sessions_db"):
+                  "sessions_db", "gauge"):
             if meta.get(k) not in (None, "", [], {}):
                 m[k] = meta[k]
         if meta.get("upstreams"):
