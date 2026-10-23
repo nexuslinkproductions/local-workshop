@@ -16,6 +16,14 @@ import "feeds"
 Item {
     id: root
 
+    // opaque base: the deck scales to fit, so on a non 16:9 host the letterbox
+    // bands must still show the field (v5 kit Tokens.field) and never the
+    // wallpaper behind the full-bleed window. First child, so it is behind all.
+    Rectangle {
+        anchors.fill: parent
+        color: Tokens.field
+    }
+
     // ---- same input contract as DeckCommand --------------------------------
     property var stats: ({})
     property var tokData: ({})
@@ -30,7 +38,8 @@ Item {
     readonly property real fit: Math.min(root.width / 2560, root.height / 1440)
 
     Component.onCompleted: {
-        console.log("v5 deck loaded, host " + root.width + "x" + root.height + ", scale " + root.fit.toFixed(3))
+        console.log("v5 deck loaded, host " + root.width + "x" + root.height + ", scale " + root.fit.toFixed(3)
+                    + ", origin " + deckView.x + "," + deckView.y)
         root.syncHostKeys()
     }
 

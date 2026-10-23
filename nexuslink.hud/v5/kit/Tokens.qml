@@ -55,6 +55,9 @@ QtObject {
     readonly property var spacing: [8, 13, 21, 34, 55, 89, 144, 233, 377]
     readonly property int safeMargin: 96        // s1: nothing closer than 96 px to an edge
     readonly property int gutter: 34
+    // omarchy-bar exclusive zone in px: the background runs under it, widget
+    // content must stay below it (clock top is y=61).
+    readonly property int barReserve: 26
 
     // ---- knot ------------------------------------------------------------
     // Centred on the upper golden line, 37.5 percent of the screen height.

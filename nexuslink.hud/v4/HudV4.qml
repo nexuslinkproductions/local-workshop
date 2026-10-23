@@ -10,9 +10,17 @@ import "GpuCards.js" as GpuCards
 
 // HudV4.qml — lane H integration root for the NexusHud.V4 module.
 //
-// One PanelWindow per Hyprland output on the wlr BACKGROUND layer with
-// ExclusionMode.Auto and no keyboard focus (the chrome-cybercore HUD is a
-// read-only desktop surface; the Navigator overlay owns focus when open).
+// One PanelWindow per Hyprland output on the wlr BACKGROUND layer, no
+// keyboard focus (the chrome-cybercore HUD is a read-only desktop surface;
+// the Navigator overlay owns focus when open).
+//
+// v5 BLEED: with ~/.config/nexuslink/hud-v5 present every window switches to
+// ExclusionMode.Ignore, so its surface is the whole output (y=0, full height,
+// under the 26 px bar exclusive zone) and an opaque Tokens.field base sits
+// under every deck. On the command window the deck slab IS that surface
+// (0,0 field size, no layout map, no animation): the HUD is the background
+// instead of a slab floating over it. Without the flag the window keeps
+// ExclusionMode.Auto and the movable v4 slab, unchanged.
 //
 // Role map (M1 kit — docs/m1): roles follow display identity (EDID model /
 // serial via ScreenRoles.js), never the connector name — connector names can
@@ -472,19 +480,24 @@ Item {
     function ipcMove(pid, fx, fy) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
+        if (w.v5Owns) return "v5 deck is fixed"
         return w.ipcMove(w.roleIds[0], Number(fx), Number(fy)) ? "ok" : "panel " + pid + " is hidden"
     }
     function ipcResize(pid, fw) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
+        if (w.v5Owns) return "v5 deck is fixed"
         return w.ipcResize(w.roleIds[0], Number(fw)) ? "ok" : "panel " + pid + " is hidden"
     }
     function ipcShowHide(pid, hidden) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
+        if (w.v5Owns) return "v5 deck is fixed"
         return w.setHidden(w.roleIds[0], hidden) ? "ok" : "no panel " + pid
     }
     function ipcLayout(name) {
+        var cw = commandWindow()
+        if (cw !== null && cw.v5Owns) return "v5 deck is fixed"
         var ins = winVariants.instances, applied = false
         for (var i = 0; i < ins.length; i++)
             if (ins[i].applyPreset(name)) applied = true
@@ -617,13 +630,21 @@ Item {
             readonly property bool isHardware: role === "hardware"
             readonly property string deckId: isCommand ? "hub" : isHardware ? "board" : "bench"
             readonly property var roleIds: [deckId]
+            // v5 bleed: the flag makes every window full-output; only the
+            // command window OWNS that surface (its deck IS the window, not a
+            // movable slab), so its geometry and gestures are fixed.
+            readonly property bool v5Bleed: hud.v5Enabled
+            readonly property bool v5Owns: isCommand && hud.v5Enabled
             // the command window's DeckV5 instance, or null (root IPC entry)
             readonly property var v5Deck: (isCommand && hud.v5Enabled && deckLoader.item)
                                            ? deckLoader.item.deckItem : null
 
             anchors { top: true; bottom: true; left: true; right: true }
             color: "transparent"
-            exclusionMode: ExclusionMode.Auto
+            // Auto reserves the bar's exclusive zone (the window lands at y=26,
+            // h=1414 on DP-2); Ignore makes the surface the whole output. Only
+            // the v5 flag turns it on, so v4 geometry is unchanged.
+            exclusionMode: win.v5Bleed ? ExclusionMode.Ignore : ExclusionMode.Auto
             WlrLayershell.namespace: "nexuslink-hud"
             WlrLayershell.layer: WlrLayer.Background
             // Keyboard: None by default. The v5 Find pill needs the keyboard
@@ -681,6 +702,28 @@ Item {
 
             function snap(v) { return Math.round(v / grid) * grid }
             function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)) }
+            // v5 geometry evidence: one line per call, at load and on every
+            // window resize (the compositor owns the size). window height equal
+            // to the screen height proves the exclusive zone was ignored;
+            // with ExclusionMode.Auto it would be 26 px shorter.
+            function logGeometry(why) {
+                if (!v5Bleed) return
+                var md = win.modelData
+                var sw = Math.round(Number(md.width)), sh = Math.round(Number(md.height))
+                var ww = Math.round(win.width), wh = Math.round(win.height)
+                console.log("nexuslink-hud geometry: output=" + String(md.name)
+                    + " role=" + win.role
+                    + " screen=" + Number(md.x) + "," + Number(md.y) + "," + sw + "x" + sh
+                    + " window=" + ww + "x" + wh
+                    + " exclusion=" + (v5Bleed ? "Ignore" : "Auto")
+                    + " fullBleed=" + (ww === sw && wh === sh)
+                    + " v5=" + hud.v5Enabled
+                    + " deck=" + Math.round(deck.x) + "," + Math.round(deck.y) + ","
+                    + Math.round(deck.width) + "x" + Math.round(deck.height)
+                    + " why=" + why)
+            }
+            onWidthChanged: logGeometry("width")
+            onHeightChanged: logGeometry("height")
             function defaultRects() {
                 // centred near-full slab: reactor/knot sit on the screen
                 // centre by construction while the margin ring stays
@@ -734,6 +777,7 @@ Item {
             }
 
             function commitRect(pid, x, y, w, h) {
+                if (v5Owns) return          // every move/resize path ends here
                 var W = Math.max(1, field.width), H = Math.max(1, field.height)
                 var e = layoutMap[pid]
                 var ww = (w !== undefined && w > 0) ? w : (e ? e.fw * W : deck.width)
@@ -771,6 +815,7 @@ Item {
                 }
             }
             function dragPress(src, item, pid, mx, my) {
+                if (v5Owns) return          // the v5 deck is the background, not a slab
                 gestureStale()
                 if (draggingId !== "" || sizingId !== "") return
                 dragSrc = src; dragItem = item; dragPendingId = pid
@@ -811,6 +856,7 @@ Item {
 
             // ---- bottom-right edge-resize lifecycle ----
             function sizePress(src, item, pid, mx, my) {
+                if (v5Owns) return          // no resize grip on the v5 deck
                 gestureStale()
                 if (draggingId !== "" || sizingId !== "") return
                 sizeSrc = src; sizeItem = item; sizingId = pid
@@ -846,6 +892,8 @@ Item {
                 return true
             }
             function setHidden(pid, hid) {
+                // hiding the v5 deck would leave a full-bleed empty window
+                if (v5Owns) return false
                 if (itemFor(pid) === null) return false
                 var m = {}
                 for (var k in hiddenMap) m[k] = hiddenMap[k]
@@ -855,6 +903,7 @@ Item {
                 return true
             }
             function applyPreset(name) {
+                if (v5Owns) return false   // the v5 deck has no presets
                 var n = String(name || "").toLowerCase()
                 if (n === "reset") n = "default"
                 var e = null
@@ -874,12 +923,14 @@ Item {
                 return true
             }
             function ipcMove(pid, fx, fy) {
+                if (v5Owns) return false
                 if (itemFor(pid) === null || isHidden(pid)) return false
                 commitRect(pid, Number(fx) * field.width, Number(fy) * field.height)
                 persist()
                 return true
             }
             function ipcResize(pid, fw) {
+                if (v5Owns) return false
                 var it = itemFor(pid)
                 if (it === null || isHidden(pid)) return false
                 var r = rectOf(pid)
@@ -1063,12 +1114,22 @@ Item {
             Component.onCompleted: {
                 win.delegatesReady = true
                 win.ensureLayout()
+                win.logGeometry("completed")
             }
 
             // ------------------------------------------------------------ field
             Item {
                 id: field
                 anchors.fill: parent
+
+                // v5 opaque base, same value as v5 kit Tokens.field: a
+                // full-bleed window must never show wallpaper (or a transparent
+                // clear) through a gap. First child, so every deck draws on it.
+                Rectangle {
+                    anchors.fill: parent
+                    color: "#06080a"
+                    visible: win.v5Bleed
+                }
 
                 // snapped drop preview while a move gesture is live
                 Rectangle {
@@ -1090,7 +1151,9 @@ Item {
                     id: deck
                     readonly property bool dragging: win.draggingId === win.deckId
                     readonly property bool resizing: win.sizingId === win.deckId
-                    readonly property bool shown: !win.isHidden(win.deckId)
+                    // the v5 deck cannot be hidden (a stale persisted hidden list
+                    // would otherwise leave an empty full-bleed window)
+                    readonly property bool shown: win.v5Owns || !win.isHidden(win.deckId)
                     // mask membership for the WHOLE gesture, hide mid-drag included
                     readonly property bool masked: shown || dragging || resizing
                     readonly property real minW: Math.min(420, field.width * 0.3)
@@ -1101,21 +1164,25 @@ Item {
                     opacity: dragging ? 0.94 : 1.0
                     z: (dragging || resizing) ? 60 : 0
 
-                    Binding on x { when: win.layoutReady && !deck.dragging
-                                   value: win.pxOfX(win.deckId) }
-                    Binding on y { when: win.layoutReady && !deck.dragging
-                                   value: win.pxOfY(win.deckId) }
-                    Binding on width { when: win.layoutReady && !deck.resizing
-                                       value: win.pwOf(win.deckId) }
-                    Binding on height { when: win.layoutReady && !deck.resizing
-                                        value: win.phOf(win.deckId) }
-                    Behavior on x { enabled: win.animateLayout && !deck.dragging
+                    // v5 command window: the deck IS the field. v5Owns wins
+                    // unconditionally, so neither the persisted layout map nor
+                    // the layoutReady gate can hold it back or move it.
+                    Binding on x { when: win.v5Owns || (win.layoutReady && !deck.dragging)
+                                   value: win.v5Owns ? 0 : win.pxOfX(win.deckId) }
+                    Binding on y { when: win.v5Owns || (win.layoutReady && !deck.dragging)
+                                   value: win.v5Owns ? 0 : win.pxOfY(win.deckId) }
+                    Binding on width { when: win.v5Owns || (win.layoutReady && !deck.resizing)
+                                       value: win.v5Owns ? field.width : win.pwOf(win.deckId) }
+                    Binding on height { when: win.v5Owns || (win.layoutReady && !deck.resizing)
+                                        value: win.v5Owns ? field.height : win.phOf(win.deckId) }
+                    // no easing on the fixed v5 deck; the v4 slab keeps it
+                    Behavior on x { enabled: !win.v5Owns && win.animateLayout && !deck.dragging
                                     NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on y { enabled: win.animateLayout && !deck.dragging
+                    Behavior on y { enabled: !win.v5Owns && win.animateLayout && !deck.dragging
                                     NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on width { enabled: win.animateLayout && !deck.resizing
+                    Behavior on width { enabled: !win.v5Owns && win.animateLayout && !deck.resizing
                                         NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on height { enabled: win.animateLayout && !deck.resizing
+                    Behavior on height { enabled: !win.v5Owns && win.animateLayout && !deck.resizing
                                          NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
                     // drag pad — lowest child, so a press anywhere the screen

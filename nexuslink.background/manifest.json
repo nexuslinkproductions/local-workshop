@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "nexuslink.background",
+  "name": "NEXUS Background",
+  "version": "1.0.0",
+  "author": "nexuslink",
+  "description": "Stock Omarchy background renderer that draws no wallpaper on outputs owned by the NEXUS HUD",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Background.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.background"
+  }
+}
