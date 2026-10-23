@@ -43,6 +43,9 @@
 #include <QSGRendererInterface>
 #include <QSet>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QThread>
+#include <sys/resource.h>
 #include <QUrl>
 #include <QVulkanInstance>
 
@@ -296,6 +299,44 @@ QImage grabViaRhi(QObject *root, int width, int height, QString *api, int *frame
     }
     *framesOut = frames;
 
+    // Optional idle benchmark (V5_BENCH_SECONDS, V5_BENCH_HZ): keep rendering at the given
+    // rate with the event loop running, so the deck's own Timer, bindings and animations
+    // advance, then print the CPU time this process spent as a share of one core. The
+    // GPU executes asynchronously; this measures the CPU side of the GL path only.
+    const int benchSecs = qEnvironmentVariableIntValue("V5_BENCH_SECONDS");
+    if (benchSecs > 0) {
+        int hz = qEnvironmentVariableIntValue("V5_BENCH_HZ");
+        if (hz <= 0)
+            hz = 24;
+        struct rusage r0, r1;
+        getrusage(RUSAGE_SELF, &r0);
+        QElapsedTimer wall;
+        wall.start();
+        qint64 next = 0;
+        int n = 0;
+        while (wall.elapsed() < qint64(benchSecs) * 1000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+            if (wall.elapsed() >= next) {
+                control.beginFrame();
+                control.polishItems();
+                control.sync();
+                control.render();
+                control.endFrame();
+                ++n;
+                next += 1000 / hz;
+            } else {
+                QThread::msleep(2);
+            }
+        }
+        getrusage(RUSAGE_SELF, &r1);
+        const double cpuS = double(r1.ru_utime.tv_sec - r0.ru_utime.tv_sec)
+            + double(r1.ru_utime.tv_usec - r0.ru_utime.tv_usec) / 1e6
+            + double(r1.ru_stime.tv_sec - r0.ru_stime.tv_sec)
+            + double(r1.ru_stime.tv_usec - r0.ru_stime.tv_usec) / 1e6;
+        printf("BENCH frames=%d seconds=%.1f hz=%d cpu=%.2f%% of one core\n", n,
+               wall.elapsed() / 1000.0, hz, 100.0 * cpuS / (wall.elapsed() / 1000.0));
+        fflush(stdout);
+    }
     QImage image;
 
     // Readback: hand the copy to the render queue of a short offscreen frame.

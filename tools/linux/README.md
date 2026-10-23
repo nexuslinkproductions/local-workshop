@@ -35,7 +35,16 @@ vertex and the fragment shader (qt_Matrix, qt_Opacity, then the properties).
 
 Environment: `V5_ALLOW_FLAT=1`, `V5_RHI=opengl|vulkan`, `V5_NO_FLIP=1`,
 `V5_TIMEOUT` seconds (default 120), `V5_GPU` (Vulkan ICD), `V5_BUILD_DIR`,
-`V5_HARNESS`.
+`V5_HARNESS`, `V5_BENCH_SECONDS` and `V5_BENCH_HZ`.
+
+Idle benchmark: with `V5_BENCH_SECONDS=60 V5_BENCH_HZ=24` the harness keeps
+rendering the scene at that rate with the event loop running (the scene's own
+Timer, bindings and animations advance) and prints
+`BENCH frames=N seconds=S hz=H cpu=X% of one core`. It measures the CPU side of
+the GL path (scene graph sync, render, driver submission) in this process; the
+GPU runs asynchronously and the compositor is not part of it. Use a scene with
+`autoTick: true`. Measured for the v5 deck at 2560x1440: 1.40 percent of one
+core at 24 Hz over 60 s.
 
 ## cpu-sample.sh
 
