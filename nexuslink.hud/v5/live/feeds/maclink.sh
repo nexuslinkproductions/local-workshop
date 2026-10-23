@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Mac link sample: one JSON line on stdout, link.json shape.
 # Bounded: tailscale ping 2s, ssh 3s connect (cached 10s), always exit 0.
+# Read-only on the Mac: pmset, sysctl, and `hermes kanban list --json` (no writes).
 set -u
 
 CACHE_DIR="${XDG_RUNTIME_DIR:-/tmp}/nexuslink-v5"
@@ -9,6 +10,8 @@ mkdir -p "$CACHE_DIR" 2>/dev/null
 RING="$CACHE_DIR/maclink-rtt"
 MACJSON="$CACHE_DIR/maclink-mac.json"
 LOCK="$CACHE_DIR/maclink-ssh.lock"
+KAN="$CACHE_DIR/maclink-kanban.json"
+KLOCK="$CACHE_DIR/maclink-kanban.lock"
 NOW=$(date +%s)
 
 # ---- tailnet peer name for the Mac (never print keys)
@@ -26,10 +29,10 @@ if [ -n "${PEER:-}" ]; then
     [ -n "$RTT" ] && TUNNEL="active"
 fi
 
-# ---- ring buffer, last 24 samples
+# ---- ring buffer, last 60 samples (one per 12 s poll, about 12 minutes)
 if [ -n "$RTT" ]; then
     printf '%s %s\n' "$NOW" "$RTT" >> "$RING" 2>/dev/null
-    tail -n 24 "$RING" > "$RING.tmp" 2>/dev/null && mv "$RING.tmp" "$RING"
+    tail -n 60 "$RING" > "$RING.tmp" 2>/dev/null && mv "$RING.tmp" "$RING"
 fi
 SAMPLES="[]"; LAST="null"; MED="null"; MIN="null"; MAX="null"
 if [ -s "$RING" ]; then
@@ -44,17 +47,17 @@ if [ -s "$RING" ]; then
         }' last="$(tail -1 "$RING" | awk '{print $2}')" "$RING")
 fi
 
-# ---- ssh once per 10s, flock so parallel feeds cannot stack
+# ---- battery, load, thermal: ssh once per 10s, flock so parallel feeds cannot stack
 fresh() { [ -f "$MACJSON" ] && [ $(( $(date +%s) - $(stat -c %Y "$MACJSON" 2>/dev/null || echo 0) )) -lt 10 ]; }
 if ! fresh; then
     (
         flock -w 5 9 || exit 0
         fresh && exit 0
         RAW=$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=3 mac \
-            'pmset -g batt; sysctl -n vm.loadavg; sysctl -n kern.boottime' 2>/dev/null) || exit 0
+            'pmset -g batt; sysctl -n vm.loadavg; sysctl -n kern.boottime; pmset -g therm' 2>/dev/null) || exit 0
         [ -n "$RAW" ] || exit 0
         printf '%s\n' "$RAW" | awk '
-            BEGIN { batt="null"; state="null"; rem="null"; up="null"; loads="[null,null,null]" }
+            BEGIN { batt="null"; state="null"; rem="null"; up="null"; loads="[null,null,null]"; th="null" }
             /%/ {
                 if (match($0, /[0-9]+%/)) { batt=substr($0, RSTART, RLENGTH-1) }
                 if (match($0, /%; *[A-Za-z ]+/)) {
@@ -69,12 +72,40 @@ if ! fresh; then
             /sec =/ {
                 if (match($0, /sec = [0-9]+/)) { s=substr($0, RSTART+6, RLENGTH-6); if (s+0>0) up=int((systime()-s)/60) }
             }
-            END { printf "{\"batt\":%s,\"state\":%s,\"rem\":%s,\"load\":%s,\"up_min\":%s}\n", batt, state, rem, loads, (up=="null"?"null":up) }
+            /No thermal warning level/ { th="\"nominal\"" }
+            /CPU_Speed_Limit/ {
+                if (match($0, /= *[0-9]+/)) {
+                    v=substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", v)
+                    th=(v+0 < 100) ? "\"throttled\"" : "\"nominal\""
+                }
+            }
+            END { printf "{\"batt\":%s,\"state\":%s,\"rem\":%s,\"load\":%s,\"up_min\":%s,\"thermal\":%s}\n", batt, state, rem, loads, (up=="null"?"null":up), th }
         ' > "$MACJSON.tmp" 2>/dev/null && mv "$MACJSON.tmp" "$MACJSON"
     ) 9>"$LOCK"
 fi
 MAC=$(cat "$MACJSON" 2>/dev/null)
-case "$MAC" in \{*) : ;; *) MAC='{"batt":null,"state":null,"rem":null,"load":[null,null,null],"up_min":null}' ;; esac
+case "$MAC" in \{*) : ;; *) MAC='{"batt":null,"state":null,"rem":null,"load":[null,null,null],"up_min":null,"thermal":null}' ;; esac
+
+# ---- Mac Kanban queue counts (running, ready, blocked): own 30 s cache, one ssh per 30 s.
+# The Mac counts the top-level task status keys (4-space indent); only counts cross the wire.
+kfresh() { [ -f "$KAN" ] && [ $(( $(date +%s) - $(stat -c %Y "$KAN" 2>/dev/null || echo 0) )) -lt 30 ]; }
+if ! kfresh; then
+    (
+        flock -w 5 8 || exit 0
+        kfresh && exit 0
+        RAW=$(timeout 12 ssh -o BatchMode=yes -o ConnectTimeout=3 mac \
+            'H="$HOME/.local/bin/hermes"; [ -x "$H" ] || H="$HOME/.hermes/hermes-agent/.hermes/bin/hermes"; env -u HERMES_DELEGATED_CHILD_CONTEXT -u HERMES_KANBAN_TASK -u HERMES_KANBAN_RUN_ID -u HERMES_KANBAN_CLAIM_LOCK "$H" kanban list --json 2>/dev/null | sed -n "s/^    .status.: *.\([a-z_]*\).*/\1/p" | sort | uniq -c' 2>/dev/null)
+        [ -n "$RAW" ] || exit 0
+        printf '%s\n' "$RAW" | awk '
+            { c[$2]=$1 }
+            END { printf "{\"running\":%d,\"ready\":%d,\"blocked\":%d}\n", c["running"]+0, c["ready"]+0, c["blocked"]+0 }
+        ' > "$KAN.tmp" 2>/dev/null && mv "$KAN.tmp" "$KAN"
+    ) 8>"$KLOCK"
+fi
+KANJ=$(cat "$KAN" 2>/dev/null)
+case "$KANJ" in \{*) : ;; *) KANJ=null ;; esac
+MAC="${MAC%\}}"
+MAC="$MAC,\"kanban\":$KANJ}"
 
 printf '{"ts":%s,"ts_iso":"%s","route":"%s","tunnel":"%s","rtt_ms":{"last":%s,"median":%s,"min":%s,"max":%s,"samples":%s},"pulse_period_s":2.932,"mac":%s}\n' \
     "$NOW" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ROUTE" "$TUNNEL" \

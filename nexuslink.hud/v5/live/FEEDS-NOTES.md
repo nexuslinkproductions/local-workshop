@@ -7,10 +7,15 @@ sets active true. Outputs are read-only properties shaped as listed below.
 - Source: `tailscale status` picks the macOS peer (`marcels-macbook-pro`), then
   `tailscale ping --c 1 --timeout 2s <peer>` for RTT and route. Mac body from ONE
   `ssh -o BatchMode=yes -o ConnectTimeout=3 mac 'pmset -g batt; sysctl -n vm.loadavg;
-  sysctl -n kern.boottime'`, cached 10 s in `${XDG_RUNTIME_DIR:-/tmp}/nexuslink-v5/`.
+  sysctl -n kern.boottime; pmset -g therm'`, cached 10 s in `${XDG_RUNTIME_DIR:-/tmp}/nexuslink-v5/`.
+  `mac.thermal` is "nominal" or "throttled" (CPU_Speed_Limit below 100), null when unread.
+- Kanban: second ssh, cached 30 s in `<cache>/maclink-kanban.json`:
+  `hermes kanban list --json` on the Mac, counted by top-level status on the Mac (sed),
+  so only `{"running","ready","blocked"}` crosses the wire. Read-only. `mac.kanban` is null
+  when the board is unreadable.
 - Cache guard: mtime check plus `flock -w 5` on maclink-ssh.lock; `timeout 12` on ssh.
-- Ring: last 24 RTT samples in `<cache>/maclink-rtt` (`epoch rtt`); median/min/max/last
-  computed per run. tunnel down + null RTT when ping fails; mac fields null when ssh fails.
+- Ring: last 60 RTT samples in `<cache>/maclink-rtt` (`epoch rtt`, one per 12 s poll);
+  median/min/max/last computed per run. tunnel down + null RTT when ping fails; mac fields null when ssh fails.
 - Interval: deck-visible Timer 12 s, `triggeredOnStart`, skipped while a run is in flight.
 - Cost: ~0.1 s CPU per run, one ssh per 10 s, ping 2 s worst case. No new poller in QML.
 - Reuse: v4's `stats` map has no Mac link or battery keys, so this is the only source;

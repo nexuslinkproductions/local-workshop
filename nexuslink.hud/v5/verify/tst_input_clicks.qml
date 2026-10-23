@@ -88,6 +88,72 @@ TestCase {
         compare(macSpy.count, clicks + 1)
     }
 
+    // Fixture link (same shape as fixtures/link.json) with a fresh timestamp.
+    function freshLink(n, ageS) {
+        var s = []
+        for (var i = 0; i < n; i++)
+            s.push(4 + (i * 7) % 40)
+        s[5] = 92
+        return {
+            ts: Date.now() / 1000 - (ageS || 0),
+            route: "direct", tunnel: "active",
+            rtt_ms: { last: 5, median: 7.5, min: 4, max: 92, samples: s },
+            mac: { batt: 100, state: "charged", rem: null, load: [3.94, 4.45, 4.81],
+                   up_min: 13, thermal: "nominal",
+                   kanban: { running: 0, ready: 1, blocked: 15 } }
+        }
+    }
+
+    function test_04_mac_click_expands() {
+        deck.view = ""
+        deck.link = freshLink(60, 0)
+        wait(400)
+        var c = centre(deck.macWidget)
+        mouseClick(win.contentItem, c.x, c.y)
+        wait(500)
+        compare(deck.view, "mac")
+    }
+
+    function test_05_mac_view_shows_fresh_link() {
+        deck.view = ""
+        deck.link = freshLink(60, 0)
+        wait(400)
+        deck.view = "mac"
+        wait(500)
+        var p = deck.macPanelItem
+        verify(p !== null, "mac panel loaded")
+        compare(p.linkState, "fresh")
+        compare(p.shownSamples, 60)
+        compare(p.thermalText, "nominal")
+        compare(p.kanbanState, "ok")
+        verify(p.wordCount < 40, "under 40 words at rest, got " + p.wordCount)
+    }
+
+    function test_06_mac_view_stale_and_error() {
+        deck.view = ""
+        deck.link = freshLink(60, 60)
+        wait(400)
+        deck.view = "mac"
+        wait(500)
+        compare(deck.macPanelItem.linkState, "stale")
+        deck.view = ""
+        deck.link = null
+        wait(400)
+        deck.view = "mac"
+        wait(500)
+        compare(deck.macPanelItem.linkState, "error")
+        compare(deck.macPanelItem.heroText, "")
+    }
+
+    function test_07_mac_dismiss_click_closes() {
+        deck.link = freshLink(60, 0)
+        deck.view = "mac"
+        wait(500)
+        mouseClick(win.contentItem, 100, 1300)
+        wait(120)
+        compare(deck.view, "")
+    }
+
     SignalSpy {
         id: macSpy
         target: deck ? deck.macWidget : null

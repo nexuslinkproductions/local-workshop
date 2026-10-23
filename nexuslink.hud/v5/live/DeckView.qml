@@ -196,6 +196,7 @@ Item {
             shown: root.shown
             phase: 1.9
             link: root.link
+            onExpandRequested: root.view = "mac"
         }
 
         LocalWidget {
@@ -259,6 +260,7 @@ Item {
     // grow). The deck itself never reads them.
     readonly property Item crewWidget: crewW
     readonly property Item macWidget: macW
+    readonly property Item macPanelItem: macPanel.item
     readonly property Item localWidget: localW
     readonly property Item storageWidget: storageW
     readonly property Item launcherBand: launcherArc
@@ -337,6 +339,34 @@ Item {
         sourceComponent: Component {
             CrewExpanded {
                 crew: root.crew
+                onCloseRequested: root.view = ""
+            }
+        }
+    }
+
+    // MAC focus view: same in-place shell as the crew panel (scale 0.94 to 1,
+    // OutBack overshoot 1.22 is about 5.5 percent, return InOutQuad without overshoot).
+    Loader {
+        id: macPanel
+        x: 1280 - 550
+        y: 720 - 380
+        width: 1100
+        height: 760
+        active: root.view === "mac" || opacity > 0.01
+        opacity: root.view === "mac" ? 1 : 0
+        scale: root.view === "mac" ? 1 : 0.94
+        Behavior on opacity { NumberAnimation { duration: root.view === "mac" ? Motion.stageInMillis : Motion.stageOutMillis; easing.type: Easing.OutCubic } }
+        Behavior on scale {
+            NumberAnimation {
+                duration: root.view === "mac" ? Motion.expandMillis : Motion.returnMillis
+                easing.type: root.view === "mac" ? Easing.OutBack : Easing.InOutQuad
+                easing.overshoot: 1.22
+            }
+        }
+        sourceComponent: Component {
+            MacExpanded {
+                link: root.link
+                tick: root.tick
                 onCloseRequested: root.view = ""
             }
         }

@@ -8,20 +8,67 @@
     "last": 5,
     "min": 5,
     "max": 92,
-    "samples": [8, 7, 7, 11, 5, 92, 11, 6, 8, 7, 7, 7, 71, 8, 6, 5, 9, 9, 17, 62, 5, 8, 6, 5]
+    "samples": [
+      8,
+      7,
+      7,
+      11,
+      5,
+      92,
+      11,
+      6,
+      8,
+      7,
+      7,
+      7,
+      71,
+      8,
+      6,
+      5,
+      9,
+      9,
+      17,
+      62,
+      5,
+      8,
+      6,
+      5
+    ]
   },
   "pulse_period_s": 2.932,
   "mac": {
-    "load": [3.94, 4.45, 4.81],
+    "load": [
+      3.94,
+      4.45,
+      4.81
+    ],
     "batt": 100,
     "state": "charged",
     "rem": "0:00",
-    "up_min": 13
+    "up_min": 13,
+    "thermal": "nominal",
+    "kanban": {
+      "running": 0,
+      "ready": 1,
+      "blocked": 15
+    }
   },
   "peers": [
-    { "name": "MacBook Pro von test", "on": false },
-    { "name": "vm-small-AMS-1", "on": false },
-    { "name": "Marcel's MacBook Pro", "on": true },
-    { "name": "grokbot-vm", "on": false }
+    {
+      "name": "MacBook Pro von test",
+      "on": false
+    },
+    {
+      "name": "vm-small-AMS-1",
+      "on": false
+    },
+    {
+      "name": "Marcel's MacBook Pro",
+      "on": true
+    },
+    {
+      "name": "grokbot-vm",
+      "on": false
+    }
   ]
 }

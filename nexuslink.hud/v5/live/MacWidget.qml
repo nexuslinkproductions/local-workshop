@@ -24,6 +24,8 @@ WidgetBase {
     id: root
 
     property var link: null
+    // click opens the MAC focus view (DeckView onExpandRequested), like CREW
+    expandable: true
 
     // ---- data bindings (feed shape unchanged) ----------------------------
     readonly property var rtt: (root.link && root.link.rtt_ms) ? root.link.rtt_ms : null
