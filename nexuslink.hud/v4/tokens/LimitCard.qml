@@ -21,6 +21,9 @@ Item {
     property var lines: []            // up to 4 caption lines
     property string winlab: ""        // "7d window elapsed 52.7% calc"
     property var action: null         // {label, argv:[...]} | null
+    property string gstate: ""        // gauge contract: "" | fresh | stale | error
+    property string ageText: ""       // "10m old" | "stale 10m" | "" (older than one refresh)
+    property string errText: ""       // "error: <reason>" when gstate is error
 
     signal runAction(var argv)
 
@@ -63,7 +66,8 @@ Item {
                 id: tagTx
                 role: "tag"
                 text: root.stag
-                color: root.sev === "alert" ? FuiTokens.alert
+                color: root.gstate === "stale" ? FuiTokens.warn
+                     : root.sev === "alert" ? FuiTokens.alert
                      : root.sev === "warn" ? FuiTokens.warn
                      : root.sev === "ok" ? FuiTokens.acid : FuiTokens.dim
                 topPadding: 1; bottomPadding: 1; leftPadding: 4; rightPadding: 4
@@ -97,6 +101,7 @@ Item {
         sev: root.sev === "na" ? "na" : root.sev
         color: FuiTokens.ice
         win: root.win
+        opacity: root.gstate === "stale" ? 0.45 : 1
     }
 
     // the action button pins to the card bottom so it can never be cut;
@@ -119,6 +124,32 @@ Item {
                   bottomMargin: actBtn.visible ? 2 : 4 }
         spacing: 1
         clip: true
+        // gauge freshness: no number on error, age beside the body when older than one refresh
+        Tx {
+            id: errTx
+            visible: root.gstate === "error"
+            text: root.errText
+            width: bodyCol.width
+            wrapMode: Text.WordWrap
+            elide: Text.ElideNone
+            font.family: FuiTokens.sans
+            font.pixelSize: 16
+            font.letterSpacing: 0
+            font.capitalization: Font.MixedCase
+            tone: FuiTokens.alert
+        }
+        Tx {
+            id: ageTx
+            visible: root.gstate !== "error" && root.ageText !== ""
+            text: root.ageText
+            width: bodyCol.width
+            elide: Text.ElideRight
+            font.family: FuiTokens.sans
+            font.pixelSize: 16
+            font.letterSpacing: 0
+            font.capitalization: Font.MixedCase
+            tone: root.gstate === "stale" ? FuiTokens.warn : FuiTokens.faint
+        }
         Tx {
             role: "cap"
             text: root.statusLine
@@ -130,7 +161,8 @@ Item {
         Repeater {
             // status takes ~15px, winlab ~15 — fit whole caption lines only
             model: {
-                var room = bodyCol.height - 16 - (root.winlab !== "" ? 16 : 0);
+                var room = bodyCol.height - 16 - (root.winlab !== "" ? 16 : 0)
+                           - (ageTx.visible ? 22 : 0) - (errTx.visible ? errTx.implicitHeight : 0);
                 var n = Math.floor(room / 15);
                 return root.lines.slice(0, Math.max(0, Math.min(3, n)));
             }
