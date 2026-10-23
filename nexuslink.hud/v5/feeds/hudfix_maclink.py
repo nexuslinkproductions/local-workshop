@@ -40,6 +40,11 @@ Safety, in order of what matters most:
     very card is refused. A row whose ``worker_pid`` cell is not a number, or
     whose ``assignee`` is null or empty, is rejected by name before the host is
     touched: without those two cells the row cannot be tied to a worker at all.
+    Every cell read from ``tasks`` is coerced to ``str``, ``int``, ``float`` or
+    ``null`` before it enters a payload; a BLOB, a ``memoryview`` or any other
+    type (SQLite does not enforce its column types) becomes a placeholder that
+    names its type and size and never its contents, the row is refused with
+    ``kind: malformed``, and the answer is still one JSON document at exit 0.
     There is no pattern kill anywhere in this file.
   * ``restart-relay`` and ``restart-tunnel`` are the only actions that restart a
     shared service. Both refuse when the named unit or CLI is not present
@@ -255,6 +260,32 @@ def pid_from_cell(value):
         return None
     number = int(text)
     return number if number > 0 else None
+
+
+def json_cell(value):
+    """(safe value, malformed). One board cell -> a JSON-safe scalar.
+
+    SQLite is dynamically typed and the board is writable by every process on
+    the host, so a cell the schema calls INTEGER can hold a BLOB, and a stale
+    row can carry one in ``id``, ``assignee`` or ``worker_pid``. Only ``str``,
+    ``int``, ``float`` and ``None`` cross into a payload. Anything else becomes
+    a placeholder that names its type and size and never its contents: a
+    ``repr`` of a BLOB would put binary bytes into the answer, and
+    ``json.dumps`` would raise on the raw value.
+    """
+    if value is None or isinstance(value, str):
+        return value, False
+    if isinstance(value, bool):
+        return int(value), False
+    if isinstance(value, int):
+        return value, False
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return "<malformed float>", True
+        return value, False
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "<malformed blob of %d bytes>" % len(bytes(value)), True
+    return "<malformed %s>" % type(value).__name__, True
 
 
 def state_paths(ctx):
@@ -627,20 +658,32 @@ def read_running_tasks(db_path):
                 "current_run_id, started_at FROM tasks "
                 "WHERE status = 'running' AND worker_pid IS NOT NULL"
             ).fetchall()
+            columns = (
+                ("id", 0),
+                ("title", 1),
+                ("assignee", 2),
+                ("status", 3),
+                ("worker_pid", 4),
+                ("last_heartbeat_at", 5),
+                ("current_run_id", 6),
+                ("started_at", 7),
+            )
             tasks = []
             for row in rows:
-                tasks.append(
-                    {
-                        "id": row[0],
-                        "title": one_line(row[1], 80),
-                        "assignee": row[2],
-                        "status": row[3],
-                        "worker_pid": row[4],
-                        "last_heartbeat_at": row[5],
-                        "current_run_id": row[6],
-                        "started_at": row[7],
-                    }
-                )
+                task = {}
+                malformed = []
+                for name, index in columns:
+                    value, bad = json_cell(row[index])
+                    task[name] = value
+                    if bad:
+                        malformed.append(name)
+                task["title"] = one_line(task["title"], 80)
+                if malformed:
+                    # Named on the row, so no caller has to guess which cell a
+                    # placeholder replaced. It never reaches the host boundary:
+                    # stale_workers refuses the row on this field alone.
+                    task["malformed"] = malformed
+                tasks.append(task)
             return tasks, readonly
         except sqlite3.Error as exc:
             last_error = exc
@@ -809,6 +852,25 @@ def stale_workers(ctx, runtime):
             )
             continue
         if age < threshold:
+            continue
+        malformed = task.get("malformed") or []
+        if malformed:
+            # The row is corrupt in the cell itself: a BLOB id, assignee or
+            # worker_pid cannot name a worker, so the row is refused by name
+            # before the host boundary. The placeholder says what replaced it
+            # and the row never raises on the way into a payload.
+            rejected.append(
+                {
+                    "card": task["id"],
+                    "profile": task.get("assignee"),
+                    "pid": task["worker_pid"],
+                    "heartbeat_age_s": age,
+                    "reason": "board row has a malformed %s cell (%s), so it cannot "
+                    "name a worker" % (" and ".join(malformed), task[malformed[0]]),
+                    "kind": "malformed",
+                    "malformed_fields": list(malformed),
+                }
+            )
             continue
         pid = task["worker_pid"]
         pid_int = pid_from_cell(pid)
@@ -1147,6 +1209,10 @@ def plan_kick_bot(ctx=None, runtime=None):
             reason = "no running card carries a worker pid"
         payload = _plan_unavailable("maclink.kick-bot", reason)
         payload["rejected"] = rejected[:PAGE_LIMIT]
+        if any(item.get("kind") == "malformed" for item in rejected):
+            # Nothing safe was found and at least one board row had to be
+            # coerced: say so at the top level as well as on the row.
+            payload["kind"] = "malformed"
         payload["threshold_s"] = threshold
         payload["now"] = int(now)
         payload["db_readonly"] = readonly
@@ -2711,6 +2777,81 @@ def self_check():
         and not any(line.startswith(("kill", "pkill", "kickstart")) for line in null_assignee_calls),
         "exit=%s out=%s err=%s calls=%s"
         % (code, one_line(stdout, 200), one_line(stderr, 200), str(null_assignee_calls)[:200]),
+    )
+
+    def blob_board(label, card_id, assignee, worker_pid, filename):
+        path = corrupt_board(worker_pid, assignee, filename, card_id)
+        code, stdout, stderr = _cli(
+            ["plan", "maclink.kick-bot", "--db", path, "--state-dir", corrupt_state_dir], env
+        )
+        try:
+            payload = json.loads(stdout)
+        except ValueError:
+            payload = {}
+        rejected = payload.get("rejected") or []
+        shown = json.dumps(rejected, ensure_ascii=False)
+        check(
+            label,
+            code == 0
+            and payload.get("ok") is False
+            and payload.get("kind") == "malformed"
+            and payload.get("items") == []
+            and len(rejected) == 1
+            and rejected[0].get("kind") == "malformed"
+            and "<malformed blob" in shown
+            and "b'" not in stdout
+            and "\\u0000" not in stdout
+            and stderr.strip() == "",
+            "exit=%s out=%s err=%s" % (code, one_line(stdout, 240), one_line(stderr, 200)),
+        )
+        return path
+
+    # SQLite is dynamically typed: a BLOB can sit in a TEXT or INTEGER cell.
+    blob_pid_db = blob_board(
+        "blob-worker-pid-plan-malformed",
+        "t_selfcheck_blob_pid",
+        "kakashi",
+        b"\x00\x01\x02\x03",
+        "kanban-blob-pid.db",
+    )
+    blob_board(
+        "blob-assignee-plan-malformed",
+        "t_selfcheck_blob_assignee",
+        b"\xfe\xff\x00",
+        null_assignee_pid,
+        "kanban-blob-assignee.db",
+    )
+    blob_board(
+        "blob-id-plan-malformed",
+        b"\x00\xff\x01",
+        "kakashi",
+        null_assignee_pid,
+        "kanban-blob-id.db",
+    )
+    blob_board(
+        "memoryview-worker-pid-plan-malformed",
+        "t_selfcheck_memoryview_pid",
+        "kakashi",
+        memoryview(b"\x00\x02\x03"),
+        "kanban-memoryview-pid.db",
+    )
+    corrupt_pid_before = len(stub_log())
+    code, stdout, stderr = _cli(
+        ["run", "maclink.kick-bot", "--confirm", "maclink.kick-bot",
+         "--db", blob_pid_db, "--state-dir", corrupt_state_dir],
+        env,
+    )
+    blob_run_stderr = stderr.strip().splitlines()
+    blob_calls = stub_log()[corrupt_pid_before:]
+    check(
+        "blob-worker-pid-run-refused",
+        code == 2
+        and stdout.strip() == ""
+        and len(blob_run_stderr) == 1
+        and "no stale worker" in blob_run_stderr[0]
+        and not any(line.startswith(("kill", "pkill", "kickstart")) for line in blob_calls),
+        "exit=%s out=%s err=%s calls=%s"
+        % (code, one_line(stdout, 200), one_line(stderr, 200), str(blob_calls)[:200]),
     )
 
     # --- status cache: 10 s, atomic, and never probes on a hit -------------
