@@ -208,6 +208,28 @@ def collect_omarchy(led):
         for r in j.get("recentDays") or []:
             if isinstance(r, dict) and r.get("date"):
                 led.snap(prov, str(r["date"]), msgs=r.get("messageCount"))
+    merge_gauge_contract(led)
+
+
+def merge_gauge_contract(led):
+    """Claude limits from the gauges collector (gauges.py) when it has an answer.
+
+    Omarchy's record keeps the last good numbers forever once the sign-in lapses.
+    An error from the collector replaces them with nothing and the reason, so the
+    HUD never shows an old percent as current.
+    """
+    try:
+        g = json.loads((Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+                        / "gauges" / "claude.json").read_text())
+    except (OSError, ValueError):
+        return
+    m = led.meta.setdefault("claude", {})
+    m["gauge"] = {"state": g.get("state"), "fetchedAt": g.get("fetchedAt"), "error": g.get("error")}
+    if g.get("state") == "error":
+        m["limits"], m["status"] = [], g.get("error")
+    else:
+        m["limits"] = [{"label": w["label"], "percent": w["value"], "resetsAt": w.get("resetsAt")}
+                       for w in g.get("windows") or []]
 
 
 def _ro_db(path):
