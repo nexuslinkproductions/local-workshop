@@ -3,12 +3,12 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: volume. System glyph: the cone and two waves, evenly spaced off the
-// cone mouth. 24 px grid, live area 3.6..20.2, stroke 1.5 regular / 2.0 bold,
-// round caps and joins.
+// cone mouth. 24 px grid, live area 3.6..20.2, stroke 2.0, round caps and
+// joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

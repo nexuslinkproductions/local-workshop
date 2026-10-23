@@ -9,8 +9,8 @@ import ".." as Kit
 //
 //   tools/qml-shot.sh nexuslink.hud/v5/kit/icons/ContactSheet.qml <out.png>
 //
-// Rows are weight 2.0 (top three) then weight 1.5, each at 72 / 48 / 24 px. The
-// strip at the bottom is IconTile.qml at two sizes, seven states.
+// Rows are the set's one weight, 2.0, at 72 / 48 / 24 px. The strip at the
+// bottom is IconTile.qml at two sizes, seven states.
 Item {
     id: page
     width: 2560
@@ -22,8 +22,7 @@ Item {
         "find", "crew", "power", "wifi", "battery", "volume", "settings"
     ]
     readonly property var rows: [
-        { "w": 2.0, "s": 72 }, { "w": 2.0, "s": 48 }, { "w": 2.0, "s": 24 },
-        { "w": 1.5, "s": 72 }, { "w": 1.5, "s": 48 }, { "w": 1.5, "s": 24 }
+        { "w": 2.0, "s": 72 }, { "w": 2.0, "s": 48 }, { "w": 2.0, "s": 24 }
     ]
     readonly property int colX0: 190
     readonly property int colPitch: 138
@@ -49,13 +48,13 @@ Item {
     }
 
     readonly property var tiles: [
-        { "g": "hermes",  "l": "Hermes",   "c": 0, "run": false, "sel": false, "dim": false, "s": 96 },
-        { "g": "devin",   "l": "Devin",    "c": 3, "run": false, "sel": false, "dim": false, "s": 96 },
-        { "g": "discord", "l": "Discord",  "c": 8, "run": true,  "sel": false, "dim": false, "s": 96 },
-        { "g": "files",   "l": "Files",    "c": 2, "run": false, "sel": true,  "dim": false, "s": 96 },
-        { "g": "terminal","l": "Terminal", "c": 1, "run": false, "sel": false, "dim": true,  "s": 96 },
-        { "g": "youtube", "l": "YouTube",  "c": 5, "run": true,  "sel": false, "dim": false, "s": 56 },
-        { "g": "whatsapp","l": "WhatsApp", "c": 2, "run": false, "sel": true,  "dim": false, "s": 56 }
+        { "g": "hermes",  "l": "Hermes",   "c": 0, "run": false, "sel": false, "focus": 0, "s": 96 },
+        { "g": "devin",   "l": "Devin",    "c": 3, "run": false, "sel": false, "focus": 0, "s": 96 },
+        { "g": "discord", "l": "Discord",  "c": 8, "run": true,  "sel": false, "focus": 0, "s": 96 },
+        { "g": "files",   "l": "Files",    "c": 2, "run": false, "sel": true,  "focus": 0, "s": 96 },
+        { "g": "terminal","l": "Terminal", "c": 1, "run": false, "sel": false, "focus": 1,  "s": 96 },
+        { "g": "youtube", "l": "YouTube",  "c": 5, "run": true,  "sel": false, "focus": 0, "s": 56 },
+        { "g": "whatsapp","l": "WhatsApp", "c": 2, "run": false, "sel": true,  "focus": 0, "s": 56 }
     ]
 
     function rowTop(i) {
@@ -74,7 +73,7 @@ Item {
     Text {
         x: 60
         y: 96
-        text: "W4 ICONS  ·  17 glyphs  ·  24 px grid  ·  stroke 1.5 / 2.0  ·  round caps"
+        text: "W4 ICONS  ·  17 glyphs  ·  24 px grid  ·  stroke 2.0  ·  round caps"
         color: Tokens.textLabel
         font.pixelSize: 20
         font.family: Tokens.fontFamily
@@ -135,11 +134,11 @@ Item {
         }
     }
 
-    // IconTile states: idle, launch count, running, selected, dimmed
+    // IconTile states: idle, launch count, running, selected, focusLevel 1
     Text {
         x: 60
         y: page.tileY - 34
-        text: "ICONTILE  ·  launch-count ring, running node, selected = scale only, dimmed = " + Tokens.focusDimMax
+        text: "ICONTILE  ·  launch-count ring, running node, selected = scale only, focusLevel 1 dims to " + Tokens.focusDimMax
         color: Tokens.textLabel
         font.pixelSize: 20
         font.family: Tokens.fontFamily
@@ -166,7 +165,7 @@ Item {
                     launchCount: tileCell.entry.c
                     running: tileCell.entry.run
                     selected: tileCell.entry.sel
-                    dimmed: tileCell.entry.dim
+                    focusLevel: tileCell.entry.focus
                     size: tileCell.entry.s
                 }
                 Text {

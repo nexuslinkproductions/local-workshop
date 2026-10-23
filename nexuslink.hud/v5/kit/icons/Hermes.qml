@@ -3,14 +3,14 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: hermes. Custom mark (not a brand): a winged staff, one vertical
-// stroke with three feathers fanning up to the right, each shorter as it climbs.
-// The staff sits left of centre and the fan reaches only to 19.6 so the mark's
-// bounding box centres on the grid. 24 px grid, stroke 1.5 regular / 2.0 bold,
-// round caps and joins, no fill.
+// stroke with three feathers fanning up to the right, each shorter as it
+// climbs. The staff sits left of centre and the fan reaches only to 19.6 so the
+// mark's bounding box centres on the grid. 24 px grid, stroke 2.0, round caps
+// and joins, no fill.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

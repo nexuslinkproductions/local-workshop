@@ -4,12 +4,11 @@ import NexusHud.V5 1.0
 
 // W4 glyph: arc-raiders. Custom mark for the feature tile: a rise over an arc,
 // the one emblem in the set that uses two shapes instead of one line. 24 px
-// grid, live area 3.4..20.6, stroke 1.5 regular / 2.0 bold, round caps and
-// joins.
+// grid, live area 3.4..20.6, stroke 2.0, round caps and joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

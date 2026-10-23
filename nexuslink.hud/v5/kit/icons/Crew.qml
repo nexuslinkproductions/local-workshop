@@ -7,7 +7,7 @@ import NexusHud.V5 1.0
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

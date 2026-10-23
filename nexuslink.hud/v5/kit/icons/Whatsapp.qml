@@ -3,14 +3,13 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: whatsapp. Brand mark, redrawn monochrome: speech bubble with the
-// lower-left tail and the handset. 24 px grid, live area 3.4..20.4, stroke 1.5
-// regular / 2.0 bold, round caps and joins.
-// Bubble: circle centre (12, 11.8) r 7.7, arc from 145 deg the long way round to
-// 105 deg, tail point at (3.4, 20.8).
+// lower-left tail and the handset. 24 px grid, live area 3.4..20.4, stroke 2.0,
+// round caps and joins. Bubble: circle centre (12, 11.8) r 7.7, arc from 145
+// deg the long way round to 105 deg, tail point at (3.4, 20.8).
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

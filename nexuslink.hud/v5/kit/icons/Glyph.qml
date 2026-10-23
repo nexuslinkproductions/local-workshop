@@ -19,7 +19,9 @@ Item {
 
     property string glyph: ""
     property color color: Tokens.ink
-    property real weight: 1.5
+    // The set's one stroke weight, 2.0 on the 24 px grid. No Tokens.iconStroke
+    // yet; requested in the W4 PR body.
+    property real weight: 2.0
     property real size: 24
 
     readonly property var components: ({

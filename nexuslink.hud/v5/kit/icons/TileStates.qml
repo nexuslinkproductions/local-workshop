@@ -24,25 +24,25 @@ Item {
     FontLoader { source: Qt.resolvedUrl("../../fonts/Satoshi-Bold.ttf") }
 
     readonly property var entries: [
-        { "c": 0, "r": 0, "g": "hermes",   "l": "Hermes",   "n": 0,  "run": false, "sel": false, "dim": false, "s": 96, "note": "idle, no launches" },
-        { "c": 1, "r": 0, "g": "devin",    "l": "Devin",    "n": 3,  "run": false, "sel": false, "dim": false, "s": 96, "note": "launchCount 3" },
-        { "c": 2, "r": 0, "g": "discord",  "l": "Discord",  "n": 8,  "run": false, "sel": false, "dim": false, "s": 96, "note": "launchCount 8" },
-        { "c": 3, "r": 0, "g": "chrome",   "l": "Chrome",   "n": 20, "run": false, "sel": false, "dim": false, "s": 96, "note": "launchCount 20, capped at 12" },
-        { "c": 4, "r": 0, "g": "files",    "l": "Files",    "n": 2,  "run": true,  "sel": false, "dim": false, "s": 96, "note": "running" },
-        { "c": 5, "r": 0, "g": "terminal", "l": "Terminal", "n": 1,  "run": false, "sel": true,  "dim": false, "s": 96, "note": "selected" },
-        { "c": 0, "r": 1, "g": "youtube",  "l": "YouTube",  "n": 5,  "run": false, "sel": false, "dim": true,  "s": 96, "note": "dimmed" },
-        { "c": 1, "r": 1, "g": "whatsapp", "l": "WhatsApp", "n": 4,  "run": true,  "sel": true,  "dim": false, "s": 96, "note": "selected + running" },
-        { "c": 2, "r": 1, "g": "x",        "l": "X",        "n": 7,  "run": false, "sel": false, "dim": false, "s": 56, "note": "56 px tile" },
-        { "c": 3, "r": 1, "g": "arc-raiders", "l": "Arc Raiders", "n": 0, "run": true, "sel": false, "dim": false, "s": 56, "note": "56 px, running" },
-        { "c": 4, "r": 1, "g": "settings", "l": "Settings", "n": 0,  "run": false, "sel": false, "dim": false, "s": 56, "note": "56 px tile" },
-        { "c": 5, "r": 1, "g": "no-such-key", "l": "Unknown", "n": 0, "run": false, "sel": false, "dim": false, "s": 56, "note": "unknown key" },
-        { "c": 0, "r": 2, "g": "hermes",   "l": "Hermes",   "n": 9,  "run": true,  "sel": false, "dim": false, "s": 240, "note": "anatomy, 240 px" }
+        { "c": 0, "r": 0, "g": "hermes",   "l": "Hermes",   "n": 0,  "run": false, "sel": false, "focus": 0, "s": 96, "note": "idle, no launches" },
+        { "c": 1, "r": 0, "g": "devin",    "l": "Devin",    "n": 3,  "run": false, "sel": false, "focus": 0, "s": 96, "note": "launchCount 3" },
+        { "c": 2, "r": 0, "g": "discord",  "l": "Discord",  "n": 8,  "run": false, "sel": false, "focus": 0, "s": 96, "note": "launchCount 8" },
+        { "c": 3, "r": 0, "g": "chrome",   "l": "Chrome",   "n": 20, "run": false, "sel": false, "focus": 0, "s": 96, "note": "launchCount 20, capped at 12" },
+        { "c": 4, "r": 0, "g": "files",    "l": "Files",    "n": 2,  "run": true,  "sel": false, "focus": 0, "s": 96, "note": "running" },
+        { "c": 5, "r": 0, "g": "terminal", "l": "Terminal", "n": 1,  "run": false, "sel": true,  "focus": 0, "s": 96, "note": "selected" },
+        { "c": 0, "r": 1, "g": "youtube",  "l": "YouTube",  "n": 5,  "run": false, "sel": false, "focus": 1,  "s": 96, "note": "focusLevel 1" },
+        { "c": 1, "r": 1, "g": "whatsapp", "l": "WhatsApp", "n": 4,  "run": true,  "sel": true,  "focus": 0, "s": 96, "note": "selected + running" },
+        { "c": 2, "r": 1, "g": "x",        "l": "X",        "n": 7,  "run": false, "sel": false, "focus": 0, "s": 56, "note": "56 px tile" },
+        { "c": 3, "r": 1, "g": "arc-raiders", "l": "Arc Raiders", "n": 0, "run": true, "sel": false, "focus": 0, "s": 56, "note": "56 px, running" },
+        { "c": 4, "r": 1, "g": "settings", "l": "Settings", "n": 0,  "run": false, "sel": false, "focus": 0, "s": 56, "note": "56 px tile" },
+        { "c": 5, "r": 1, "g": "no-such-key", "l": "Unknown", "n": 0, "run": false, "sel": false, "focus": 0, "s": 56, "note": "unknown key" },
+        { "c": 0, "r": 2, "g": "hermes",   "l": "Hermes",   "n": 9,  "run": true,  "sel": false, "focus": 0, "s": 240, "note": "anatomy, 240 px" }
     ]
 
     Text {
         x: 90
         y: 70
-        text: "ICONTILE  ·  launch-count ring  ·  running node  ·  selected = scale 1.06  ·  dimmed = " + Tokens.focusDimMax
+        text: "ICONTILE  ·  launch-count ring  ·  running node  ·  selected = scale 1.06  ·  focusLevel 1 dims to " + Tokens.focusDimMax
         color: Tokens.textLabel
         font.pixelSize: 20
         font.family: Tokens.fontFamily
@@ -69,7 +69,7 @@ Item {
                 launchCount: cell.entry.n
                 running: cell.entry.run
                 selected: cell.entry.sel
-                dimmed: cell.entry.dim
+                focusLevel: cell.entry.focus
                 size: cell.entry.s
             }
             Text {

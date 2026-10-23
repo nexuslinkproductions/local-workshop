@@ -4,12 +4,12 @@ import NexusHud.V5 1.0
 
 // W4 glyph: wifi. System glyph: two arcs and one node, the link signal. Arc
 // gaps widen on the outer arc so the three radii read as evenly spaced, and the
-// whole mark sits high enough that its ink centre lands on the grid centre.
-// 24 px grid, live area 3.4..20.6, stroke 1.5 regular / 2.0 bold, round caps.
+// whole mark sits high enough that its ink centre lands on the grid centre. 24
+// px grid, live area 3.4..20.6, stroke 2.0, round caps.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

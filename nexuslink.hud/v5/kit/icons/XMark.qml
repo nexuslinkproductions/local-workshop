@@ -3,12 +3,12 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: x. Brand mark (X, formerly Twitter), redrawn monochrome: the two
-// crossing bands of the mark, corner to corner. 24 px grid, live area 4.4..19.6,
-// stroke 1.5 regular / 2.0 bold, round caps.
+// crossing bands of the mark, corner to corner. 24 px grid, live area
+// 4.4..19.6, stroke 2.0, round caps.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

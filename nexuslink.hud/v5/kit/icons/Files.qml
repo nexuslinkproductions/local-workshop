@@ -3,12 +3,12 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: files. Custom mark: a folder with a deep cut tab, so the tab still
-// reads at 24 px. 24 px grid, live area 3.4..20.6, stroke 1.5 regular / 2.0
-// bold, round caps and joins.
+// reads at 24 px. 24 px grid, live area 3.4..20.6, stroke 2.0, round caps and
+// joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

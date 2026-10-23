@@ -4,11 +4,11 @@ import NexusHud.V5 1.0
 
 // W4 glyph: power. System glyph: the ring with a 90 degree gap at the top and
 // the stem running through the centre, standard shape so it reads before it is
-// looked at. 24 px grid, live area 4.2..19.6, stroke 1.5 regular / 2.0 bold.
+// looked at. 24 px grid, live area 4.2..19.6, stroke 2.0.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

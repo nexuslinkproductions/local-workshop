@@ -4,12 +4,12 @@ import NexusHud.V5 1.0
 
 // W4 glyph: battery. System glyph: the cell, a short terminal nub and a charge
 // fill at about two thirds. Corners are tight (2 units) so the body stays
-// rectangular instead of pill-shaped. 24 px grid, live area 2..20.7, stroke 1.5
-// regular / 2.0 bold, round caps and joins.
+// rectangular instead of pill-shaped. 24 px grid, live area 2..20.7, stroke
+// 2.0, round caps and joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

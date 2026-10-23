@@ -4,11 +4,11 @@ import NexusHud.V5 1.0
 
 // W4 glyph: discord. Brand mark, redrawn monochrome on the same grid: the wide
 // face with two ear tufts, a low centre dip and two eye nodes. 24 px grid, live
-// area 2.8..21.2, stroke 1.5 regular / 2.0 bold, round caps and joins.
+// area 2.8..21.2, stroke 2.0, round caps and joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

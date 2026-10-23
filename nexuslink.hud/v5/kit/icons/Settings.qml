@@ -4,12 +4,12 @@ import NexusHud.V5 1.0
 
 // W4 glyph: settings. System glyph: two sliders with one bead each. A toothed
 // gear outline goes muddy at 24 px and three sliders read as a hamburger menu,
-// so two lines with clear beads is the legible choice at this size.
-// 24 px grid, live area 3.4..20.6, stroke 1.5 regular / 2.0 bold, round caps.
+// so two lines with clear beads is the legible choice at this size. 24 px grid,
+// live area 3.4..20.6, stroke 2.0, round caps.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

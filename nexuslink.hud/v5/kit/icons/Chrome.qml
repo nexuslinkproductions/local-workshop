@@ -3,14 +3,14 @@ import QtQuick.Shapes
 import NexusHud.V5 1.0
 
 // W4 glyph: chrome. Brand mark (Chromium-family browser), redrawn monochrome on
-// the same grid: outer ring, hub and three spokes at the sector cuts. The hub is
-// a small node rather than a second full ring, which keeps the mark's ink in the
-// same band as the rest of the set. 24 px grid, live area 4..20, stroke 1.5
-// regular / 2.0 bold, round caps.
+// the same grid: outer ring, hub and three spokes at the sector cuts. The hub
+// is a small node rather than a second full ring, which keeps the mark's ink in
+// the same band as the rest of the set. 24 px grid, live area 4..20, stroke
+// 2.0, round caps.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24

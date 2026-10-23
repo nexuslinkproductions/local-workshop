@@ -4,11 +4,11 @@ import NexusHud.V5 1.0
 
 // W4 glyph: find. System glyph: a lens with a full-length handle, drawn at icon
 // weight so the deck never shows a big magnifying glass. 24 px grid, live area
-// 4.4..20.4, stroke 1.5 regular / 2.0 bold, round caps and joins.
+// 4.4..20.4, stroke 2.0, round caps and joins.
 Shape {
     id: root
     property color color: Tokens.ink
-    property real weight: 1.5
+    property real weight: 2.0
     property real size: 24
 
     implicitWidth: 24
