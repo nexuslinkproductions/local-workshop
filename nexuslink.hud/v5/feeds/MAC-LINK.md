@@ -26,18 +26,18 @@ Payload, one object on stdout:
 |---|---|
 | `ok`, `source`, `mode`, `generated_at` | the shared feed envelope (`mode` is `live` or `fixture`) |
 | `host` | the requested runner: `local` or `ssh:<host>` |
-| `collected_at` | when the Mac was sampled (the Mac's clock, UTC ISO) |
+| `collected_at` | when the Mac was sampled (the Mac's clock, UTC ISO); `null` with a reason in a fixture that carries no `@@NOW` |
 | `cached`, `cache_age_s` | true when this answer came from the 10 s cache |
 | `mac.battery` | `percent`, `state`, `remaining`, `present`, `power_source` |
 | `mac.load` | `avg` (`[1, 5, 15]` minutes), `load1_frac` (load1 / cores), `cores` |
 | `mac.memory` | `pressure` (`normal`, `warning`, `critical`), `pressure_raw`, `free_pct` |
 | `mac.soc_temp_c` | SoC temperature in C, or `null` with a reason (see below) |
 | `mac.thermal` | `scheduler_limit` and `speed_limit` when `pmset -g therm` reports them |
-| `mac.uptime_s`, `mac.uptime_human` | from `kern.boottime`, `uptime` text as the fallback |
+| `mac.uptime_s`, `mac.uptime_human` | from `kern.boottime`, `uptime` text as the fallback; both `null` with a reason in a fixture that carries no `@@NOW` |
 | `tunnel` | `peer`, `up`, `rtt_ms`, `route` (`direct` or `relay`) |
-| `kanban` | `running` count and `items` (`id`, `title`, `assignee`, `started_at`, `age_s`) |
-| `devin` | `running` count and `items` (`pid`, `model`, `command`) |
-| `reasons` | dotted key -> one short reason, for every null value (one key per null path) |
+| `kanban` | `running` count and `items` (`id`, `title`, `assignee`, `started_at`, `age_s`); `age_s` is `null` in a fixture that carries no `@@NOW`, covered by the list-level reason `kanban.items` |
+| `devin` | `running` count and `items` (`pid`, `model`, `command`); when no process carries `--model`, `model` is `null` and the list-level reason `devin.items` says why |
+| `reasons` | dotted key -> one short reason, for every null value (one key per null path, plus one per list when per-item values are null) |
 
 Exit codes: `0` for data and for honest absence (`{"ok": false, "reason": ...}`,
 `kind` says missing or malformed), `2` only for a caller error (bad `--host`, a
@@ -76,10 +76,12 @@ verified on this Mac (macOS 26.4.1, Apple Silicon):
 Absolute fallbacks for `hermes` and `tailscale` matter: a non-interactive ssh
 shell gets `/usr/bin:/bin:/usr/sbin:/sbin`, where neither binary is on PATH.
 
-The kanban call strips `HERMES_DELEGATED_CHILD_CONTEXT` and `HERMES_KANBAN_TASK`
-for that one subprocess. Those markers fence board *mutations*; this is a
-read-only list, and without the strip the same command that works over ssh
-reports the board unreadable when the feed is run inside a Hermes worker.
+The kanban call strips four Hermes markers for that one subprocess:
+`HERMES_DELEGATED_CHILD_CONTEXT`, `HERMES_KANBAN_TASK`,
+`HERMES_KANBAN_RUN_ID` and `HERMES_KANBAN_CLAIM_LOCK`. Those markers fence
+board *mutations*; this is a read-only list, and without the strip the same
+command that works over ssh reports the board unreadable when the feed is run
+inside a Hermes worker.
 
 ### SoC temperature is null on this Mac, on purpose
 
@@ -96,12 +98,23 @@ when it does not, so the two nulls there are explained too.
 `~/.local/state/nexuslink/mac_link.json`, written atomically (temp file plus
 `os.replace`). The TTL is 10 s and not configurable: two calls inside the window
 run zero collectors. Cache age uses the reader's clock, not the Mac's, so a
-skewed Mac clock cannot freeze the cache. Fixture mode never reads or writes the
-cache, and a failed collection is not cached.
+skewed Mac clock cannot freeze the cache. An entry dated in the future is a
+miss, not a fresh hit: a reader clock stepped back recollects instead of
+pinning a stale sample as fresh. Fixture mode never reads or writes the cache,
+and a failed collection is not cached.
 
 Measured on this Mac (2026-10-23): one live collection 2.1 to 3.4 s, of which
 the kanban CLI is 1.0 to 4.5 s; `tailscale ping` 0.3 s; every local probe under
 50 ms. A cached call is 0.05 to 0.08 s.
+
+### Fixture purity
+
+`--fixture` reads no host state and no clock, apart from the one clock read that
+stamps `generated_at` (the envelope requires it). A fixture with no `@@NOW`
+line therefore reports `collected_at`, `mac.uptime_s`, `mac.uptime_human` and
+every `kanban.items[].age_s` as `null`, each with a reason, so two runs of the
+same fixture are byte-identical minus `generated_at`. The reader-clock fallback
+in `parse_collector` is live mode only, and it says so under `reasons["mac.now"]`.
 
 ## mac_actions.py
 
@@ -127,7 +140,9 @@ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 
 Rules the code enforces:
 
-- `--dry-run` prints the exact command and exits 0.
+- `--dry-run` prints the command it would run and exits 0. The line is
+  reader-facing: a program under the home directory shows as `~` (see below),
+  so compare it with the table after that substitution.
 - An unsafe action with neither `--confirm` nor `--dry-run` refuses with exit 2
   and one line on stderr, and runs nothing. It is not silently dry: a caller
   that forgot the flag learns it.
@@ -143,6 +158,13 @@ Rules the code enforces:
   `-p/--profile`. A PID that is gone, unreadable, or belongs to something else
   is refused.
 - `wakeoff` is the same rule for `caffeinate`.
+- A refusal names the program it found, never another process's command line:
+  `pid 5150 is not caffeinate (command: python3)`. The full argv of a foreign
+  process can carry paths and flags that are none of this tool's business.
+- The `command` field and the `--dry-run` line show a program under the home
+  directory as `~` (`~/.local/bin/hermes -p kakashi gateway run`). The argv
+  that runs keeps the absolute path, which a process spawned without a login
+  shell needs.
 - All files written are PID files under `~/.local/state/nexuslink/` and the
   screenshot the caller asked for (default `~/Desktop`). Nothing writes to
   `~/.config` or the live HUD tree.
@@ -163,30 +185,43 @@ line in `build_plan` plus this table.
 ```
 $ python3 nexuslink.hud/v5/feeds/mac_link.py --self-check
 ...
-self-check ok: 97 passed, 0 failed
+self-check ok: 111 passed, 0 failed
 $ python3 nexuslink.hud/v5/feeds/mac_actions.py --self-check
 ...
-self-check ok: 72 passed, 0 failed
+self-check ok: 77 passed, 0 failed
 ```
 
 `mac_link.py --self-check` parses the recorded fixture and asserts every key,
 proves each null carries its own reason (fixture, a four-line broken variant set
-and the partial fixture), runs the same fixture through the CLI, proves two
-calls inside 10 s run one collector (and an aged cache collects again), proves
-an empty, a partial and a non-UTF-8 fixture take the `ok: false` paths with exit
-0, proves a non-UTF-8 cache is a miss that gets rewritten, proves a missing
-fixture exits 2, and proves `ssh_runner` makes exactly one `ssh` call with the
-expected argv by stubbing `subprocess.run` (no connection is opened). Every CLI
-subprocess runs with a stub PATH whose commands log and exit 1, so an accidental
-real invocation fails the run.
+and the partial fixture), and runs the same fixture through the CLI. It proves
+fixture purity: a copy of the fixture with the `@@NOW` pair removed is parsed
+twice with `time.time` pinned to two epochs an hour apart, the two payloads are
+identical minus `generated_at`, the clock is read exactly once per run (the
+`generated_at` stamp), and `collected_at`, `mac.uptime_s`, `mac.uptime_human`
+and every `kanban.items[].age_s` are `null` with a reason; the same file then
+runs twice through the CLI 1.1 s apart and matches minus `generated_at`. It
+proves two calls inside 10 s run one collector, that an aged cache collects
+again, and that a cache dated in the future is a miss rather than a fresh hit.
+An empty fixture and a non-UTF-8 fixture take the `ok: false` path with exit 0,
+while a partial fixture is `ok: true` with nulls and reasons
+(`partial-ok-true`). It proves a non-UTF-8 cache is a miss that gets rewritten,
+proves a missing fixture exits 2, and proves `ssh_runner` makes exactly one
+`ssh` call with the expected argv by stubbing `subprocess.run` (no connection
+is opened). Every CLI subprocess runs with a stub PATH whose commands log and
+exit 1, so an accidental real invocation fails the run.
 
 `mac_actions.py --self-check` checks the typed table, the dry-run line for
 `sleep`, the bare-refusal path for `sleep`, `lock`, `wake` and `start-bot`, the
 wrong-confirm path, the profile matching and PID rules, and the `status` parser.
 It runs the real `STATUS_SCRIPT` against a stub PATH where `pgrep` exits 1, and
 asserts the script exits 0 and the action returns `ok: true` with
-`caffeinate.on` false. It executes no unsafe action: every unsafe path is
-refused before a plan is built, everything else goes through
-`RecordingRuntime`, the run asserts no runner was touched, and the stub logs are
-asserted free of any state-changing command. The one real execution is
-`list-dir` on a temporary directory, in-process.
+`caffeinate.on` false. It also asserts the `start-bot` display line carries no
+absolute home path while the argv keeps it, and that a refusal names only the
+program it found (`python3`, never that process's command line). It executes no
+unsafe action: every unsafe path is refused before a plan is built, and the
+stub logs are asserted free of any state-changing command.
+
+Every execution in the self-check goes through `RecordingRuntime`, which records
+the argv and spawns nothing: `list-dir` on a temporary directory is planned and
+recorded, never run as a real `ls`, and the run asserts no runner was touched.
+No process is spawned by either self-check.

@@ -27,7 +27,16 @@ rewritten instead of wedging the feed.
 
 Reads are cached in ``~/.local/state/nexuslink/mac_link.json`` (atomic write)
 for 10 s and never faster: a second call inside the window runs zero collectors
-and returns the same sample with ``cached: true`` and ``cache_age_s`` set.
+and returns the same sample with ``cached: true`` and ``cache_age_s`` set. A
+cache entry dated in the future is a miss, so a reader clock stepped back cannot
+pin a stale sample as fresh.
+
+Fixture mode is pure (FIXTURE PURITY): it reads no clock except the one that
+stamps ``generated_at``, which the envelope requires. A fixture with no
+``@@NOW`` line leaves ``collected_at``, ``mac.uptime_s``, ``mac.uptime_human``
+and every ``kanban.items[].age_s`` null, each with a reason, so two runs of the
+same fixture are byte-identical minus ``generated_at``. A live collector that
+reports no clock falls back to the reader's clock and says so in ``reasons``.
 
 Nothing here writes to the live HUD tree, Marcel's config, or the Mac beyond
 read-only probes.
@@ -609,10 +618,16 @@ def parse_kanban(block, now_epoch, reasons):
     items.sort(key=lambda item: item["age_s"] or 0, reverse=True)
     out["running"] = len(items)
     out["items"] = items
+    if now_epoch is None and items:
+        # One list-level reason covers every per-item age: the walker treats
+        # list items as facts of the list, not as separate null paths.
+        reasons["kanban.items"] = (
+            "the fixture carries no @@NOW; age_s is clock-derived and fixture mode reads no clock"
+        )
     return out
 
 
-def parse_devin(block):
+def parse_devin(block, reasons=None):
     items = []
     for line in (block or "").splitlines():
         match = re.match(r"^(\d+)\s+(.+)$", line.strip())
@@ -627,11 +642,21 @@ def parse_devin(block):
                 "command": text(command, 200),
             }
         )
+    if reasons is not None and items and all(item["model"] is None for item in items):
+        reasons["devin.items"] = (
+            "no Devin process carried a --model flag; the command line is the only evidence"
+        )
     return {"running": len(items), "items": items}
 
 
-def parse_collector(raw, peer):
-    """Shared by live, ssh and fixture. Returns (mac, tunnel, kanban, devin, reasons)."""
+def parse_collector(raw, peer, mode="live"):
+    """Shared by live, ssh and fixture. Returns (mac, tunnel, kanban, devin, reasons, epoch).
+
+    ``mode`` is what keeps fixtures pure: a fixture with no ``@@NOW`` reads no
+    clock at all, so every clock-derived value goes null with a reason instead
+    of falling back to the reader's wall clock (FIXTURE PURITY). Only a live
+    collector is allowed that fallback, and it says so in ``reasons``.
+    """
     sections = split_sections(raw)
     if not sections:
         raise Missing(
@@ -645,7 +670,7 @@ def parse_collector(raw, peer):
 
     now_epoch = integer(sections.get("NOW"))
     clock_note = None
-    if now_epoch is None:
+    if now_epoch is None and mode != "fixture":
         now_epoch = int(time.time())
         clock_note = "collector did not report its clock; ages use the reader clock"
 
@@ -662,13 +687,21 @@ def parse_collector(raw, peer):
     boot = parse_boottime(sections.get("BOOTTIME"))
     uptime_s = None
     uptime_source = None
-    if boot is not None and now_epoch >= boot:
+    if now_epoch is None:
+        # Fixture with no @@NOW: uptime is clock-derived, and fixture mode reads
+        # no clock. The uptime text would be a second-hand reading of the
+        # recorder's clock, not a fact this run measured, so it stays null too.
+        reasons["mac.uptime_s"] = (
+            "the fixture carries no @@NOW; uptime is clock-derived and fixture mode reads no clock"
+        )
+        reasons["mac.uptime_human"] = reasons["mac.uptime_s"]
+    elif boot is not None and now_epoch >= boot:
         uptime_s = int(now_epoch - boot)
         uptime_source = "kern.boottime"
     else:
         uptime_s = parse_uptime_text(sections.get("UPTIME"))
         uptime_source = "uptime" if uptime_s is not None else None
-    if uptime_s is None:
+    if uptime_s is None and "mac.uptime_s" not in reasons:
         reasons["mac.uptime_s"] = "neither kern.boottime nor uptime could be read"
         reasons["mac.uptime_human"] = reasons["mac.uptime_s"]
     elif uptime_source == "uptime":
@@ -692,7 +725,7 @@ def parse_collector(raw, peer):
 
     tunnel = parse_ping(sections.get("PING"), peer, reasons)
     kanban = parse_kanban(sections.get("KANBAN"), now_epoch, reasons)
-    devin = parse_devin(sections.get("DEVIN"))
+    devin = parse_devin(sections.get("DEVIN"), reasons)
 
     if "END" not in sections:
         reasons["collector_output"] = "output ended before @@END (truncated)"
@@ -711,17 +744,25 @@ def parse_collector(raw, peer):
 
 
 def payload_for(raw, mode, host, peer, collector_exit=None, collector_error=None):
-    parsed = parse_collector(raw, peer)
+    parsed = parse_collector(raw, peer, mode)
     reasons = parsed["reasons"]
     if collector_error:
         # ssh and the shell echo absolute paths; the payload never does.
         reasons["collector_stderr"] = text(tilde_text(collector_error), 240)
 
+    collected_epoch = parsed["collected_epoch"]
+    if collected_epoch is None:
+        # Fixture with no @@NOW: the sample time is unknown, and a reader-clock
+        # stand-in would be a fabricated fact (FIXTURE PURITY).
+        reasons["collected_at"] = (
+            "the fixture carries no @@NOW; collected_at is clock-derived and fixture mode reads no clock"
+        )
+
     payload = envelope(
         SOURCE,
         mode,
         host=host,
-        collected_at=iso(parsed["collected_epoch"]),
+        collected_at=iso(collected_epoch),
         cache_age_s=0.0,
         cached=False,
         mac=parsed["mac"],
@@ -733,7 +774,7 @@ def payload_for(raw, mode, host, peer, collector_exit=None, collector_error=None
         payload["collector_exit"] = collector_exit
     if reasons:
         payload["reasons"] = reasons
-    return payload, parsed["collected_epoch"]
+    return payload, collected_epoch
 
 
 # --------------------------------------------------------------------- cache
@@ -755,8 +796,10 @@ def cache_lookup(root, host, peer, now_epoch, ttl):
     payload = root.get("payload")
     if at is None or not isinstance(payload, dict):
         return None
-    age = max(now_epoch - at, 0.0)
-    if age > ttl:
+    age = now_epoch - at
+    # A sample dated in the future is a miss, not a fresh hit: a reader clock
+    # stepped back must recollect instead of pinning a stale sample as new.
+    if age < 0 or age > ttl:
         return None
     return payload, age
 
@@ -1049,6 +1092,135 @@ def self_check(args):
         str((no_therm.get("mac") or {}).get("thermal")),
     )
 
+    # --- fixture purity: no @@NOW means no clock, only generated_at ---------
+    # A fixture minus its @@NOW pair must not read the wall clock. Every
+    # clock-derived value goes null with a reason, and two runs under different
+    # pinned clocks differ only in generated_at (FIXTURE PURITY, feeds brief).
+    no_now = recorded.replace("@@NOW\n1792710986\n", "")
+    check("no-now-fixture-built", no_now != recorded, "recorded fixture carried no @@NOW pair")
+
+    real_time = time.time
+    clock_reads = []
+
+    def pinned_clock(epoch):
+        def _now():
+            clock_reads.append(epoch)
+            return epoch
+
+        return _now
+
+    purity_runs = []
+    purity_reads = []
+    for epoch in (1792713000, 1792716600):
+        clock_reads[:] = []
+        time.time = pinned_clock(epoch)
+        try:
+            purity_payload, _purity_epoch = payload_for(
+                no_now, "fixture", "local", "omarchylink"
+            )
+        finally:
+            time.time = real_time
+        purity_runs.append(purity_payload)
+        purity_reads.append(list(clock_reads))
+
+    check(
+        "no-now-clock-reads-generated-at-only",
+        purity_reads == [[1792713000], [1792716600]],
+        "fixture mode read the clock %s" % (purity_reads,),
+    )
+    check(
+        "no-now-generated-at-follows-pinned-clock",
+        purity_runs[0].get("generated_at") == iso(1792713000)
+        and purity_runs[1].get("generated_at") == iso(1792716600),
+        "%s %s" % (purity_runs[0].get("generated_at"), purity_runs[1].get("generated_at")),
+    )
+    stripped_runs = []
+    for purity_payload in purity_runs:
+        copy = dict(purity_payload)
+        copy.pop("generated_at", None)
+        stripped_runs.append(json.dumps(copy, sort_keys=True, ensure_ascii=False))
+    check(
+        "no-now-identical-minus-generated-at",
+        stripped_runs[0] == stripped_runs[1],
+        "two pinned clocks produced different payloads",
+    )
+    no_now_reasons = purity_runs[0].get("reasons") or {}
+    no_now_mac = purity_runs[0].get("mac") or {}
+    no_now_items = (purity_runs[0].get("kanban") or {}).get("items") or []
+    check(
+        "no-now-collected-at-null-with-reason",
+        purity_runs[0].get("collected_at") is None and "collected_at" in no_now_reasons,
+        "%s %s" % (purity_runs[0].get("collected_at"), sorted(no_now_reasons)),
+    )
+    check(
+        "no-now-uptime-null-with-reason",
+        no_now_mac.get("uptime_s") is None
+        and no_now_mac.get("uptime_human") is None
+        and "mac.uptime_s" in no_now_reasons
+        and "mac.uptime_human" in no_now_reasons,
+        "%s %s" % (no_now_mac.get("uptime_s"), sorted(no_now_reasons)),
+    )
+    check(
+        "no-now-kanban-ages-null-with-reason",
+        bool(no_now_items)
+        and all(item.get("age_s") is None for item in no_now_items)
+        and "kanban.items" in no_now_reasons,
+        "%s %s"
+        % ([item.get("age_s") for item in no_now_items], sorted(no_now_reasons)),
+    )
+    check(
+        "no-now-nulls-reasoned",
+        unreasoned(purity_runs[0]) == [],
+        str(unreasoned(purity_runs[0])),
+    )
+
+    # The same fixture through the real CLI, twice: the verifier's repro.
+    purity_dir = tempfile.mkdtemp(prefix="f1-mac-link-purity-", dir=os.environ.get("TMPDIR"))
+    no_now_path = os.path.join(purity_dir, "no-now.txt")
+    with open(no_now_path, "w", encoding="utf-8") as handle:
+        handle.write(no_now)
+    code_a, cli_a, _out_a, err_a = _cli(["--fixture", no_now_path, "--json"], env=cli_env)
+    time.sleep(1.1)
+    code_b, cli_b, _out_b, _err_b = _cli(["--fixture", no_now_path, "--json"], env=cli_env)
+    check(
+        "no-now-cli-exit-0",
+        code_a == 0 and code_b == 0,
+        "exit=%s/%s %s" % (code_a, code_b, err_a.strip()[:160]),
+    )
+    cli_stripped = []
+    for payload in (cli_a, cli_b):
+        copy = dict(payload or {})
+        copy.pop("generated_at", None)
+        cli_stripped.append(json.dumps(copy, sort_keys=True, ensure_ascii=False))
+    check(
+        "no-now-cli-identical-minus-generated-at",
+        cli_stripped[0] == cli_stripped[1] and (cli_a or {}).get("generated_at") != (cli_b or {}).get("generated_at"),
+        "%s vs %s" % ((cli_a or {}).get("generated_at"), (cli_b or {}).get("generated_at")),
+    )
+    check(
+        "no-now-cli-nulls",
+        (cli_a or {}).get("collected_at") is None
+        and ((cli_a or {}).get("mac") or {}).get("uptime_s") is None
+        and all(
+            item.get("age_s") is None
+            for item in ((cli_a or {}).get("kanban") or {}).get("items") or []
+        )
+        and "collected_at" in ((cli_a or {}).get("reasons") or {}),
+        str((cli_a or {}).get("reasons")),
+    )
+
+    # --- Devin list: a null model carries a list-level reason (O2) ----------
+    devin_only = "@@DEVIN\n4123 /Users/x/.local/bin/devin --permission-mode dangerous\n@@END\n"
+    devin_payload, _devin_epoch = payload_for(devin_only, "fixture", "local", "omarchylink")
+    devin_items = (devin_payload.get("devin") or {}).get("items") or []
+    check(
+        "devin-model-null-with-list-reason",
+        bool(devin_items)
+        and devin_items[0].get("model") is None
+        and "devin.items" in (devin_payload.get("reasons") or {}),
+        str(devin_payload.get("devin")),
+    )
+
     # --- ping shapes --------------------------------------------------------
     direct_ipv6 = parse_ping(
         "pong from omarchylink (100.104.64.3) via [fd7a:115c:a1e0::1]:41641 in 7ms",
@@ -1130,6 +1302,31 @@ def self_check(args):
         json.dump(aged, handle)
     third = build(fake_args, runner=fake_runner)
     check("cache-expiry-recollects", len(calls) == 2 and third.get("cached") is False, "%d collectors" % len(calls))
+
+    # A cache dated in the future is a miss, not a fresh hit: a reader clock
+    # stepped back must recollect instead of pinning a stale sample (O1).
+    future_state = os.path.join(root, "future.json")
+    future_args = types.SimpleNamespace(
+        host="local", host_name=None, peer="omarchylink", timeout=5.0, state=future_state, fixture=None
+    )
+    calls_before = len(calls)
+    build(future_args, runner=fake_runner)
+    with open(future_state, "r", encoding="utf-8") as handle:
+        future_cache = json.load(handle)
+    future_cache["collected_epoch"] = time.time() + 3600
+    with open(future_state, "w", encoding="utf-8") as handle:
+        json.dump(future_cache, handle)
+    future_payload = build(future_args, runner=fake_runner)
+    check(
+        "future-cache-is-miss",
+        len(calls) == calls_before + 2 and future_payload.get("cached") is False,
+        "%d collectors, cached=%s" % (len(calls) - calls_before, future_payload.get("cached")),
+    )
+    check(
+        "future-cache-age-not-negative",
+        isinstance(future_payload.get("cache_age_s"), float) and future_payload["cache_age_s"] >= 0.0,
+        str(future_payload.get("cache_age_s")),
+    )
 
     # --- a runner that returns nothing is an answer, not a crash -----------
     blank_state = os.path.join(root, "blank-state.json")

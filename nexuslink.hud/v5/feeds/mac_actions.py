@@ -193,6 +193,40 @@ def command_matches_name(cmdline, name):
     return os.path.basename(tokens[0]) == name
 
 
+def command_name(cmdline):
+    """The program a foreign command line runs; never the whole line.
+
+    A refusal has to name what it found, but another process's full argv can
+    carry paths, flags and arguments that are not this tool's business to
+    print. The basename is enough evidence for a human.
+    """
+    body = (cmdline or "").strip()
+    if not body:
+        return "nothing"
+    try:
+        tokens = shlex.split(body)
+    except ValueError:
+        tokens = body.split()
+    if not tokens:
+        return "nothing"
+    return os.path.basename(tokens[0]) or "nothing"
+
+
+def display_line(argv):
+    """The command as a reader should see it: a program under $HOME shows as ~.
+
+    The argv that runs keeps the absolute path a non-interactive shell needs
+    (a gateway spawned without a login shell has no useful PATH); only this
+    printed and dry-run line is shortened, so output carries no absolute home
+    path (feeds brief).
+    """
+    parts = list(argv or [])
+    if parts and parts[0].startswith(HOME + os.sep):
+        head = "~" + parts[0][len(HOME):]
+        return " ".join([head] + [shlex.quote(part) for part in parts[1:]])
+    return shlex.join(parts)
+
+
 def hermes_bin():
     candidates = [os.path.join(HOME, ".local", "bin", "hermes"), shutil.which("hermes")]
     for candidate in candidates:
@@ -376,7 +410,7 @@ def build_plan(args, runtime):
         if not cmdline:
             raise Refusal("pid %d is gone; run wake again" % pid)
         if not command_matches_name(cmdline, "caffeinate"):
-            raise Refusal("pid %d is not caffeinate: %s" % (pid, text(cmdline, 120)))
+            raise Refusal("pid %d is not caffeinate (command: %s)" % (pid, command_name(cmdline)))
         plan["argv"] = ["kill", "-TERM", str(pid)]
         plan["pid"] = pid
     elif name == "start-bot":
@@ -403,7 +437,8 @@ def build_plan(args, runtime):
             raise Refusal("pid %d for %s is gone" % (pid, profile))
         if not command_matches_profile(cmdline, profile):
             raise Refusal(
-                "pid %d does not look like the %s bot: %s" % (pid, profile, text(cmdline, 120))
+                "pid %d does not look like the %s bot: %s"
+                % (pid, profile, command_name(cmdline))
             )
         plan["argv"] = ["kill", "-TERM", str(pid)]
         plan["pid"] = pid
@@ -411,7 +446,7 @@ def build_plan(args, runtime):
     else:  # pragma: no cover - guarded by argparse choices
         raise Refusal("unknown action %r" % name)
 
-    plan["display"] = shlex.join(plan["argv"])
+    plan["display"] = display_line(plan["argv"])
     return plan
 
 
@@ -741,6 +776,18 @@ def self_check(args):
         bot["pid_path"].endswith(os.path.join("bots", "kakashi.pid")),
         bot["pid_path"],
     )
+    # The printed line is reader-facing: a program under the home directory is
+    # shown as ~ while the argv keeps the absolute path (observation O3).
+    check(
+        "plan-start-bot-display-no-home-path",
+        HOME not in bot["display"] and bot["display"].endswith("-p kakashi gateway run"),
+        bot["display"],
+    )
+    check(
+        "plan-start-bot-argv-keeps-absolute-path",
+        os.path.isabs(bot["argv"][0]),
+        bot["argv"][0],
+    )
     for bad_profile in ("../evil", "Kakashi", "", "a b"):
         try:
             plan_for("start-bot", bad_profile)
@@ -761,14 +808,28 @@ def self_check(args):
     check("stop-bot-kill-by-pid", stop_plan["argv"] == ["kill", "-TERM", "4242"], str(stop_plan["argv"]))
     check("stop-bot-no-pattern", all("pkill" not in part for part in stop_plan["argv"]), str(stop_plan["argv"]))
 
-    mismatch = RecordingRuntime(ps_text="/usr/bin/python3 /tmp/other-job.py")
+    mismatch = RecordingRuntime(
+        ps_text="/usr/bin/python3 /tmp/other-job.py --token sk-not-for-output"
+    )
     mismatch.alive_map[4242] = True
+    mismatch_text = ""
     try:
         build_plan(local, mismatch)
-        refused = False
     except Refusal as exc:
-        refused = "does not look like the kakashi bot" in str(exc)
-    check("stop-bot-refuses-other-process", refused, "mismatched command line was accepted")
+        mismatch_text = str(exc)
+    check(
+        "stop-bot-refuses-other-process",
+        "does not look like the kakashi bot" in mismatch_text,
+        "mismatched command line was accepted",
+    )
+    # A refusal names the program, never another process's whole argv (O4).
+    check(
+        "stop-bot-refusal-names-program-only",
+        "python3" in mismatch_text
+        and "sk-not-for-output" not in mismatch_text
+        and "/tmp/other-job.py" not in mismatch_text,
+        mismatch_text,
+    )
 
     gone = RecordingRuntime(ps_text="")
     try:
@@ -793,6 +854,34 @@ def self_check(args):
     except Refusal as exc:
         refused = "no PID file" in str(exc)
     check("wakeoff-needs-recorded-pid", refused, "wakeoff planned without a recorded caffeinate PID")
+
+    # A recorded PID that now belongs to something else: refused, and the
+    # message names only the program (observation O4).
+    write_pid_file(os.path.join(state, "caffeinate.pid"), 5150, "wake", "caffeinate -dims")
+    foreign = RecordingRuntime(
+        ps_text="/usr/bin/python3 /tmp/other-job.py --token sk-not-for-output"
+    )
+    foreign.alive_map[5150] = True
+    foreign_args = types.SimpleNamespace(**vars(base))
+    foreign_args.action = "wakeoff"
+    foreign_args.value = None
+    foreign_text = ""
+    try:
+        build_plan(foreign_args, foreign)
+    except Refusal as exc:
+        foreign_text = str(exc)
+    check(
+        "wakeoff-refuses-foreign-pid",
+        "is not caffeinate" in foreign_text,
+        foreign_text or "a foreign PID was accepted as caffeinate",
+    )
+    check(
+        "wakeoff-refusal-names-program-only",
+        "python3" in foreign_text
+        and "sk-not-for-output" not in foreign_text
+        and "/tmp/other-job.py" not in foreign_text,
+        foreign_text,
+    )
 
     # --- safe action execution goes through the seam, not the real runner ---
     list_rt = RecordingRuntime(run_stdout="total 0\n")
