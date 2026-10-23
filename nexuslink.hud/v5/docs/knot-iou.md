@@ -259,8 +259,8 @@ input bakes the identical texture):
     /usr/bin/python3 tools/knot-iou.py still --progress 0.0 --out /tmp/knot-a00
     /usr/bin/python3 tools/knot-iou.py still --progress 0.3 --out /tmp/knot-a30
 
-    # 3. measure any still against the crop, gated at the R2 bar
-    /usr/bin/python3 tools/knot-iou.py measure <still.png> --min-band 0.72
+    # 3. measure any still against the crop, gated at both R2 bars
+    /usr/bin/python3 tools/knot-iou.py measure <still.png>
 
     # 4. the s2 cloud's own ceiling (why the trace is fitted to the still)
     /usr/bin/python3 tools/knot-iou.py ceiling --t 21.5
@@ -268,7 +268,8 @@ input bakes the identical texture):
 `trace` prints the band, half width, px-per-unit, Swarm size, the level set's
 predicted IoU and the scatter cloud; `measure` prints `band_iou`,
 `silhouette_iou_blur6`, both coverages and the translation it found, and exits 1
-below `--min-band`, so it can gate a card. The defaults are the shipped
+below `--min-band` (default 0.72) or `--min-blur` (default 0.53), so one command
+gates the card on both R2 bars. The defaults are the shipped
 configuration (threshold 0.10, closing 9, opening 7, r_max 276, 2,000 px floor,
 1 px silhouette offset, scatter 5.5 px pitch / 28 px offset / seed 17). The stills
 on this card were made with `--rest` and `--progress 0.0/0.3/0.6/1.0` at the

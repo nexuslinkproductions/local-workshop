@@ -848,8 +848,10 @@ def main():
                     help="camera distance in knot heights for ceiling (s2 uses 2.7)")
     ap.add_argument("--save", help="write the measured image (png)")
     ap.add_argument("--json", help="write the numbers to this json file")
-    ap.add_argument("--min-band", type=float, default=0.90,
-                    help="band IoU that counts as a pass")
+    ap.add_argument("--min-band", type=float, default=0.72,
+                    help="band IoU that counts as a pass (executive ruling R2)")
+    ap.add_argument("--min-blur", type=float, default=0.53,
+                    help="silhouette_iou_blur6 that counts as a pass (ruling R2)")
     # trace
     ap.add_argument("--out", help="trace: SDF png to write (default: print only)")
     ap.add_argument("--tube-px", type=float, default=None,
@@ -963,9 +965,12 @@ def main():
     if args.json:
         with open(args.json, "w") as f:
             json.dump(res, f, indent=2)
-    ok = res["band_iou"] >= args.min_band
-    print("VERDICT band_iou %.4f vs bar %.2f -> %s"
-          % (res["band_iou"], args.min_band, "PASS" if ok else "FAIL"))
+    ok = (res["band_iou"] >= args.min_band
+          and res["silhouette_iou_blur6"] >= args.min_blur)
+    print("VERDICT band_iou %.4f vs bar %.2f, silhouette_iou_blur6 %.4f vs bar "
+          "%.2f -> %s"
+          % (res["band_iou"], args.min_band, res["silhouette_iou_blur6"],
+             args.min_blur, "PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
 
