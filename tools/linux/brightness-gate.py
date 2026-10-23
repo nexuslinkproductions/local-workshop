@@ -12,10 +12,19 @@ Exit 0 when every gated metric is within its tolerance, 1 otherwise, 2 on bad in
 Gated metrics (all luminance 0..255, Rec. 601 L from RGB):
   room_mean    mean over the room-only mask (knot and every widget box masked out)
   widget_p95   95th percentile over the union of the widget boxes (text and dots)
-  frame_p95    95th percentile over the whole frame
-  frame_p99    99th percentile over the whole frame
+  frame_mean   mean over the composed frame (unwired boxes excluded)
+  frame_p95    95th percentile over the composed frame
+  frame_p99    99th percentile over the composed frame
 Each render value is compared with the reference value as a ratio. A metric
 passes when |render / ref - 1| <= its tolerance.
+
+Calibration (--live <capture.png>): compares the harness render with a live grim
+capture of the same output (top LIVE_BAR_PX rows dropped from both, the omarchy bar is
+not part of the harness). Mean and p95 within 5 percent, p99 within 10 percent.
+A capture of another size is resized with LANCZOS to the render size first.
+Calibrate only with a render of the same tree that the capture came from (the c7d4b62
+live P1 tree). A later tree is a different look: its widgets changed, so it fails
+calibration by design and is judged by the s10 metrics above.
 
 Information only (not gated): per-widget p95 and mean for each box in the spacing file.
 Region geometry comes from s10-spacing.json (boxes and knot), so the gate follows the
@@ -32,8 +41,14 @@ from PIL import Image
 # ---- tolerances (defaults, fraction of the reference value) ----
 ROOM_TOL = 0.10
 WIDGET_TOL = 0.10
+FRAME_MEAN_TOL = 0.10
 FRAME_P95_TOL = 0.10
 FRAME_P99_TOL = 0.10
+
+# ---- live calibration ----
+# The omarchy bar draws the top rows of a live capture; the harness never draws it.
+LIVE_BAR_PX = 26
+CAL_TOL = {"mean": 0.05, "p95": 0.05, "p99": 0.10}
 
 # ---- region geometry ----
 WIDGET_PAD_PX = 12      # widget boxes grow by this much before they are masked out of the room
@@ -55,8 +70,11 @@ DEFAULT_SPACING = os.path.expanduser(
     "~/NEXUS_AI_CENTER/04_PROJECTS/HUD/hud-candidates/comp-r1/s10/s10-spacing.json")
 
 
-def luma(path):
-    rgb = np.asarray(Image.open(path).convert("RGB")).astype(np.float64)
+def luma(path, size=None):
+    im = Image.open(path).convert("RGB")
+    if size is not None and im.size != size:
+        im = im.resize(size, Image.Resampling.LANCZOS)
+    rgb = np.asarray(im).astype(np.float64)
     return LUMA_R * rgb[..., 0] + LUMA_G * rgb[..., 1] + LUMA_B * rgb[..., 2]
 
 
@@ -107,6 +125,7 @@ def compare(render, ref, spacing):
     add("room_mean", render[room].mean(), ref[room].mean(), ROOM_TOL)
     add(f"widget_p{PCT_MID}", np.percentile(render[widget], PCT_MID),
         np.percentile(ref[widget], PCT_MID), WIDGET_TOL)
+    add("frame_mean", render[frame].mean(), ref[frame].mean(), FRAME_MEAN_TOL)
     add(f"frame_p{PCT_MID}", np.percentile(render[frame], PCT_MID),
         np.percentile(ref[frame], PCT_MID), FRAME_P95_TOL)
     add(f"frame_p{PCT_HI}", np.percentile(render[frame], PCT_HI),
@@ -123,17 +142,39 @@ def compare(render, ref, spacing):
     return rows, info
 
 
+def calibrate(render, live):
+    """Harness render vs a live capture of the same output, bar rows dropped from both.
+
+    Returns rows keyed mean/p95/p99 with ratio = harness / live. A factor for the harness
+    is 1 / ratio (apply it as a gain only when a metric is outside its CAL_TOL).
+    """
+    keep = np.ones(render.shape, dtype=bool)
+    keep[:LIVE_BAR_PX, :] = False
+    rows = {}
+    stat = {"mean": np.mean, "p95": lambda v: np.percentile(v, PCT_MID),
+            "p99": lambda v: np.percentile(v, PCT_HI)}
+    for name, fn in stat.items():
+        r, l = float(fn(render[keep])), float(fn(live[keep]))
+        ratio = (r / l) if l else float("inf")
+        rows[name] = {"render": round(r, 2), "live": round(l, 2), "ratio": round(ratio, 4),
+                      "factor": round(1.0 / ratio, 4) if ratio else None,
+                      "tol": CAL_TOL[name], "pass": bool(abs(ratio - 1.0) <= CAL_TOL[name])}
+    return rows
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Brightness gate: composed HUD render vs s10.")
     ap.add_argument("render")
     ap.add_argument("--ref", default=DEFAULT_REF)
     ap.add_argument("--spacing", default=DEFAULT_SPACING)
+    ap.add_argument("--live", default=None, help="live grim capture of the same output (calibration)")
     ap.add_argument("--json", default=None, help="write the full result here")
     a = ap.parse_args(argv)
     try:
         spacing = json.load(open(a.spacing))
         ref = luma(a.ref)
         render = luma(a.render)
+        live = luma(a.live, size=(render.shape[1], render.shape[0])) if a.live else None
     except (OSError, ValueError, KeyError) as e:
         print(f"brightness-gate: bad input: {e}", file=sys.stderr)
         return 2
@@ -148,9 +189,19 @@ def main(argv=None):
         print(f"  info {name:12s} p95 {r['p95_render']:6.1f} vs {r['p95_ref']:6.1f}  "
               f"mean {r['mean_render']:6.1f} vs {r['mean_ref']:6.1f}{tag}")
     print("BRIGHTNESS-GATE " + ("PASS" if ok else "FAIL"))
+    cal = None
+    if live is not None:
+        cal = calibrate(render, live)
+        cal_ok = all(r["pass"] for r in cal.values())
+        for name, r in cal.items():
+            print(f"  calib {name:5s} harness={r['render']:7.2f} live={r['live']:7.2f} "
+                  f"ratio={r['ratio']:.3f} factor={r['factor']} tol=+/-{int(r['tol'] * 100)}% "
+                  f"{'PASS' if r['pass'] else 'FAIL'}")
+        print("CALIBRATION " + ("PASS" if cal_ok else "FAIL"))
+        ok = ok and cal_ok
     if a.json:
         with open(a.json, "w") as f:
-            json.dump({"pass": ok, "metrics": rows, "boxes": info}, f, indent=2)
+            json.dump({"pass": ok, "metrics": rows, "boxes": info, "calibration": cal}, f, indent=2)
     return 0 if ok else 1
 
 
