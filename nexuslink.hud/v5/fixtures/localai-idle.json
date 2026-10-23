@@ -1,0 +1,68 @@
+{
+  "ts": 1792703222.1396573,
+  "age_s": 0.9,
+  "model": null,
+  "tokens_per_s": null,
+  "queue": 0,
+  "vram_used_mib": 0,
+  "vram_total_mib": 12288,
+  "model_load_s": null,
+  "slot_count": 2,
+  "slots": [
+    {
+      "slot": 0,
+      "busy": false,
+      "request_id": null,
+      "session": null,
+      "model": null,
+      "tokens_cached": 0
+    },
+    {
+      "slot": 1,
+      "busy": false,
+      "request_id": null,
+      "session": null,
+      "model": null,
+      "tokens_cached": 0
+    }
+  ],
+  "vram_processes": [],
+  "models": [
+    {
+      "name": "ornith-chief-v3",
+      "model_id": "ornith-chief-v3",
+      "file": "ornith-chief-v3-Q4_K_M.gguf",
+      "bytes": 11811160064,
+      "loaded": false
+    },
+    {
+      "name": "ornith-9b",
+      "model_id": "ornith-9b",
+      "file": "ornith-9b-Q5_K_M.gguf",
+      "bytes": 5798205849,
+      "loaded": false
+    },
+    {
+      "name": "gemma4-12b",
+      "model_id": "gemma4-12b",
+      "file": "gemma4-12b-Q4_K_M.gguf",
+      "bytes": 7945689497,
+      "loaded": false
+    },
+    {
+      "name": "ministral3-14b",
+      "model_id": "ministral3-14b",
+      "file": "ministral3-14b-Q4_K_M.gguf",
+      "bytes": 9234179686,
+      "loaded": false
+    },
+    {
+      "name": "qwen3.6-35b-a3b-mtp",
+      "model_id": "qwen3.6-35b-a3b-mtp",
+      "file": "qwen3.6-35b-a3b-mtp-IQ3_XXS.gguf",
+      "bytes": 21260088115,
+      "loaded": false
+    }
+  ],
+  "fixture_note": "The same box with nothing loaded: this is what the LOCAL AI dock shows at rest and what makes localai.unload a no-op. Values are the empty-state shape from recon/05-local-ai.md; they are a plausible idle snapshot, not a measured capture. age_s is the age at capture, not now (fixture mode never reads the host clock)."
+}

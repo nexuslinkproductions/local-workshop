@@ -1,0 +1,79 @@
+{
+  "ts": 1792703222.1396573,
+  "age_s": 0.4,
+  "model": "ornith-chief-v3",
+  "tokens_per_s": 41.6,
+  "queue": 0,
+  "vram_used_mib": 11012,
+  "vram_total_mib": 12288,
+  "model_load_s": 3.8,
+  "slot_count": 2,
+  "slots": [
+    {
+      "slot": 0,
+      "busy": false,
+      "request_id": null,
+      "session": null,
+      "model": "ornith-chief-v3",
+      "tokens_cached": 0
+    },
+    {
+      "slot": 1,
+      "busy": true,
+      "request_id": "req_7f3a",
+      "session": "chief-voice/2026-10-23T00:12Z",
+      "model": "ornith-chief-v3",
+      "tokens_cached": 1842
+    }
+  ],
+  "vram_processes": [
+    {
+      "pid": 4242,
+      "process": "llama-server",
+      "used_mib": 10382
+    },
+    {
+      "pid": 1791,
+      "process": "llama-server",
+      "used_mib": 630
+    }
+  ],
+  "models": [
+    {
+      "name": "ornith-chief-v3",
+      "model_id": "ornith-chief-v3",
+      "file": "ornith-chief-v3-Q4_K_M.gguf",
+      "bytes": 11811160064,
+      "loaded": true
+    },
+    {
+      "name": "ornith-9b",
+      "model_id": "ornith-9b",
+      "file": "ornith-9b-Q5_K_M.gguf",
+      "bytes": 5798205849,
+      "loaded": false
+    },
+    {
+      "name": "gemma4-12b",
+      "model_id": "gemma4-12b",
+      "file": "gemma4-12b-Q4_K_M.gguf",
+      "bytes": 7945689497,
+      "loaded": false
+    },
+    {
+      "name": "ministral3-14b",
+      "model_id": "ministral3-14b",
+      "file": "ministral3-14b-Q4_K_M.gguf",
+      "bytes": 9234179686,
+      "loaded": false
+    },
+    {
+      "name": "qwen3.6-35b-a3b-mtp",
+      "model_id": "qwen3.6-35b-a3b-mtp",
+      "file": "qwen3.6-35b-a3b-mtp-IQ3_XXS.gguf",
+      "bytes": 21260088115,
+      "loaded": false
+    }
+  ],
+  "fixture_note": "Shape and key names come from recon/05-local-ai.md (llama-swap /running, /slots, per-pid fdinfo VRAM on the B580, GGUF sizes on disk) and match F7's chief.json field for field on the shared keys (same ts, model, tokens_per_s, queue, vram_used_mib, vram_total_mib). The numbers are a plausible loaded-model snapshot, not a measured capture. age_s is the metrics age the writer recorded at capture time, not the age now: this module never reads the host clock in fixture mode, so two fixture runs are byte-identical, and a copied fixture is not pretending to be live. The Linux box replaces this file with the real /run/user/1000/chief/metrics.json and the real model directory."
+}
