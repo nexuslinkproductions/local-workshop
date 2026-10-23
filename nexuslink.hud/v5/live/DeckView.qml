@@ -33,6 +33,11 @@ Item {
     property var link: null
     property var localAi: null
     property var disks: []
+    // P2 feed outputs (DeckV5 binds AgentsFeed.agents, NowPlayingFeed.nowPlaying,
+    // TodayFeed.today). Empty default: each widget shows its own error state.
+    property var agents: ({})
+    property var nowPlaying: ({})
+    property var today: ({})
     property var apps: []
     property string findQuery: ""
     property string findFilter: "all"
@@ -58,9 +63,9 @@ Item {
     readonly property real knotCy: Tokens.knotCentreY
     readonly property real leftBandX: 420
     readonly property real rightBandX: 2150
-    // s10 slots reserved for P2 (not in the live tree yet, so nothing is placed):
-    // agents 161.2,1084 to 507.5,1213; now_playing 80,84 to 480,160; today 2060,84
-    // to 2480,200. Corners (chief/more, s10 corners_l/r) are not a live widget.
+    // s10 P2 slots (wired below): agents 161.2,1084 to 507.5,1213; now_playing 80,84
+    // to 480,160; today 2060,84 to 2480,200. Corners (chief/more, s10 corners_l/r) are
+    // not a live widget.
 
     // ---- pointer (deck coordinates) ---------------------------------------
     // One passive hover handler, no Timer. It only feeds the proximity field;
@@ -172,13 +177,13 @@ Item {
 
         // Positions: s10 box top-left minus the drawn content offset in the widget
         // (measured at rest, drift removed): crew (0.2, 24.6), mac (0.2, 4.1),
-        // local (0.9, 4.1), storage (-0.1, 3.8). Sizes are not changed here (P2).
+        // local (0.9, 4.1), storage (-0.1, 3.8). Sizes from the P2 widget reports.
         CrewWidget {
             id: crewW
             x: 184.4 - 0.2
             y: 248 - 24.6
-            width: 360
-            height: 240
+            width: 408
+            height: 330
             tick: root.tick
             shown: root.shown
             phase: 0.4
@@ -191,7 +196,7 @@ Item {
             x: 169.3 - 0.2
             y: 692.9 - 4.1
             width: 360
-            height: 220
+            height: 340
             tick: root.tick
             shown: root.shown
             phase: 1.9
@@ -203,8 +208,8 @@ Item {
             id: localW
             x: 1991.3 - 0.9
             y: 451.7 - 4.1
-            width: 320
-            height: 220
+            width: 470.2
+            height: 222.2
             tick: root.tick
             shown: root.shown
             phase: 3.1
@@ -218,8 +223,8 @@ Item {
             id: storageW
             x: 2001.3 + 0.1
             y: 773 - 3.8
-            width: 340
-            height: 200
+            width: 395
+            height: 235
             tick: root.tick
             shown: root.shown
             phase: 4.4
@@ -227,6 +232,43 @@ Item {
             opacity: root.findOpen ? 0 : 1
             Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             onExpandRequested: root.view = "storage"
+        }
+
+        // P2 widgets at the s10 box positions and sizes from the P2 widget reports.
+        AgentsWidget {
+            id: agentsW
+            x: 161.2
+            y: 1084
+            width: 346.3
+            height: 129
+            tick: root.tick
+            shown: root.shown
+            phase: 5.6
+            agents: root.agents
+        }
+
+        NowPlayingWidget {
+            id: nowPlayingW
+            x: 80
+            y: 84
+            width: 400
+            height: 76
+            tick: root.tick
+            shown: root.shown
+            phase: 0.9
+            np: root.nowPlaying
+        }
+
+        TodayWidget {
+            id: todayW
+            x: 2060
+            y: 84
+            width: 420
+            height: 116
+            tick: root.tick
+            shown: root.shown
+            phase: 2.4
+            today: root.today
         }
 
         LauncherArc {

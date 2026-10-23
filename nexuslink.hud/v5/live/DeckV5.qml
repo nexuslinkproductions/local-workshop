@@ -57,6 +57,9 @@ Item {
     LinkFeed { id: linkFeed; active: root.shown }
     StorageFeed { id: storageFeed; active: root.shown }
     LocalAiFeed { id: localFeed; active: root.shown }
+    AgentsFeed { id: agentsFeed; active: root.shown }
+    NowPlayingFeed { id: nowPlayingFeed; active: root.shown }
+    TodayFeed { id: todayFeed; active: root.shown }
     FindFeed {
         id: findFeed
         // the deck is shown whenever this wrapper is alive; without this the
@@ -105,6 +108,9 @@ Item {
         link: linkFeed.link
         localAi: localFeed.localAi
         disks: storageFeed.disks
+        agents: agentsFeed.agents
+        nowPlaying: nowPlayingFeed.nowPlaying
+        today: todayFeed.today
         apps: root.apps
         findResults: findFeed.results
         findBusy: findFeed.busy
