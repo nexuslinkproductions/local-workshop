@@ -1,0 +1,26 @@
+[
+  {
+    "unit": "pipewire.service",
+    "load": "loaded",
+    "active": "failed",
+    "sub": "failed",
+    "description": "PipeWire Multimedia Service",
+    "following": "",
+    "object_path": "/org/freedesktop/systemd1/unit/pipewire_2eservice",
+    "job_id": 0,
+    "job_type": "",
+    "job_path": ""
+  },
+  {
+    "unit": "nexuslink-hud.service",
+    "load": "loaded",
+    "active": "failed",
+    "sub": "exit-code",
+    "description": "NexusLink HUD shell",
+    "following": "",
+    "object_path": "/org/freedesktop/systemd1/unit/nexuslink_2dhud_2eservice",
+    "job_id": 0,
+    "job_type": "",
+    "job_path": ""
+  }
+]
