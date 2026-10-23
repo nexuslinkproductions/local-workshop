@@ -54,7 +54,7 @@ CAM_D = 2.7 * KNOT_H
 
 SHADER_DIR = ("/home/nexuslink/hud-wt/v5-live/nexuslink.hud/v5/live"
               "/shaders")
-DEFAULT_TEX = SHADER_DIR + "/knot-points2-keep.png"
+DEFAULT_TEX = SHADER_DIR + "/knot-points3.png"
 V1_TEX = SHADER_DIR + "/knot-points.png"
 
 
@@ -100,38 +100,41 @@ class KnotPort:
     LOBE_T = (5.0, 6.1, 7.0)
     LOBE_PH = (0.00, 0.37, 0.71)
     LOBE_W = 0.55            # angular width of the lobe weight, radians
-    LOBE_AMP = 0.028         # fraction of R, radial, +-7.5 px
+    LOBE_AMP = 0.034         # v3: local scale of the lobe about the knot centre (+-3 percent)
     LOBE_FM = 0.06           # cycles, slow frequency modulation depth
     LOBE_FM_T = (31.0, 38.0, 45.0)   # 31 + 7k seconds
     LOBE_PT_AMP = 0.035      # cycles, per point phase offset, +- half
     # C ribbon fronts
-    C_T = (4.2, 6.4, 8.6)
+    C_T = (6.0, 8.5, 11.0)
     C_DIR = (1.0, -1.0, 1.0)
     C_OFF = (0.10, 0.55, 0.80)
-    C_W = 0.045
-    C_AMP = 0.016            # fraction of R
+    C_W = 0.11
+    C_TROUGH = 0.12
+    C_AMP = 0.043            # fraction of R
     # C ring fronts (port choice: two fronts, half amplitude, own periods)
-    CR_T = (7.5, 11.0)
+    CR_T = (9.5, 13.0)
     CR_DIR = (1.0, -1.0)
     CR_OFF = (0.25, 0.70)
     # D curl noise
     D_SCALE = 55.0
     D_STEP = 0.05
-    D_AMP = 0.018            # fraction of R, 8 units = 5 px
+    D_GAIN = 0.048           # fraction of R times the strand envelope
+    D_AMP = 0.062            # cap, fraction of R
     D_SWIRL = 0.0            # optional 0.35 rad twist around dirW, off
     # E local events
-    E_L = (4.6, 6.3, 8.4)
-    E_OFF = (0.0, 1.9, 3.7)
-    E_SPEED = 0.055
-    E_W = 0.03
-    E_AMP = 0.030            # fraction of R
+    E_L = (5.3, 8.1)
+    E_OFF = (0.0, 2.9)
+    E_SPEED = 0.05
+    E_W = 0.055
+    E_AMP = 0.065            # fraction of R
     E_RING_AMP = 0.5
     # F sparks: laps, direction, class
     SPARK_LAP = (14.0, 19.0, 26.0, 18.0, 31.0)
     SPARK_DIR = (1.0, -1.0, 1.0, 1.0, -1.0)
     SPARK_CLS = (0, 0, 0, 1, 1)
     SPARK_OFF = (0.00, 0.37, 0.71, 0.20, 0.63)
-    SPARK_HEAD = 0.0035
+    SPARK_HEAD = 0.002
+    SPARK_CARRIER = 0.33
     SPARK_TAIL = 0.012
     # A global pose
     YAW_AMP = math.radians(12.0)
@@ -141,7 +144,7 @@ class KnotPort:
     def __init__(self, tex=DEFAULT_TEX, n=4384, width=2048, rows=11,
                  texels_per_point=5, knot_px=540.0, w=700.0, h=700.0,
                  motion="v2", has_u=None, has_occl=None,
-                 soft_limit=True, local_limit_pct=4.5, limit_mode="tanh"):
+                 soft_limit=True, local_limit_pct=9.5, limit_mode="tanh"):
         self.tex = tex
         self.n = int(n)
         self.width = int(width)
@@ -191,9 +194,11 @@ class KnotPort:
             t4 = q[:, 4]
             self.u = t4[:, 0] / 255.0
             self.occl = t4[:, 1] / 255.0
+            self.crowd = t4[:, 2] / 255.0
         else:
             self.u = self.s.copy()
             self.occl = np.ones(n)
+            self.crowd = np.ones(n)
         # er = normalize(vec3(P.x, P.y, 0)); dirW = normalize(er * 0.8 + N * 0.45)
         er = np.stack([self.P[:, 0], self.P[:, 1], np.zeros(n)], axis=1)
         ln = np.linalg.norm(er, axis=1, keepdims=True)
@@ -210,7 +215,9 @@ class KnotPort:
         self.ph_point = self.LOBE_PT_AMP * (hash01(self.pid * 1.0 + 0.5) - 0.5)
         # v2.1: occlusion dimming factors
         self.occl2 = np.clip(self.occl * 1.19, 0.0, 1.0)
-        self.occl_bright = 1.0 - 0.65 * self.occl2
+        self.occl_bright = (1.0 - 0.75 * self.occl2) * (1.0 + 0.9 * (self.crowd - 1.0))
+        h = fract(np.sin(self.pid * 78.233 + 1.7) * 43758.5453)
+        self.carrier = np.where(h < self.SPARK_CARRIER, 1.0, 0.3)
         self.occl_radius = 1.0 - 0.25 * self.occl2
 
     # ---- A: global pose -------------------------------------------------
@@ -256,6 +263,14 @@ class KnotPort:
         f = k * (self.knot_px / KNOT_H)
         return np.stack([self.w * 0.5 + x1 * f, self.h * 0.5 + y1 * f], axis=1)
 
+    # ---- strand envelope (v3) -------------------------------------------
+    def env(self, t):
+        u = self.u
+        e = ((1.0 + 0.65 * np.sin(TAU * 3.0 * u + 0.9))
+             * (1.0 + 0.30 * np.sin(TAU * (2.0 * u - t / 29.0) + 2.2))
+             * (1.0 + 0.20 * np.sin(TAU * (5.0 * u + t / 37.0) + 4.1)))
+        return np.minimum(e, 1.8)
+
     # ---- B: lobe breathing (v2.1: tip angles, slow FM, per point phase) --
     def lobe_phase(self, t):
         """Lobe clock phase in cycles, (3, N) after the per point offset."""
@@ -275,8 +290,8 @@ class KnotPort:
             # breath_at divides by 5.5, so feed 5.5 * phase in cycles
             bl += wgt * breath_at(5.5 * ph[k], 0.0)
         bl = bl / np.maximum(wsum, 1e-9)
-        amp = R_KNOT * self.LOBE_AMP * (2.0 * bl - 1.0)
-        d = self.er * amp[:, None]
+        sc = self.LOBE_AMP * (2.0 * bl - 1.0)
+        d = np.stack([self.P[:, 0] * sc, self.P[:, 1] * sc, np.zeros(self.n)], axis=1)
         return d, (2.0 * bl - 1.0)
 
     # ---- C: peristaltic fronts ------------------------------------------
@@ -284,7 +299,7 @@ class KnotPort:
         f = fract(off + dirn * t / T)
         d = fract(uu - f + 0.5) - 0.5
         return (np.exp(-(d / self.C_W) ** 2)
-                - 0.35 * np.exp(-((d + 0.05 * dirn) / self.C_W) ** 2))
+                - 0.35 * np.exp(-((d + self.C_TROUGH * dirn) / self.C_W) ** 2))
 
     def term_C(self, t):
         g = np.zeros(self.n)
@@ -294,6 +309,7 @@ class KnotPort:
             g = np.where(self.ribbon, g + gi, g)
         for T, dirn, off in zip(self.CR_T, self.CR_DIR, self.CR_OFF):
             g = np.where(ring, g + 0.5 * self._front(t, T, dirn, off, self.u), g)
+        g = g * self.env(t)
         amp = R_KNOT * self.C_AMP
         return self.dirW * (amp * g)[:, None], g
 
@@ -326,7 +342,7 @@ class KnotPort:
         V = np.stack([dA_dy[:, 2] - dA_dz[:, 1],
                       dA_dz[:, 0] - dA_dx[:, 2],
                       dA_dx[:, 1] - dA_dy[:, 0]], axis=1)
-        disp = V * (R_KNOT * self.D_AMP / 2.0)
+        disp = V * (R_KNOT * self.D_GAIN * self.env(t))[:, None]
         cap = R_KNOT * self.D_AMP
         ln = np.linalg.norm(disp, axis=1)
         sc = np.where(ln > cap, cap / np.maximum(ln, 1e-12), 1.0)
@@ -347,7 +363,7 @@ class KnotPort:
     def term_E(self, t):
         n = self.n
         r = np.zeros(n)
-        for j in range(3):
+        for j in range(len(self.E_L)):
             L = self.E_L[j]
             off = self.E_OFF[j]
             e = math.floor((t + off) / L)
@@ -357,7 +373,7 @@ class KnotPort:
             front = age * self.E_SPEED
             d = np.abs(fract(self.u - s0 + 0.5) - 0.5)
             prof = (np.exp(-((d - front) / self.E_W) ** 2)
-                    * float(smoothstep(0.0, 0.25, age)) * math.exp(-age / 2.0))
+                    * float(smoothstep(0.0, 0.8, age)) * math.exp(-age / 2.6))
             prof = np.where(self.ribbon, prof, self.E_RING_AMP * prof)
             r = np.maximum(r, prof)
         amp = R_KNOT * self.E_AMP
@@ -375,7 +391,7 @@ class KnotPort:
             behind = -d                       # > 0 only behind the head
             tail = np.where(behind > 0.0,
                             np.exp(-behind / self.SPARK_TAIL), 0.0)
-            head = np.exp(-(d / self.SPARK_HEAD) ** 2)
+            head = np.exp(-(d / self.SPARK_HEAD) ** 2) * self.carrier
             m = (self.cls == cls)
             v = np.where(m, np.maximum(head, 0.85 * tail), 0.0)
             out = np.maximum(out, v)
@@ -449,11 +465,12 @@ class KnotPort:
         # shading factors of the local terms plus v2.1 occlusion and sparks
         sB = 2.0 * bl - 1.0
         sp, sp_head = self.term_F(t)
-        out["radius"] = ((1.0 + 0.08 * sB) * (1.0 + 0.22 * gC)
-                         * (1.0 + 0.35 * rE) * self.occl_radius)
-        out["bright"] = ((1.0 + 0.12 * sB) * (1.0 + 0.40 * gC)
-                         * (1.0 + 0.50 * rE) * self.occl_bright
-                         * (1.0 + 1.5 * sp))
+        out["radius"] = (np.clip((1.0 + 0.14 * sB) * (1.0 + 0.32 * gC)
+                                 * (1.0 + 0.45 * rE), 0.70, 1.35)
+                         * self.occl_radius)
+        out["bright"] = (np.clip((1.0 + 0.20 * sB) * (1.0 + 0.42 * gC)
+                                 * (1.0 + 0.60 * rE), 0.55, 1.40)
+                         * self.occl_bright * (1.0 + 1.5 * sp))
         out["lobe"] = bl
         out["front"] = gC
         out["event"] = rE

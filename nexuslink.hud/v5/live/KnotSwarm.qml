@@ -21,7 +21,7 @@ Item {
     // TEX_WIDTH at the top of shaders/knot.vert. The production set is
     // knot-points2-keep.png (5 texels per point, 11 rows); the source is a property
     // so a scene can swap the point set without editing the shader.
-    property url pointsSource: Qt.resolvedUrl("shaders/knot-points2-keep.png")
+    property url pointsSource: Qt.resolvedUrl("shaders/knot-points3.png")
     readonly property int texelStride: 5
     readonly property int texRows: 11
     readonly property int texWidth: 2048

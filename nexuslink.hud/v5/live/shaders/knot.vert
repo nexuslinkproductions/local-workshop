@@ -15,8 +15,12 @@
 //  D  curl-noise micro-currents, small groups swirl together
 //  E  local events: a ring swelling out from a hashed point, every 4 to 9 s
 //  F  five acid sparks gliding along the strands
-// The sum of the local terms is soft limited to 4.5 percent of R so the
-// triquetra and its over/under weave stay readable (G).
+// v3 (repair K): a per strand activity envelope (static 3 lobe term plus two
+// slow drifting terms, periods 29 and 37 s) multiplies the strand terms C and D,
+// so different segments are more or less active over time; the local terms are
+// 2 to 3 times larger than v2 and soft limited at 9.5 percent of R (G); the
+// point set is even (knot-points3.png) and texel4.b carries a crowd weight that
+// keeps stacked depth layers from adding up to white blobs at the crossings.
 
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec4 qt_MultiTexCoord0;
@@ -87,9 +91,18 @@ float angDiff(float a, float b) {
 float frontG(float uu, float o, float dir, float period, float tt) {
     float f = fract(o + dir * tt / period);
     float d = fract(uu - f + 0.5) - 0.5;
-    float a = exp(-(d / 0.045) * (d / 0.045));
-    float b = exp(-((d + 0.05 * dir) / 0.045) * ((d + 0.05 * dir) / 0.045));
+    float a = exp(-(d / 0.11) * (d / 0.11));
+    float b = exp(-((d + 0.12 * dir) / 0.11) * ((d + 0.12 * dir) / 0.11));
     return a - 0.35 * b;
+}
+
+// per strand activity envelope, mean 1: a static 3 lobe term and two slow
+// drifting terms (29 s and 37 s) so segments take turns being active
+float envU(float uu, float tt) {
+    float e = (1.0 + 0.65 * sin(TAU * 3.0 * uu + 0.9))
+            * (1.0 + 0.30 * sin(TAU * (2.0 * uu - tt / 29.0) + 2.2))
+            * (1.0 + 0.20 * sin(TAU * (5.0 * uu + tt / 37.0) + 4.1));
+    return min(e, 1.8);
 }
 
 // curl-noise vector potential (spec D), p in units of 55 knot units
@@ -147,6 +160,9 @@ void main() {
     float su = t4.r;
     // under strand weight, 0 away from the crossings, 0.839 at the deepest
     float occl2 = clamp(t4.g * 1.19, 0.0, 1.0);
+    // crowd weight (texel4.b): 1 on an isolated strand, down to 0.35 where
+    // another pass stacks behind it in projection
+    float crowd = t4.b;
 
     vec3 er = normalize(vec3(P.x, P.y, 0.0));
     vec3 dirW = normalize(er * 0.8 + N3 * 0.45);
@@ -189,52 +205,54 @@ void main() {
     // ---- C: peristaltic fronts along the strand (u) ---------------------
     float g;
     if (cls < 0.5) {
-        g = frontG(su, 0.10, 1.0, 4.2, t)
-          + frontG(su, 0.55, -1.0, 6.4, t)
-          + frontG(su, 0.80, 1.0, 8.6, t);
+        g = frontG(su, 0.10, 1.0, 6.0, t)
+          + frontG(su, 0.55, -1.0, 8.5, t)
+          + frontG(su, 0.80, 1.0, 11.0, t);
     } else {
-        g = 0.5 * (frontG(su, 0.20, 1.0, 7.5, t)
-                 + frontG(su, 0.60, -1.0, 11.0, t));
+        g = 0.5 * (frontG(su, 0.20, 1.0, 9.5, t)
+                 + frontG(su, 0.60, -1.0, 13.0, t));
     }
+    float env = envU(su, t);
+    g *= env;
 
     // ---- D: curl-noise micro-currents -----------------------------------
     vec3 vel = curlA(P / 55.0, t);
-    vec3 dD = vel * (R * 0.009);
+    vec3 dD = vel * (R * 0.048 * env);
     float dl0 = length(dD);
-    float dlim = R * 0.018;
+    float dlim = R * 0.062;
     dD *= dlim * (1.0 - exp(-dl0 / dlim)) / max(dl0, 1e-4);
 
     // ---- E: local events, a ring travelling away from a hashed point ----
     float ev = 0.0;
-    for (int j = 0; j < 3; j++) {
-        float L = j == 0 ? 4.6 : (j == 1 ? 6.3 : 8.4);
-        float off = j == 0 ? 0.0 : (j == 1 ? 1.9 : 3.7);
+    for (int j = 0; j < 2; j++) {
+        float L = j == 0 ? 5.3 : 8.1;
+        float off = j == 0 ? 0.0 : 2.9;
         float tt = t + off;
         float ei = floor(tt / L);
         float age = tt - ei * L;
         float s0 = fract(sin(ei * 12.9898 + float(j) * 78.233) * 43758.5453);
         float d = abs(fract(su - s0 + 0.5) - 0.5);
-        float front = age * 0.055;
-        float x = (d - front) / 0.03;
-        float r = exp(-x * x) * smoothstep(0.0, 0.25, age) * exp(-age / 2.0);
+        float front = age * 0.05;
+        float x = (d - front) / 0.055;
+        float r = exp(-x * x) * smoothstep(0.0, 0.8, age) * exp(-age / 2.6);
         ev = max(ev, r);
     }
     float evK = cls < 0.5 ? 1.0 : 0.5;   // the ring moves at half amplitude
 
     // ---- sum the local terms, soft limited to 4.5 percent of R ----------
-    vec3 dloc = er * (R * 0.028 * lb)
-              + dirW * (R * 0.016 * g + R * 0.03 * ev * evK)
+    vec3 dloc = vec3(P.x, P.y, 0.0) * (0.034 * lb)
+              + dirW * (R * 0.043 * g + R * 0.065 * ev * evK)
               + dD;
-    float lim = R * 0.045;
+    float lim = R * 0.095;
     float dl = length(dloc);
     dloc *= lim * (1.0 - exp(-dl / lim)) / max(dl, 1e-4);
     Q += dloc;
 
     // ---- brightness and size from the same local terms ------------------
-    float bfac = (1.0 + 0.12 * lb) * (1.0 + 0.40 * g) * (1.0 + 0.50 * ev * evK);
-    float rfac = (1.0 + 0.08 * lb) * (1.0 + 0.22 * g) * (1.0 + 0.35 * ev * evK);
-    bfac = clamp(bfac, 0.55, 1.90);
-    rfac = clamp(rfac, 0.70, 1.80);
+    float bfac = (1.0 + 0.20 * lb) * (1.0 + 0.42 * g) * (1.0 + 0.60 * ev * evK);
+    float rfac = (1.0 + 0.14 * lb) * (1.0 + 0.32 * g) * (1.0 + 0.45 * ev * evK);
+    bfac = clamp(bfac, 0.55, 1.40);
+    rfac = clamp(rfac, 0.70, 1.35);
 
     // v2 under strand dimming: the weave reads at the three crossings
     // (addendum item 3: radius shrinks, alpha dims further down)
@@ -265,6 +283,7 @@ void main() {
 
     // ---- F: five acid sparks gliding along the strands (u) --------------
     float spark = 0.0;
+    float carrier = fract(sin(pid * 78.233 + 1.7) * 43758.5453) < 0.33 ? 1.0 : 0.3;
     for (int i = 0; i < 5; i++) {
         float ck = i < 3 ? 0.0 : 1.0;
         if (abs(cls - ck) > 0.5) continue;
@@ -275,11 +294,14 @@ void main() {
                 : (i == 3 ? 0.28 : 0.66)));
         float sh = fract(dir * t / lap + o);
         float ds = fract(su - sh + 0.5) - 0.5;   // signed, in loop units
-        float head = exp(-(ds / 0.0035) * (ds / 0.0035));
+        float head = exp(-(ds / 0.002) * (ds / 0.002));
         float behind = -ds * dir;                // > 0 behind the head
         // tail only behind the head; ahead of it behind is <= 0 and must give 0
         // (exp(0) = 1 there tinted half of the loop acid green)
         float tail = behind > 0.0 ? exp(-behind / 0.012) : 0.0;
+        // the head is a small cluster of carrier dots (about 4 in 10 points of the
+        // head), not a solid band across the strand: 4 to 6 acid dots like the mockup
+        head *= carrier;
         spark = max(spark, max(head, 0.55 * tail));
     }
 
@@ -294,15 +316,15 @@ void main() {
     col = mix(col, cAcid, spark);
 
     // depth and facing
-    float alpha = (0.14 + 0.86 * d) * (0.26 + 0.74 * f) * (0.86 + 0.14 * br0)
+    float alpha = (0.16 + 0.74 * d) * (0.26 + 0.74 * f) * (0.86 + 0.14 * br0)
                 * vis * mix(0.85, 1.15, clamp(bfac - 0.55, 0.0, 0.75));
     // v2: alpha dims on the strand that passes under a crossing
-    alpha *= 1.0 - 0.65 * occl2;
-    alpha = mix(alpha, 1.0, spark * 0.85);
+    alpha *= (1.0 - 0.75 * occl2) * mix(1.0, crowd, 0.9);
+    alpha = mix(alpha, 1.0, spark * 0.85 * (0.4 + 0.6 * f));
     if (vis < 0.01) alpha = 0.0;
 
-    float rpx = 2.3 * (knotPx / 540.0) * mix(0.6, 1.22, d) * rfac;
-    rpx = clamp(rpx, 1.2, 5.0);
+    float rpx = 1.85 * (knotPx / 540.0) * mix(0.6, 1.22, d) * rfac;
+    rpx = clamp(rpx, 1.0, 5.0);
     float hh = rpx + 1.5;
 
     vec2 centre = vec2(uW, uH) * 0.5;

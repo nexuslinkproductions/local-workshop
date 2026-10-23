@@ -13,7 +13,10 @@ is the same point under the global pose alone. Global motion therefore never
 enters a local metric; it only enters M1.
 
 M1  max point jump per frame at 24 fps              < 2.5 px
-M2  max local displacement after the limiter        < 4.5 percent of R
+M2  max local displacement after the limiter        < --peak-limit percent of R
+    (4.5 in v2.1; 10.0 since the v3 repair, which asks for 20 to 26 px peaks)
+M7  mean local displacement 9 to 12 px, peak 20 to 26 px (v3 repair target,
+    at 540 px knot); reported as M7_mean_px and M7_peak_px
 M3  cv of the 32 arc bin means (time averaged)      > 0.15, and at least 8
     distinct bins hold the instantaneous maximum over 6 s
 M4  per bin std over time / bin mean                > 0.2 for >= 80 pct bins
@@ -117,6 +120,8 @@ def main():
     ap.add_argument("--rows", type=int, default=11)
     ap.add_argument("--limit", default="tanh", choices=("tanh", "exp", "none"))
     ap.add_argument("--prefix", default="final-")
+    ap.add_argument("--peak-limit", type=float, default=10.0,
+                    help="M2 limit, percent of R (4.5 in v2.1)")
     ap.add_argument("--fps", type=float, default=FPS)
     ap.add_argument("--seconds", type=float, default=SPEC_SECONDS,
                     help="spectrum window, 60 s by default")
@@ -266,10 +271,15 @@ def main():
     add("M1_jump_max_px", jump_max < 2.5, round(jump_max, 3),
         "< 2.5 px per frame at 24 fps",
         f"p99 {jump_p99:.3f} px, global pose alone {pose_jump_max:.3f} px")
-    add("M2_local_peak_pct_R", peak_pct < 4.5, round(peak_pct, 3),
-        "< 4.5 percent of R after the limiter",
+    add("M2_local_peak_pct_R", peak_pct < a.peak_limit, round(peak_pct, 3),
+        f"< {a.peak_limit} percent of R after the limiter",
         f"raw (unlimited) {peak_raw_pct:.3f} pct, shader exp form "
         f"{peak_exp_pct:.3f} pct")
+    _lm, _lp = float(loc_len.mean()), float(loc_len.max())
+    add("M7_mean_px", 9.0 <= _lm <= 12.5, round(_lm, 3),
+        "9 to 12 px mean local displacement (540 px knot)")
+    add("M7_peak_px", 19.0 <= _lp <= 27.0, round(_lp, 3),
+        "20 to 26 px peak local displacement (540 px knot)")
     add("M3_arc_cv", cv_space > 0.15, round(cv_space, 3),
         "> 0.15 coefficient of variation of the 32 bin means",
         f"literal time-averaged reading; ribbon only {cv_space_rib:.3f}; "
