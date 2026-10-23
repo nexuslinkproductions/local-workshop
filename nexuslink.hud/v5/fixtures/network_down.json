@@ -15,12 +15,13 @@
     "BackendState": "Stopped",
     "TailscaleIPs": [],
     "Self": {
-      "HostName": "marcel-mac",
+      "HostName": "node-mac",
       "TailscaleIPs": []
     },
     "Peer": {}
   },
   "commands": {
+    "ping_gateway": "PING 192.168.0.1 (192.168.0.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\n\n--- 192.168.0.1 ping statistics ---\n3 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_tailnet_gateway": "PING 100.100.0.1 (100.100.0.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\nRequest timeout for icmp_seq 3\nRequest timeout for icmp_seq 4\n\n--- 100.100.0.1 ping statistics ---\n5 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_public": "PING 1.1.1.1 (1.1.1.1): 56 data bytes\nRequest timeout for icmp_seq 0\nRequest timeout for icmp_seq 1\nRequest timeout for icmp_seq 2\n\n--- 1.1.1.1 ping statistics ---\n3 packets transmitted, 0 packets received, 100.0% packet loss\n",
     "ping_jitter": "PING 1.1.1.1 (1.1.1.1): 56 data bytes\n\n--- 1.1.1.1 ping statistics ---\n20 packets transmitted, 0 packets received, 100.0% packet loss\n",

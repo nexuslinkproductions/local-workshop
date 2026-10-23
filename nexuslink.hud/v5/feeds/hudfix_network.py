@@ -54,9 +54,12 @@ Contract (cards/feeds-brief.md)
 Ping parser: F3's ``game_mode.py`` on branch ``v5/f3-gamemode`` (head
 33903de) carries the same parser but was not merged into ``v5/main-deck`` when
 this module was written, so ``ping_argv``, ``parse_ping``, ``net_entry`` and
-``null_entry`` are copied from it verbatim in shape and keep its key names
-(``rtt_ms``, ``jitter_ms``, ``loss``, ``samples``, ``host``, ``reason``) so the
-two can never disagree. When F3 merges, F8a can import it and delete the copy.
+``null_entry`` are copied from it. One key is renamed: F3 publishes the ping
+summary's mdev/stddev as ``jitter_ms``, which is not jitter; here that value is
+``mdev_ms`` everywhere, and mean absolute difference is the only thing called
+jitter. The other keys (``rtt_ms``, ``loss``, ``samples``, ``host``,
+``reason``) are unchanged, so the two readers still agree about the same ping.
+When F3 merges, F8a can import it and delete the copy.
 
 Self-check: ``python3 hudfix_network.py --self-check`` (no arguments).
 
@@ -259,7 +262,12 @@ def _fixture_path(ctx):
 # --------------------------------------------------------------------------
 
 class FixtureProblem(Exception):
-    """A fixture the caller named is missing or malformed. Exit 2, never live."""
+    """A fixture the caller named is missing or malformed.
+
+    A missing file or directory is a usage error (exit 2). A file that exists
+    but cannot be parsed is an answer: ``ok: false`` with a reason, exit 0,
+    the same as any other honest absence, and never a silent fall back to live.
+    """
 
     def __init__(self, reason, kind="malformed"):
         super(FixtureProblem, self).__init__(reason)
@@ -284,7 +292,8 @@ def load_fixture(ctx):
         with open(str(path), "r", encoding="utf-8") as handle:
             obj = json.load(handle)
     except OSError as exc:
-        raise FixtureProblem("fixture unreadable: %s" % exc, "missing")
+        # It exists but cannot be read: that is unreadable input, not a usage error.
+        raise FixtureProblem("fixture unreadable: %s" % exc, "unreadable")
     except ValueError as exc:
         raise FixtureProblem("fixture is not JSON: %s" % exc, "malformed")
     if not isinstance(obj, dict):
@@ -365,8 +374,11 @@ def _cache_path(ctx, name):
 
 
 def _cache_enabled(ctx):
+    # Fixture mode never touches the cache: no read, no write, whatever
+    # --cache-path or --state-dir says. A recording has no clock-derived age
+    # and two fixture runs must answer the same numbers.
     if _fixture_path(ctx) is not None:
-        return bool(_ctx_value(ctx, "cache_path"))
+        return False
     return bool(_ctx_value(ctx, "cache", True))
 
 
@@ -466,8 +478,13 @@ def ping_host_error(text):
 
 
 def parse_ping(text):
-    """mean rtt and mdev/stddev from a ping -c N capture. Never invents a number."""
-    out = {"rtt_ms": None, "jitter_ms": None, "loss": None, "samples": 0, "reason": None}
+    """mean rtt and mdev/stddev from a ping -c N capture. Never invents a number.
+
+    The summary's mdev (macOS) or stddev (Linux) is published as ``mdev_ms``.
+    It is a standard deviation, not jitter; the jitter statistic this module
+    reports is the mean absolute difference between consecutive rtts.
+    """
+    out = {"rtt_ms": None, "mdev_ms": None, "loss": None, "samples": 0, "reason": None}
     if not text:
         out["reason"] = "no ping output"
         return out
@@ -489,13 +506,13 @@ def parse_ping(text):
         r"([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)", text)
     if stats:
         out["rtt_ms"] = round(float(stats.group(2)), 2)
-        out["jitter_ms"] = round(float(stats.group(4)), 2)
+        out["mdev_ms"] = round(float(stats.group(4)), 2)
     elif times:
         vals = [float(v) for v in times]
         mean = sum(vals) / len(vals)
         var = sum((v - mean) ** 2 for v in vals) / len(vals)
         out["rtt_ms"] = round(mean, 2)
-        out["jitter_ms"] = round(var ** 0.5, 2)
+        out["mdev_ms"] = round(var ** 0.5, 2)
 
     if out["loss"] is None and trans_m and recv_m:
         trans = int(trans_m.group(1))
@@ -515,7 +532,7 @@ def parse_ping(text):
 
 def net_entry(host, parsed):
     entry = {"host": host, "rtt_ms": parsed.get("rtt_ms"),
-             "jitter_ms": parsed.get("jitter_ms"), "loss": parsed.get("loss")}
+             "mdev_ms": parsed.get("mdev_ms"), "loss": parsed.get("loss")}
     if parsed.get("samples"):
         entry["samples"] = parsed["samples"]
     if parsed.get("reason"):
@@ -524,7 +541,7 @@ def net_entry(host, parsed):
 
 
 def null_entry(host, reason):
-    return {"host": host, "rtt_ms": None, "jitter_ms": None, "loss": None,
+    return {"host": host, "rtt_ms": None, "mdev_ms": None, "loss": None,
             "reason": reason or "not measured"}
 
 
@@ -866,9 +883,20 @@ def _refusal(reason, kind="not_this_host"):
 
 
 def _cache_hit_payload(data, age):
+    """A hit answers from disk and ran nothing, so it must not claim commands.
+
+    The stored payload carries the argv the original run issued. Returning it
+    unchanged made a hit list pings it never ran. The original moves to
+    ``cached_from`` and ``commands`` is empty.
+    """
     payload = dict(data)
+    original = data.get("commands")
     payload["cached"] = True
     payload["cache_age_s"] = age
+    payload["commands"] = []
+    payload["cached_from"] = {
+        "commands": list(original) if isinstance(original, list) else [],
+    }
     return payload
 
 
@@ -988,6 +1016,14 @@ def _latency_payload(ctx, fixture=None):
     if gateway_reason:
         payload["degraded"] = True
         payload["reason"] = gateway_reason
+    if not entries:
+        # Absence is not success: no target answered, so ok is false and the
+        # reason names each one. Never ok true with targets_answered 0.
+        payload["ok"] = False
+        payload["reason"] = "; ".join(
+            "%s: %s" % (label, entry.get("reason") or "not measured")
+            for label, entry in (("tailnet_gateway", gateway_entry),
+                                 ("public", public_entry)))
     return payload
 
 
@@ -1054,10 +1090,13 @@ def jitter_stats(text):
             "min": round(min(times), 2) if times else None,
             "mean": round(sum(times) / len(times), 2) if times else None,
             "max": round(max(times), 2) if times else None,
+            # ping's own summary figure (mdev on macOS, stddev on Linux) and
+            # the plain max minus min range: different statistics, different
+            # names. Neither of them is jitter.
+            "mdev_ms": parse_ping(text).get("mdev_ms"),
+            "range_ms": round(max(times) - min(times), 2) if times else None,
         },
     }
-    stats["rtt_ms"]["spread"] = (round(stats["rtt_ms"]["max"] - stats["rtt_ms"]["min"], 2)
-                                 if times else None)
 
     if not diffs:
         reason = "need at least two replies to compare consecutive rtts"
@@ -1140,6 +1179,7 @@ def run_jitter(ctx=None, confirm=None):
                                target=target, verdict=None,
                                reason="fixture has no jitter ping capture",
                                thresholds=jitter_thresholds())
+            payload["ok"] = False
             return payload
     else:
         argv = ping_argv(target, JITTER_COUNT, JITTER_INTERVAL_S)
@@ -1487,7 +1527,10 @@ def run_connectivity(ctx=None, confirm=None):
     if fixture is not None:
         netstat_text = fixture_text(fixture, "netstat_route")
         ifconfig_text = fixture_text(fixture, "ifconfig")
-        gateway_text = fixture_text(fixture, "ping_tailnet_gateway")
+        # The gateway check is about the LAN gateway from the routing table,
+        # so it reads the LAN ping capture. The tailnet ping is a different
+        # host and is not a stand in for it.
+        gateway_text = fixture_text(fixture, "ping_gateway")
         public_text = fixture_text(fixture, "ping_public")
         status, status_reason = tailscale_status(ctx, fixture)
         probe = fixture.get("dns_probe") if isinstance(fixture.get("dns_probe"), dict) else {}
@@ -1497,7 +1540,6 @@ def run_connectivity(ctx=None, confirm=None):
             "error": probe.get("error"),
             "elapsed_ms": probe.get("elapsed_ms"),
         }
-        fixture_gateway = fixture.get("tailnet_gateway")
     else:
         netstat_text, netstat_err, netstat_code = _run(
             ["netstat", "-rn", "-f", "inet"], ctx, PROBE_TIMEOUT_S)
@@ -1508,11 +1550,8 @@ def run_connectivity(ctx=None, confirm=None):
         gateway_text = public_text = None
         status, status_reason = tailscale_status(ctx, None)
         dns_result = dns_lookup(dns_name, ctx)
-        fixture_gateway = None
 
     gateway, gateway_iface = local_route(netstat_text or "")
-    if gateway is None and fixture is not None:
-        gateway = fixture_gateway
 
     # gateway reachable
     if gateway_text is not None:
@@ -1782,8 +1821,10 @@ def main(argv=None):
         else:
             payload = ACTIONS[name]["run"](ctx, args.confirm)
     except FixtureProblem as exc:
+        # A named file that is missing is a usage error (exit 2). A file that
+        # is there but unreadable or malformed is an answer: ok false, exit 0.
         print_json({"ok": False, "reason": exc.reason, "kind": exc.kind}, args.json)
-        return 2
+        return 2 if exc.kind == "missing" else 0
 
     print_json(payload, args.json)
     if payload.get("ok") is False and payload.get("kind") == "not_this_host" and args.run:
@@ -1914,8 +1955,9 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
 
     record("cli_contract", check_cli_list)
 
-    # 4. a named fixture that does not exist is exit 2, never live data
-    def check_missing_fixture():
+    # 4. a named fixture that does not exist is exit 2; one that is there but
+    #    malformed is ok false with exit 0. Neither ever falls back to live.
+    def check_fixture_exit_codes():
         missing = temp_root / "nope.json"
         out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
                               "--fixture", str(missing), "--plan", "network.latency", "--json"],
@@ -1943,9 +1985,26 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         payload = json.loads(out.stdout.decode("utf-8"))
         assert_true(payload.get("ok") is True and payload.get("source") == "fixture",
                     "the fixture directory was not read as a fixture")
-        return "exit 2 missing file, exit 2 empty dir, exit 0 fixture dir"
 
-    record("missing_fixture_exit_2", check_missing_fixture)
+        # unreadable input is an answer, not a usage error
+        for label, body in (("empty", ""),
+                            ("not-json", "{not json"),
+                            ("not-an-object", "[1, 2, 3]")):
+            path = temp_root / ("malformed-%s.json" % label)
+            path.write_text(body, encoding="utf-8")
+            out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                                  "--fixture", str(path), "--run", "network.latency", "--json"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            assert_true(out.returncode == 0,
+                        "%s fixture exit %d, expected 0" % (label, out.returncode))
+            payload = json.loads(out.stdout.decode("utf-8"))
+            assert_true(payload.get("ok") is False, "%s fixture is not ok:false" % label)
+            assert_true(payload.get("kind") == "malformed",
+                        "%s fixture kind %r" % (label, payload.get("kind")))
+            assert_true(bool(payload.get("reason")), "%s fixture has no reason" % label)
+        return "exit 2 missing file and empty dir, exit 0 for 3 malformed files"
+
+    record("fixture_exit_codes", check_fixture_exit_codes)
 
     # 5. latency parses the recorded capture, twice, identically
     def check_latency_fixture():
@@ -1960,14 +2019,25 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         public = first["public"]
         assert_true(gateway["host"] == "100.100.0.1", "gateway host %r" % gateway["host"])
         assert_true(abs(gateway["rtt_ms"] - 5.04) < 0.02, "gateway rtt %r" % gateway["rtt_ms"])
-        assert_true(abs(gateway["jitter_ms"] - 1.44) < 0.02, "gateway mdev %r" % gateway["jitter_ms"])
+        assert_true(abs(gateway["mdev_ms"] - 1.44) < 0.02, "gateway mdev %r" % gateway["mdev_ms"])
+        assert_true("jitter_ms" not in gateway, "the mdev still travels as jitter_ms")
         assert_true(gateway["loss"] == 0, "gateway loss %r" % gateway["loss"])
         assert_true(gateway["samples"] == 5, "gateway samples %r" % gateway["samples"])
         assert_true(abs(public["rtt_ms"] - 31.37) < 0.02, "public rtt %r" % public["rtt_ms"])
         assert_true(public["loss"] == 0, "public loss %r" % public["loss"])
         assert_true(first["summary"]["targets_answered"] == 2,
                     "targets_answered %r" % first["summary"]["targets_answered"])
-        return "gateway 5.04/1.44 ms, public 31.37 ms, identical twice"
+
+        # an empty recording is absence: ok false with a reason, never ok true
+        # with targets_answered 0
+        empty = temp_root / "latency-empty.json"
+        empty.write_text(json.dumps({"host": "mac", "commands": {}}), encoding="utf-8")
+        hollow = run_latency(fixture_ctx(empty))
+        assert_true(hollow["ok"] is False, "an empty capture reported ok true")
+        assert_true(hollow["summary"]["targets_answered"] == 0,
+                    "an empty capture claims %r answers" % hollow["summary"]["targets_answered"])
+        assert_true(bool(hollow.get("reason")), "an empty capture has no reason")
+        return "gateway 5.04/1.44 ms, public 31.37 ms, identical twice; empty capture ok false"
 
     record("latency_fixture", check_latency_fixture)
 
@@ -1987,8 +2057,25 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                     "verdict %r" % first["verdict"])
         assert_true(first["p95_abs_diff_ms"] >= first["mean_abs_diff_ms"],
                     "p95 below the mean, which cannot be")
-        return "20 replies, 19 pairs, mean %s ms, p95 %s ms, verdict %s" % (
-            first["mean_abs_diff_ms"], first["p95_abs_diff_ms"], first["verdict"])
+        # mdev and range are the two numbers the README names, and neither is
+        # called spread
+        assert_true(first["rtt_ms"]["mdev_ms"] == 33.85,
+                    "rtt_ms.mdev_ms %r" % first["rtt_ms"].get("mdev_ms"))
+        assert_true(first["rtt_ms"]["range_ms"] == 105.39,
+                    "rtt_ms.range_ms %r" % first["rtt_ms"].get("range_ms"))
+        assert_true("spread" not in first["rtt_ms"], "rtt_ms still calls the range spread")
+
+        # no jitter capture is absence: ok false, verdict null, a reason
+        no_jitter = temp_root / "jitter-empty.json"
+        no_jitter.write_text(json.dumps({"host": "mac", "commands": {"ping_public": "x"}}),
+                             encoding="utf-8")
+        hollow = run_jitter(fixture_ctx(no_jitter))
+        assert_true(hollow["ok"] is False, "a capture without ping_jitter reported ok true")
+        assert_true(hollow["verdict"] is None, "a capture without ping_jitter has a verdict")
+        assert_true(bool(hollow.get("reason")), "a capture without ping_jitter has no reason")
+        return ("20 replies, 19 pairs, mean %s ms, p95 %s ms, verdict %s, mdev 33.85, "
+                "range 105.39; missing capture ok false" % (
+                    first["mean_abs_diff_ms"], first["p95_abs_diff_ms"], first["verdict"]))
 
     record("jitter_fixture", check_jitter_fixture)
 
@@ -2061,7 +2148,13 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         for name, check in payload["checks"].items():
             assert_true(check["ok"] is True, "%s is false on the healthy fixture: %r"
                         % (name, check["reason"]))
-        return "4 of 4 true, no reason"
+        evidence = payload["checks"]["gateway_reachable"]["evidence"]
+        assert_true(evidence["gateway"] == "192.168.0.1",
+                    "gateway evidence names %r, not the default route gateway"
+                    % evidence.get("gateway"))
+        assert_true(abs(evidence["rtt_ms"] - 32.86) < 0.02,
+                    "gateway rtt %r is not the LAN gateway capture" % evidence.get("rtt_ms"))
+        return "4 of 4 true, gateway evidence 192.168.0.1 at 32.86 ms"
 
     record("connectivity_healthy", check_connectivity_healthy)
 
@@ -2108,10 +2201,10 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         flips.append("tunnel")
 
         gateway_case = json.loads(json.dumps(base))
-        gateway_case["commands"]["ping_tailnet_gateway"] = (
-            "PING 100.100.0.1 (100.100.0.1): 56 data bytes\n"
-            "\n--- 100.100.0.1 ping statistics ---\n"
-            "5 packets transmitted, 0 packets received, 100.0% packet loss\n")
+        gateway_case["commands"]["ping_gateway"] = (
+            "PING 192.168.0.1 (192.168.0.1): 56 data bytes\n"
+            "\n--- 192.168.0.1 ping statistics ---\n"
+            "3 packets transmitted, 0 packets received, 100.0% packet loss\n")
         path = temp_root / "gateway-down.json"
         path.write_text(json.dumps(gateway_case), encoding="utf-8")
         payload = run_connectivity(fixture_ctx(path))
@@ -2122,6 +2215,20 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         assert_true(payload["checks"]["gateway_reachable"]["evidence"]["loss"] == 100,
                     "gateway evidence does not carry the loss")
         flips.append("gateway")
+
+        public_case = json.loads(json.dumps(base))
+        public_case["commands"]["ping_public"] = (
+            "PING 1.1.1.1 (1.1.1.1): 56 data bytes\n"
+            "\n--- 1.1.1.1 ping statistics ---\n"
+            "3 packets transmitted, 0 packets received, 100.0% packet loss\n")
+        path = temp_root / "public-down.json"
+        path.write_text(json.dumps(public_case), encoding="utf-8")
+        payload = run_connectivity(fixture_ctx(path))
+        assert_true(payload["checks"]["public_reachable"]["ok"] is False,
+                    "100% loss to 1.1.1.1 is public reachable")
+        assert_true(sorted(payload["failed"]) == ["public_reachable"],
+                    "public flip moved %r" % payload["failed"])
+        flips.append("public")
 
         return "one input flipped at a time: %s" % ", ".join(flips)
 
@@ -2143,7 +2250,7 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             "tailscale": (json.dumps({
                 "BackendState": "Running",
                 "TailscaleIPs": ["100.100.123.2"],
-                "Peer": {"node1": {"HostName": "omarchylink",
+                "Peer": {"node1": {"HostName": "node-linux",
                                    "TailscaleIPs": ["100.100.0.1"],
                                    "Online": True}},
             }), "", 0),
@@ -2165,6 +2272,10 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                     % (len(runner.calls) - 3))
         assert_true(second["cached"] is True, "second call is not cached")
         assert_true(second["cache_age_s"] == 0.0, "age %r" % second["cache_age_s"])
+        assert_true(second["commands"] == [],
+                    "the cached answer lists commands it did not run: %r" % second["commands"])
+        assert_true(second["cached_from"]["commands"] == first["commands"],
+                    "the original commands were not moved into cached_from")
         assert_true(second["tailnet_gateway"] == first["tailnet_gateway"],
                     "the cached numbers moved")
         clock["now"] += CACHE_TTL_S + 1
@@ -2201,23 +2312,33 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             assert_true(second_call["cached"] is True, "%s second call is not cached" % name)
             assert_true(len(runner2.calls) == seen, "%s second call ran %d more commands"
                         % (name, len(runner2.calls) - seen))
+            assert_true(second_call["commands"] == [],
+                        "%s cache hit lists commands it did not run" % name)
             cached_names.append(name)
         return ("3 commands, then 0 inside the 10 s window, then 3 after expiry; "
                 "route and connectivity cached too")
 
     record("cache_second_call_free", check_cache)
 
-    # 11. fixture mode writes nothing and reads no cache
+    # 11. fixture mode writes nothing and reads no cache, even with --cache-path
     def check_fixture_purity():
         state = temp_root / "pure"
         state.mkdir(parents=True, exist_ok=True)
+        # Seed a poisoned cache file under the exact latency key: if fixture
+        # mode reads the cache it answers with this, and if it writes, the
+        # bytes change. Neither may happen.
+        explicit = state / "explicit-cache.json"
+        poisoned = json.dumps({
+            "key": {"tailnet_gateway": "auto", "public": "1.1.1.1"},
+            "cached_at": time.time(),
+            "data": {"ok": True, "cached": False, "poison": "healthy"},
+        })
+        explicit.write_text(poisoned, encoding="utf-8")
         ctx = fixture_ctx(healthy_path)
         ctx["state_dir"] = str(state)
+        ctx["cache_path"] = str(explicit)
         before = sorted(p.name for p in state.iterdir())
-        run_latency(ctx)
-        run_jitter(ctx)
-        run_route(ctx)
-        run_connectivity(ctx)
+        payloads = [run_latency(ctx), run_jitter(ctx), run_route(ctx), run_connectivity(ctx)]
         plan_latency(ctx)
         plan_jitter(ctx)
         plan_route(ctx)
@@ -2225,12 +2346,19 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         plan_flush_dns(ctx)
         after = sorted(p.name for p in state.iterdir())
         assert_true(before == after, "fixture mode created %r" % (set(after) - set(before)))
+        assert_true(explicit.read_text(encoding="utf-8") == poisoned,
+                    "fixture mode rewrote the file given in --cache-path")
+        for payload in payloads:
+            assert_true(payload.get("cached") is False, "a fixture run answered cached true")
+            assert_true("poison" not in json.dumps(payload), "a fixture run read the cache file")
+        assert_true(plan_latency(ctx)["cache"]["enabled"] is False,
+                    "a fixture plan says the cache is enabled")
         refusal = run_flush_dns(ctx)
         assert_true(refusal["ok"] is False and refusal["kind"] == "fixture",
                     "flush-dns did not refuse in fixture mode: %r" % refusal)
         assert_true(sorted(p.name for p in state.iterdir()) == before,
                     "refused flush-dns wrote something")
-        return "8 runs and plans, 0 files created"
+        return "8 runs and plans, 0 files created, poisoned --cache-path untouched"
 
     record("fixture_purity", check_fixture_purity)
 

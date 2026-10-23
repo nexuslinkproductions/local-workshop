@@ -21,7 +21,7 @@ asserted in the self-check rather than promised in prose.
 | `network.jitter` | read | `ping -c 20 -i 0.5 1.1.1.1`, mean absolute difference between consecutive rtts and its p95, one word verdict | about 11 s | 10 s |
 | `network.route` | read | `netstat -rn -f inet`, `ifconfig`, `scutil --dns`: default route, interface, tunnel address, DNS servers and their interface, search domains | under 0.2 s | 10 s |
 | `network.flush-dns` | safe | macOS `dscacheutil -flushcache` then `killall -HUP mDNSResponder`; Linux `resolvectl flush-caches` | under 1 s | none |
-| `network.connectivity` | read | four checks: gateway reachable, public reachable, DNS resolves, tunnel up | about 5 s | 10 s |
+| `network.connectivity` | read | four checks: gateway reachable (the default route gateway, pinged), public reachable, DNS resolves, tunnel up | about 5 s | 10 s |
 
 Every payload carries `ok`, `generated_at` (UTC ISO), `source` (`live` or
 `fixture`), `action` and `class`.
@@ -34,20 +34,27 @@ traffic. Resolution order, recorded in `gateway_source`:
 1. `--tailnet-gateway HOST` or `ctx["tailnet_gateway"]` if given.
 2. The exit node in use, from `tailscale status --json` (`ExitNodeStatus`).
 3. The first online peer that advertises subnet routes (`PrimaryRoutes`).
-4. The first online peer by host name. On this two node tailnet that is
-   `omarchylink`, which is also the box the HUD is talking to.
+4. The first online peer by host name. On this two node tailnet that is the
+   other machine, which is also the box the HUD is talking to; the fixture
+   names it `node-linux`.
 
 If tailscale is not running, the tailnet entry is `rtt_ms: null` with a
 `reason`, the public entry is still measured, and the payload sets
-`degraded: true`. A missing gateway never becomes a quiet zero.
+`degraded: true`. A missing gateway never becomes a quiet zero. If nothing
+answered at all, the payload is `ok: false` and the reason names each target;
+zero answers is never reported as success.
 
 ### Jitter: the thresholds
 
 `mean_abs_diff_ms` is the mean of `|rtt[i] - rtt[i-1]|` over consecutive
-replies; `p95_abs_diff_ms` is its 95th percentile (nearest rank). Ping's own
-`mdev` (macOS) or `stddev` (Linux) is published separately as `rtt_ms.spread`,
-because standard deviation and mean absolute difference are different
-statistics and the HUD should not pretend otherwise.
+replies; `p95_abs_diff_ms` is its 95th percentile (nearest rank). Two other
+numbers travel under their own names, because they are different statistics:
+`rtt_ms.mdev_ms` is ping's own summary figure (mdev on macOS, stddev on Linux),
+or the same standard deviation computed from the replies when a capture carries
+no summary line, and `rtt_ms.range_ms` is plainly `max - min`. Neither is called
+jitter and neither is called spread. The latency and connectivity entries
+publish the same ping summary figure as `mdev_ms`; no payload in this module
+carries a `jitter_ms` key.
 
 The verdict, in this order, is also embedded in every payload under
 `thresholds`:
@@ -61,7 +68,7 @@ The verdict, in this order, is also embedded in every payload under
 20 samples at 0.5 s spacing take about 9.5 s. At 1 s spacing the same count
 would take 19 s, and an expanded view that hangs for 19 s reads as broken, so
 0.5 s is the documented choice. Fewer than two replies gives `verdict: null`
-with a reason instead of a word the data does not support.
+with a reason and `ok: false`, instead of a word the data does not support.
 
 ### Route
 
@@ -116,10 +123,11 @@ setting, not the resolved peer (`tailnet_gateway: "auto"` plus the public host
 for latency, the action and host for route and connectivity), because a key
 that needed a `tailscale status` call to compute would make a cache hit issue a
 command. The resolved peer is inside the cached payload. A hit returns
-`cached: true` with `cache_age_s` and the original numbers; a miss returns
-`cached: false`. `flush-dns` is never cached: it exists to be repeated.
-`--state-dir` or `--cache-path` moves the files; `--fixture` never reads or
-writes them.
+`cached: true` with `cache_age_s`, the original numbers, an empty `commands`
+list (the hit ran nothing) and the argv of the run it answers from under
+`cached_from`; a miss returns `cached: false`. `flush-dns` is never cached: it
+exists to be repeated. `--state-dir` or `--cache-path` moves the files.
+`--fixture` never reads or writes them, with or without `--cache-path`.
 
 ## Fixture mode
 
@@ -128,15 +136,28 @@ from the recording and touches no host state: no ping, no netstat, no clock
 derived age, no cache file, no fallback to live. Every value comes from the
 fixture:
 
-    tailnet_gateway   the resolved peer, for the plan and connectivity fallback
+    tailnet_gateway   the resolved peer, for the latency plan
     tailscale         the status JSON block (BackendState, TailscaleIPs, Peer)
     dns_probe         the recorded lookup: name, addresses, error, elapsed_ms
-    commands          ping_tailnet_gateway, ping_public, ping_jitter,
-                      netstat_route, ifconfig, scutil_dns
+    commands          ping_gateway, ping_tailnet_gateway, ping_public,
+                      ping_jitter, netstat_route, ifconfig, scutil_dns
+
+`ping_gateway` is the default route gateway from the recorded netstat table and
+is the only capture the connectivity gateway check reads; the tailnet peer is a
+different host and is not a stand in for it. A fixture that carries no
+`ping_gateway` says the gateway was not measured instead of borrowing a number
+from another target.
+
+A fixture the caller names has to exist: a missing file, or a directory without
+`network.json`, is a usage error and exit 2. A file that is there but
+unreadable, not JSON, or not an object at the top level is an answer like any
+other: `{"ok": false, "kind": "malformed"}` (or `"unreadable"`) on stdout with
+exit 0, and no fall back to live.
 
 Connectivity booleans are computed from those inputs, never read as booleans:
 the self-check flips one input at a time (empty DNS answer, stopped backend,
-100 percent loss on the gateway ping) and proves exactly one boolean moves.
+100 percent loss on the gateway ping, 100 percent loss on the public ping) and
+proves exactly one boolean moves.
 
 The one value a fixture run still takes from the clock is `generated_at`, so a
 HUD tick always has a timestamp. Every measured value is byte identical between
@@ -144,24 +165,29 @@ two fixture runs, and the self-check asserts that for latency and jitter
 (numbers, loss, samples, verdict) rather than trusting it.
 
 `v5/fixtures/network.json` is a real capture from this MacBook (2026-10-23),
-sanitised: tailnet node addresses are `100.100.x`, the tailnet DNS name is
-`example-tailnet.ts.net`, ether addresses are zeroed. The LAN gateway and the
-bridge addresses are as recorded. `v5/fixtures/network_down.json` is the same
-host with the LAN, DNS and tunnel down, built by hand so every check has one
-failing input.
+sanitised: tailnet IPv4 addresses are `100.100.x`, tailnet IPv6 addresses are
+`fd00::x`, node host names are `node-mac`, `node-linux` and `node-old-mac`, the
+tailnet DNS name is `example-tailnet.ts.net`, ether addresses are zeroed and the
+owner's name is removed. The LAN gateway and the bridge addresses are as
+recorded. `ping_gateway` is a separate capture of the default route gateway
+(192.168.0.1), which is what the connectivity gateway check reads.
+`v5/fixtures/network_down.json` is the same host with the LAN, DNS and tunnel
+down, built by hand so every check has one failing input.
 
 Re-record:
 
-    ping -c 5 -W 1000 <tailnet-peer>       > ping_gateway.txt
+    ping -c 5 -W 1000 <tailnet-peer>       > ping_tailnet_gateway.txt
     ping -c 5 -W 1000 1.1.1.1              > ping_public.txt
     ping -c 20 -i 0.5 -W 1000 1.1.1.1      > ping_jitter.txt
+    ping -c 3 -W 1000 <lan-gateway>        > ping_gateway.txt
     netstat -rn -f inet                    > netstat.txt
     ifconfig                               > ifconfig.txt
     scutil --dns                           > scutil.txt
     tailscale status --json                > tailscale.json
 
-then paste the texts into the `commands` object and the tailscale fields into
-`tailscale`, and replace the tailnet addresses before committing.
+then paste the texts into the `commands` object under the matching keys and the
+tailscale fields into `tailscale`, and replace the tailnet addresses, the node
+host names and the owner's name before committing.
 
 ## Contract for F8a
 
@@ -189,13 +215,16 @@ so a test can prove no command ran.
 exit 0 and 17 checks, each named in the JSON: the action table and classes; the
 binary allowlist over fixture plans, live plans and real calls; the CLI
 contract (`--list` is one line, unknown action exit 2); a missing named fixture
-is exit 2; latency and jitter numbers identical twice from the fixture; the
-three verdict thresholds plus 2 percent and 100 percent loss; the route parse;
-connectivity all true, all false, and one flipped input at a time; the cache
-answering the second call command free and expiring after 10 s; fixture mode
-creating no file; `flush-dns` calling neither the runner nor `subprocess` in a
-plan or a dry run; the host refusals; no absolute home path; and five plans
-leaving the state dir byte identical.
+is exit 2 while three malformed files are ok false with exit 0; latency and
+jitter numbers identical twice from the fixture, and honest absence (no
+captures, no jitter capture) reported as ok false; the three verdict thresholds
+plus 2 percent and 100 percent loss; the route parse; connectivity all true, all
+false, and one flipped input at a time (DNS, tunnel, gateway, public); the cache
+answering the second call with no commands and expiring after 10 s; fixture mode
+creating no file and ignoring a `--cache-path` it was handed; `flush-dns`
+calling neither the runner nor `subprocess` in a plan or a dry run; the host
+refusals; no absolute home path; and five plans leaving the state dir byte
+identical.
 
 ## Not offered, and why
 
@@ -229,9 +258,11 @@ source `ping`, `netstat`, `ifconfig`, `scutil`, `tailscale status`, fixture
 F3's `game_mode.py` (branch `v5/f3-gamemode`, head
 `33903de97dc1d0d2492067ac4d4cb1fe0b91a2c5`) was not merged into
 `v5/main-deck` when this module was written, so `ping_argv`, `parse_ping`,
-`net_entry`, `null_entry` and `ping_host_error` are copied from it and keep its
-JSON keys (`rtt_ms`, `jitter_ms`, `loss`, `samples`, `host`, `reason`) so the
-two readers can never disagree about the same ping. The copy adds `count` and
-`interval` arguments and `parse_ping_times` / `parse_ping_counts` for the
-jitter statistics. When F3 merges, F8a can import `game_mode.parse_ping` and
-delete the copy; the key names stay.
+`net_entry`, `null_entry` and `ping_host_error` are copied from it. One key is
+renamed: F3 publishes the ping summary's mdev/stddev as `jitter_ms`, which is
+not jitter, so this module calls it `mdev_ms` in the parser and in every entry.
+The remaining keys (`rtt_ms`, `loss`, `samples`, `host`, `reason`) are
+unchanged, so the two readers still agree about the same ping. The copy adds
+`count` and `interval` arguments and `parse_ping_times` / `parse_ping_counts`
+for the jitter statistics. When F3 merges, F8a can import
+`game_mode.parse_ping`, rename that one key, and delete the copy.
