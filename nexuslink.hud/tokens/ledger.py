@@ -211,7 +211,7 @@ def collect_omarchy(led):
     merge_gauge_contract(led)
 
 
-GAUGE_PROVIDERS = (("claude", "claude"), ("opencode-go", "opencode-go"))
+GAUGE_PROVIDERS = (("claude", "claude"), ("devin", "devin"), ("opencode-go", "opencode-go"))
 
 
 def merge_gauge_contract(led):
