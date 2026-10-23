@@ -219,12 +219,13 @@ sanitised: tailnet IPv4 addresses are `100.100.x`, tailnet IPv6 addresses are
 tailnet DNS name is `example-tailnet.ts.net`, every ether address is a locally
 administered documentation value `02:00:5e:10:00:xx`, every LAN address comes
 from the documentation ranges (`192.0.2.0/24`, `198.51.100.0/24`,
-`203.0.113.0/24`), the public IPv6 prefix is `2001:db8::/32`, and the owner's
-name is removed. Record counts and the shape of every capture are unchanged, so
-the fixture still exercises every parser path. `ping_gateway` is a separate
-capture of the default route gateway (`192.0.2.1`), which is what the
-connectivity gateway check reads. The self-check greps both fixtures and fails
-if a real MAC or private LAN address comes back.
+`203.0.113.0/24`), this Mac's public IPv6 addresses use the `2001:db8::/32`
+documentation prefix (the `dns_probe` keeps example.com's published answers),
+and the owner's name is removed. Record counts and the shape of every capture
+are unchanged, so the fixture still exercises every parser path. `ping_gateway`
+is a separate capture of the default route gateway (`192.0.2.1`), which is what
+the connectivity gateway check reads. The self-check greps both fixtures and
+fails if a real MAC or private LAN address comes back.
 `v5/fixtures/network_down.json` is the same host with the LAN, DNS and tunnel
 down, built by hand so every check has one failing input.
 
