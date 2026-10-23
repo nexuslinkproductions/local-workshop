@@ -23,6 +23,8 @@ FindResults 1.0 FindResults.qml
 Clock 1.0 Clock.qml
 Focus 1.0 Focus.qml
 IdleDrift 1.0 IdleDrift.qml
+QuickActions 1.0 QuickActions.qml
+MediaPill 1.0 MediaPill.qml
 # kit/icons/* is deliberately NOT registered (W4, PR #38): IconTile reaches the
 # 17 glyphs with `import "icons" as Icons` and Glyph maps a key to a Component,
 # so this file grows by two lines instead of nineteen and a deck of nine tiles

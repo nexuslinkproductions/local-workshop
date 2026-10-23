@@ -74,6 +74,15 @@ Item {
     property var findResults: []
     property string findQuery: ""
     property string findFilter: "all"
+    property bool findBusy: false
+    property string findNote: ""
+    property string findHome: ""
+    // Find: typed text leaves as findQueryEdited (debounced 120 ms; also once per
+    // filter chip). Enter on a hit emits findOpenRequested with the feed path.
+    signal findQueryEdited(string text)
+    signal findOpenRequested(string path)
+    readonly property bool wantsKeyboard: focusId === "find"
+    readonly property int findSelected: findResults.selected
     property real rttMs: 0
     property real batteryLevel: 0
     property real loadLevel: 0
@@ -82,6 +91,16 @@ Item {
     property var disks: []
     property bool assembling: false
     property real assembleProgress: 1
+
+    // ---- bottom chrome inputs and outputs (lead pre-wired, owners Q and M) ---
+    // Media comes from DeckMain (Quickshell Mpris). The quick actions and the
+    // pill only emit; DeckMain maps the ids to commands.
+    property string mediaTitle: ""
+    property string mediaArtist: ""
+    property bool mediaPlaying: false
+    property bool mediaAvailable: false
+    signal quickActionRequested(string actionId)
+    signal mediaToggleRequested()
 
     // Stills and probes set animate:false so a render is deterministic; the
     // shell leaves it true.
@@ -145,14 +164,8 @@ Item {
     readonly property real launcherX: targetW - Tokens.safeMargin - launcherW
     readonly property real launcherY: 988
     readonly property real tileRowY: launcherY + launcherH - 108   // arcBottomInset
-    // Find pill: FindField's implicit box is the active width (560); the capsule
-    // rests centred inside it at 380. The box is centred on the right margin
-    // column (rightX 2133.5), so the pill, LOCAL and STORAGE share one vertical
-    // alignment instead of three different right edges. (Centring a 560 box on
-    // 2133.5 puts its edge at 2413.5, still inside the 96 px safe margin.)
-    readonly property real findBoxW: Tokens.findFieldActiveWidth
-    readonly property real findX: rightX - findBoxW / 2
-    readonly property real findY: 180
+    // Find is a full-deck overlay in absolute coordinates (s3-find-results.png):
+    // the rest pill at 1960, 338; the open pill at 830, 226, 900 wide.
     // Clock: 96 px numerals per the amendment, not Tokens.sizeClock (168).
     readonly property int clockSize: 96
     readonly property real clockY: Tokens.safeMargin
@@ -168,12 +181,8 @@ Item {
         bandY - crewExpand / 2,
         crewExpand,
         crewExpand + Tokens.sp2 + crewRows * 26)                   // rowHeight 26
-    readonly property rect findRect: Qt.rect(
-        findX, findY, findBoxW,
-        Tokens.findFieldHeight + Tokens.sp3 + findResultsHeight)
-    readonly property int findRows: Math.ceil(deck.findResults.length / 3)   // 3 columns
-    readonly property real findResultsHeight: findRows > 0
-        ? Tokens.sp3 + findRows * 128 + (findRows - 1) * Tokens.sp5 : 0
+    // Crisp area while Find is open: the pill, the filter row and the hits.
+    readonly property rect findRect: Qt.rect(420, 210, 1780, 1010)
     readonly property rect launcherRect: Qt.rect(launcherX, launcherY - Tokens.sp7,
                                                  launcherW, launcherH + Tokens.sp7)
     readonly property rect macRect: Qt.rect(marginX - 300, lowerY + Tokens.sp5,
@@ -220,6 +229,17 @@ Item {
     Component.onCompleted: {
         if (focusRequest !== "" && focusRequest !== focusId)
             focusId = focusRequest
+    }
+
+    // Find owns its input: opening focuses the field; closing releases it and
+    // hands the keys back to the deck catcher.
+    onFocusIdChanged: {
+        if (focusId === "find") {
+            findField.focusInput()
+        } else {
+            findField.releaseFocus()
+            keyCatcher.forceActiveFocus()
+        }
     }
 
     // Fonts. The four Satoshi faces, from Tokens.fontFiles. This is the only
@@ -547,29 +567,80 @@ Item {
                 onLaunch: function (launcherSlug) { deck.launchRequested(launcherSlug) }
             }
 
+            // Find: full deck size, absolute coordinates. FindField owns the pill,
+            // the filter words and the typed text; FindResults owns the hits.
             FindField {
                 id: findField
 
-                x: deck.findX
-                y: deck.findY
-                width: deck.findBoxW
+                anchors.fill: parent
                 active: deck.focusId === "find"
                 query: deck.findQuery
                 filter: deck.findFilter
+                busy: deck.findBusy
+                note: deck.findNote
                 placeholder: "Find"
 
-                onFilterRequested: function (requestedFilter) { deck.findFilter = requestedFilter }
+                onOpenRequested: deck.toggleFocus("find")
+                onQueryEdited: function (text) { deck.findQueryEdited(text) }
+                onFilterRequested: function (requestedFilter) {
+                    deck.findFilter = requestedFilter
+                    deck.findQueryEdited(findField.typedText)
+                }
+                onNavigateRequested: function (dx, dy) {
+                    if (dy === 0)
+                        findResults.moveSelection(dx)
+                    else
+                        findResults.moveRow(dy)
+                }
+                onActivateRequested: findResults.activateSelected()
+                onCloseRequested: {
+                    findField.clearText()
+                    deck.clearFocus()
+                    deck.findQueryEdited("")
+                }
             }
 
             FindResults {
                 id: findResults
 
-                x: deck.findX + (deck.findBoxW - width) / 2
-                y: deck.findY + Tokens.findFieldHeight + Tokens.sp3
+                anchors.fill: parent
                 results: deck.findResults
-                filter: deck.findFilter
                 query: deck.findQuery
-                visible: deck.focusId === "find"
+                active: deck.focusId === "find"
+                busy: deck.findBusy
+                homeDir: deck.findHome
+
+                onHitActivated: function (path) {
+                    deck.findOpenRequested(path)
+                    deck.clearFocus()
+                }
+            }
+
+            // ---- bottom chrome (lead pre-wired; bodies are owned by Q and M) ----
+            // OWNER Q: QuickActions fills the deck and places its five icons itself.
+            QuickActions {
+                id: quickActions
+
+                anchors.fill: parent
+                mediaPlaying: deck.mediaPlaying
+                mediaAvailable: deck.mediaAvailable
+
+                onActionRequested: function (actionId) { deck.quickActionRequested(actionId) }
+            }
+
+            // OWNER M: MediaPill. Position is the e-rest.png value (250, 1284);
+            // M may move it into Tokens and patch these two lines.
+            MediaPill {
+                id: mediaPill
+
+                x: 250
+                y: 1284
+                title: deck.mediaTitle
+                artist: deck.mediaArtist
+                playing: deck.mediaPlaying
+                available: deck.mediaAvailable
+
+                onToggleRequested: deck.mediaToggleRequested()
             }
         }
 

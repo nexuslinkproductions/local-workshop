@@ -3,254 +3,252 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import NexusHud.V5 1.0
 
-// FindField.qml - v5 Find search field.
+// FindField.qml - v5 Find pill with a live TextInput, filter words, busy dots.
 //
-// Contract (W6 card plus the 2026-10-23 binding amendment, which wins):
-//   query: string    live text, painted as typed
-//   active: bool     true while the deck holds focus on the field
-//   filter: string   "all" | "files" | "images" | "docs" | "downloads"
-//   signal filterRequested(string requested)
-//                    emitted when a filter word is tapped. The owner writes the
-//                    value back into `filter`, so this component keeps no state
-//                    of its own and no model.
+// Full-deck overlay in absolute deck coordinates (2560 x 1440). Only the pill,
+// the filter words and the rest word take pointer input; the rest is transparent.
 //
-// The amendment removed the magnifier and the doc count, so this file is the
-// slim capsule with live query text: no lens, no dot ring, no counts, no
-// process, no file access. yuri search is wired in the deck layer later.
-// Name: FindField (the first draft name FindGlyph is NOT shipped), so the
-// integrator registers FindField.qml.
+// Contract
+//   query: string      text shown when the input is not the source (IPC, deck)
+//   active: bool       Find is open: the pill glides to the top centre, input focused
+//   filter: string     all | files | images | docs | downloads (filter row)
+//   busy: bool         three pulsing dots at the right end while a search runs
+//   note: string       one short feed note under the filter row
+//   typedText          the text in the input (read only)
+//   signals            openRequested() on a click on the rest pill
+//                      queryEdited(text) one 120 ms debounce after each typing pause
+//                      filterRequested(key) on a filter word
+//                      navigateRequested(dx, dy) Left/Right (dx) and Up/Down (dy)
+//                      activateRequested() Return
+//                      closeRequested() Escape
+//   functions          focusInput(), releaseFocus(), clearText()
 Item {
     id: root
 
     property string query: ""
     property bool active: false
     property string filter: "all"
+    property bool busy: false
+    property string note: ""
     property string placeholder: "Find"
+    readonly property string typedText: input.text
 
+    signal openRequested()
+    signal queryEdited(string text)
     signal filterRequested(string requested)
+    signal navigateRequested(int dx, int dy)
+    signal activateRequested()
+    signal closeRequested()
 
-    // ---- proportions ------------------------------------------------------
-    // Measured off the s3 Find studies (comp-r1/s3/src/build.py): capsule
-    // height 68, radius height/2, fill ice at 0.10 alpha, chips 50 high at
-    // 20 px. The s3 focus page grows the pill to 900 on a 2560 canvas; 560 is
-    // the deck-scale version of the same move. Text sits at Tokens.sizeBody
-    // (26, the ramp token nearest the s3 28) inset Tokens.sp4 (34) rather than
-    // s3's 78, because the search glyph that needed the 78 is gone. Every number
-    // below is a Tokens read (findFieldHeight, findFieldRestWidth,
-    // findFieldActiveWidth, findChipHeight, sp3, sp4, findRestDotBand).
-    readonly property int fieldHeight: Tokens.findFieldHeight
-    readonly property int fieldRestWidth: Tokens.findFieldRestWidth
-    readonly property int fieldActiveWidth: Tokens.findFieldActiveWidth
-    readonly property int fieldInset: Tokens.sp4                 // 34, text inset
-    readonly property int chipsTop: fieldHeight + Tokens.sp3     // 89
-    readonly property int chipHeight: Tokens.findChipHeight
-    // Right band the five rest dots occupy (s3: right 30, pitch 22).
-    readonly property int restDotBand: Tokens.findRestDotBand
+    // ---- geometry (deck space) ---------------------------------------------
+    // Tokens where a token exists. The open width 900 and the two origins are
+    // read off s3-find-results.png (FIND-SPEC.md); Tokens.findFieldActiveWidth
+    // (560) belongs to the old box and is not used here.
+    readonly property int pillHeight: Tokens.findFieldHeight           // 68
+    readonly property int restX: 1960
+    readonly property int restY: 338
+    readonly property int restWidth: Tokens.findFieldRestWidth         // 380
+    readonly property int openX: 830
+    readonly property int openY: 226
+    readonly property int openWidth: 900
+    readonly property int textInset: 84                                // s3: text at x + 84
+    readonly property int textSize: 30
+    readonly property int chipsCentreY: 346
+    readonly property int chipCapsuleH: 44
+    readonly property int chipPad: 22
+    readonly property real overshoot: 1.22
 
-    // ---- design values, read from Tokens ----------------------------------
-    // Design numbers W6 measured on the s3 Find studies. They were local
-    // read-only properties with a token request each; I1 folded the request
-    // into kit/Tokens.qml, so the value lives there and this component keeps
-    // the same named properties for its own code and its probes. Caret height
-    // is Tokens.sp4 (34), so it reads the spacing token directly.
-    readonly property real capsuleFillAlpha: Tokens.capsuleFillAlpha
-    readonly property real placeholderAlpha: Tokens.placeholderAlpha
-    readonly property int caretWidth: Tokens.caretWidth
-    readonly property int caretRadius: Tokens.caretRadius
-    readonly property int caretGap: Tokens.caretGap
-    readonly property real caretAlpha: Tokens.caretAlpha
-    readonly property int restDotInset: Tokens.restDotInset
-    readonly property int restDotPitch: Tokens.restDotPitch
-    readonly property int restDotSize: Tokens.restDotSize
-    readonly property int restDotChosenSize: Tokens.restDotChosenSize
-    readonly property real restDotAlphaTop: Tokens.restDotAlphaTop
-    readonly property real restDotAlphaStep: Tokens.restDotAlphaStep
-    readonly property real chipHoverScale: Tokens.chipHoverScale
-    readonly property real chipRestOpacity: Tokens.chipRestOpacity
+    // ---- pill ----------------------------------------------------------------
+    Rectangle {
+        id: pill
 
-    // The component keeps the active footprint at all times so a parent layout
-    // never shifts when the field wakes: the capsule is centred, top aligned,
-    // and the filter row occupies the lower band only while active.
-    implicitWidth: fieldActiveWidth
-    implicitHeight: chipsTop + chipHeight
+        x: root.active ? root.openX : root.restX
+        y: root.active ? root.openY : root.restY
+        width: root.active ? root.openWidth : root.restWidth
+        height: root.pillHeight
+        radius: height / 2
+        antialiasing: true
+        color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, Tokens.capsuleFillAlpha)
 
-    // ---- capsule width animation ------------------------------------------
-    // Expand: Motion.expandMillis 347 ms with an OutBack curve tuned to peak at
-    // 1.0487 (4.87 percent, inside the 4 to 6 band; Motion.expandOvershoot is
-    // 0.05). Return: Motion.returnMillis 444 ms, OutCubic, no overshoot and
-    // slower.
-    //
-    // Measured, not assumed: Qt 6.12 SpringAnimation in this build is frame
-    // rate dependent and numerically unstable at the analytic spring constants
-    // (spring = expandOmega^2 = 279 diverges past 1e5 within 32 ms; the same
-    // spring measured 0.4 percent overshoot at one sample rate and 30 percent at
-    // another). An OutBack curve with the same durations and overshoot gives
-    // the identical feel with a value a verifier can reproduce at any frame
-    // rate. Trace in the PR body.
-    readonly property real expandOvershoot: Motion.curveOvershoot5   // OutBack parameter, peak 1.04871
+        Behavior on x {
+            NumberAnimation {
+                duration: root.active ? Motion.expandMillis : Motion.returnMillis
+                easing.type: root.active ? Easing.OutBack : Easing.OutCubic
+                easing.overshoot: root.overshoot
+            }
+        }
+        Behavior on y {
+            NumberAnimation {
+                duration: root.active ? Motion.expandMillis : Motion.returnMillis
+                easing.type: root.active ? Easing.OutBack : Easing.OutCubic
+                easing.overshoot: root.overshoot
+            }
+        }
+        Behavior on width {
+            NumberAnimation {
+                duration: root.active ? Motion.expandMillis : Motion.returnMillis
+                easing.type: root.active ? Easing.OutBack : Easing.OutCubic
+                easing.overshoot: root.overshoot
+            }
+        }
 
-    property real fieldWidth: fieldRestWidth
-
-    NumberAnimation {
-        id: grow
-        target: root
-        property: "fieldWidth"
-        to: root.fieldActiveWidth
-        duration: Motion.expandMillis
-        easing.type: Easing.OutBack
-        easing.overshoot: root.expandOvershoot
-    }
-
-    NumberAnimation {
-        id: shrink
-        target: root
-        property: "fieldWidth"
-        to: root.fieldRestWidth
-        duration: Motion.returnMillis
-        easing.type: Easing.OutCubic
-    }
-
-    // Grow and shrink both write fieldWidth, so the opposite animation is
-    // stopped before the new one starts. Without the stop, a fast false-then-
-    // true flip leaves the older shrink running: it outlasts the grow (444 ms
-    // against 347 ms) and writes the rest width last, so the field ends at 380
-    // while active is true. restart() also rewinds an animation already running
-    // in the same direction, so a repeated flip re-expands from the width the
-    // capsule actually has instead of being ignored.
-    onActiveChanged: {
-        if (root.active) {
-            shrink.stop()
-            grow.restart()
-        } else {
-            grow.stop()
-            shrink.restart()
+        MouseArea {
+            anchors.fill: parent
+            enabled: !root.active
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openRequested()
         }
     }
 
-    // A declarative `active: true` never fires onActiveChanged, so snap the
-    // initial width to the state the owner asked for.
-    Component.onCompleted: root.fieldWidth = root.active ? root.fieldActiveWidth : root.fieldRestWidth
-
-    // ---- capsule ----------------------------------------------------------
-    // Filled surface, no border, no shadow: the visual law bans outlines and
-    // boxes, and the amendment asks for a soft-fill pill.
-    Rectangle {
-        id: capsule
-        x: Math.round((root.width - width) / 2)
-        y: 0
-        width: root.fieldWidth
-        height: root.fieldHeight
-        radius: height / 2
-        color: Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, root.capsuleFillAlpha)
-        antialiasing: true
-    }
-
-    // ---- live query text ---------------------------------------------------
+    // Rest word and five faint type dots (the rest pill, unchanged from s3).
     Text {
-        id: fieldText
-        x: capsule.x + root.fieldInset
-        y: (root.fieldHeight - height) / 2
-        width: capsule.width - root.fieldInset * 2 - (root.active ? 0 : root.restDotBand)
-        text: root.query.length > 0 ? root.query : root.placeholder
-        color: root.query.length > 0
-               ? Tokens.ink
-               : Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, root.placeholderAlpha)
+        id: restWord
+        visible: !root.active
+        x: pill.x + 36
+        y: pill.y + (root.pillHeight - height) / 2
+        text: root.placeholder
+        color: Tokens.ink
+        opacity: 0.62
         font.family: Tokens.fontFamily
         font.weight: Tokens.weightMedium
-        font.pixelSize: Tokens.sizeBody
-        elide: Text.ElideRight
-        verticalAlignment: Text.AlignVCenter
+        font.pixelSize: 28
+        renderType: Text.NativeRendering
     }
 
-    // Caret: a solid ink bar at the end of the typed text, visible only while
-    // the field is active. No blink timer: nothing on this deck runs a timer.
-    Rectangle {
-        id: caret
-        visible: root.active
-        x: fieldText.x + Math.min(fieldText.contentWidth, fieldText.width) + root.caretGap
-        y: (root.fieldHeight - height) / 2
-        width: root.caretWidth
-        height: Tokens.sp4
-        radius: root.caretRadius
-        color: Tokens.ink
-        opacity: root.caretAlpha
-        antialiasing: true
-    }
-
-    // ---- rest dots ---------------------------------------------------------
-    // Five filter dots inside the capsule while the field sleeps, taken from
-    // the s3 rest pill (10 px dots, right inset 30, pitch 22, ice fading
-    // 0.62 down to 0.30). They stay tappable, so a filter can be changed
-    // without waking the field. Active filter: ink, one size up.
     Row {
         id: restDots
-        visible: opacity > 0.01
-        opacity: root.active ? 0 : 1
-        anchors.right: capsule.right
-        anchors.rightMargin: root.restDotInset
-        anchors.verticalCenter: capsule.verticalCenter
-        spacing: 0
-
-        Behavior on opacity {
-            NumberAnimation {
-                duration: Motion.scrimMillis
-                easing.type: Easing.OutCubic
-            }
-        }
+        visible: !root.active
+        spacing: 12
+        x: pill.x + pill.width - 30 - width
+        y: pill.y + (root.pillHeight - height) / 2
 
         Repeater {
-            model: ["all", "files", "images", "docs", "downloads"]
+            model: 5
 
-            delegate: Item {
+            delegate: Rectangle {
                 id: restDot
-                required property string modelData
                 required property int index
 
-                readonly property bool chosen: root.filter === restDot.modelData
+                width: 10
+                height: 10
+                radius: 5
+                antialiasing: true
+                color: Tokens.ice
+                opacity: 0.62 - restDot.index * 0.08
+            }
+        }
+    }
 
-                width: root.restDotPitch
-                height: root.restDotPitch
+    // ---- typed query ---------------------------------------------------------
+    TextInput {
+        id: input
 
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: restDot.chosen ? root.restDotChosenSize : root.restDotSize
-                    height: width
-                    radius: width / 2
-                    antialiasing: true
-                    color: restDot.chosen
-                           ? Tokens.ink
-                           : Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b,
-                                     root.restDotAlphaTop - restDot.index * root.restDotAlphaStep)
-                }
+        x: pill.x + root.textInset
+        y: pill.y
+        width: pill.width - root.textInset - (root.busy ? 78 : 44)
+        height: root.pillHeight
+        visible: root.active
+        enabled: root.active
+        activeFocusOnPress: true
+        selectByMouse: true
+        verticalAlignment: TextInput.AlignVCenter
+        leftPadding: 0
+        rightPadding: 0
+        topPadding: 0
+        bottomPadding: 0
+        color: Tokens.white
+        selectionColor: Tokens.azure
+        selectedTextColor: Tokens.field
+        font.family: Tokens.fontFamily
+        font.pixelSize: root.textSize
+        font.weight: Tokens.weightMedium
+        renderType: Text.NativeRendering
 
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.filterRequested(restDot.modelData)
+        // Caret: a solid ice bar. No blink timer: nothing here runs while idle.
+        cursorDelegate: Rectangle {
+            width: 2
+            height: 34
+            color: Tokens.ice
+        }
+
+        // Every edit restarts the one debounce timer; the emit happens after a pause.
+        onTextEdited: debounce.restart()
+
+        Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Left) {
+                event.accepted = true
+                root.navigateRequested(-1, 0)
+            } else if (event.key === Qt.Key_Right) {
+                event.accepted = true
+                root.navigateRequested(1, 0)
+            } else if (event.key === Qt.Key_Up) {
+                event.accepted = true
+                root.navigateRequested(0, -1)
+            } else if (event.key === Qt.Key_Down) {
+                event.accepted = true
+                root.navigateRequested(0, 1)
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                event.accepted = true
+                root.activateRequested()
+            } else if (event.key === Qt.Key_Escape) {
+                event.accepted = true
+                root.closeRequested()
+            }
+        }
+    }
+
+    // The one debounce timer. Single shot, not running at rest.
+    Timer {
+        id: debounce
+
+        interval: 120
+        repeat: false
+        onTriggered: root.queryEdited(input.text)
+    }
+
+    // Busy: three small pulsing dots at the right end of the pill (only while
+    // a search runs; the pulse is an animation, not a timer).
+    Row {
+        id: busyDots
+        visible: root.active && root.busy
+        spacing: 7
+        x: pill.x + pill.width - 42 - width
+        y: pill.y + (root.pillHeight - height) / 2
+
+        Repeater {
+            model: 3
+
+            delegate: Rectangle {
+                id: busyDot
+                required property int index
+
+                width: 7
+                height: 7
+                radius: 3.5
+                color: Tokens.ice
+                opacity: 0.25
+
+                SequentialAnimation on opacity {
+                    running: root.active && root.busy
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: busyDot.index * 150 }
+                    NumberAnimation { to: 1.0; duration: 300 }
+                    NumberAnimation { to: 0.25; duration: 500 }
                 }
             }
         }
     }
 
-    // ---- filters -----------------------------------------------------------
-    // Five words, no capsules, no outlines: weight and brightness carry the
-    // active filter. The row fades in only while the field is active and is
-    // hidden at rest so the composed deck stays quiet and under 40 words.
+    // ---- filter words ----------------------------------------------------------
+    // Plain words: the active one is ink and bold on a soft-fill capsule. Icons
+    // (s3 glyphs) are not drawn yet; see the report.
     Row {
         id: chipRow
-        x: Math.round((root.width - width) / 2)
-        y: root.chipsTop
-        height: root.chipHeight
-        spacing: Tokens.sp3
-        opacity: root.active ? 1 : 0
-        visible: opacity > 0.01
-
-        Behavior on opacity {
-            NumberAnimation {
-                duration: Motion.scrimMillis
-                easing.type: Easing.OutCubic
-            }
-        }
+        visible: root.active
+        spacing: Tokens.sp2
+        height: root.chipCapsuleH
+        x: Math.round(Tokens.centreX - width / 2)
+        y: root.chipsCentreY - root.chipCapsuleH / 2
 
         Repeater {
             model: [
@@ -261,43 +259,80 @@ Item {
                 { "key": "downloads", "label": "Downloads" }
             ]
 
-            delegate: Item {
+            delegate: Rectangle {
                 id: chip
+
                 required property var modelData
 
-                width: chipLabel.width
-                height: chipRow.height
-                scale: chipHit.containsMouse ? root.chipHoverScale : 1.0
-                transformOrigin: Item.Center
+                readonly property bool chosen: root.filter === chip.modelData.key
 
-                Behavior on scale {
-                    NumberAnimation {
-                        duration: Motion.textOutMillis
-                        easing.type: Easing.OutCubic
-                    }
-                }
+                height: root.chipCapsuleH
+                width: chipLabel.implicitWidth + root.chipPad * 2
+                radius: height / 2
+                antialiasing: true
+                color: chip.chosen
+                       ? Qt.rgba(Tokens.ice.r, Tokens.ice.g, Tokens.ice.b, Tokens.capsuleFillAlpha)
+                       : "transparent"
 
                 Text {
                     id: chipLabel
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.centerIn: parent
                     text: chip.modelData.label
-                    color: root.filter === chip.modelData.key ? Tokens.ink : Tokens.textDim
-                    opacity: root.filter === chip.modelData.key ? 1.0 : root.chipRestOpacity
+                    color: chip.chosen ? Tokens.ink : Tokens.textDim
                     font.family: Tokens.fontFamily
-                    font.weight: root.filter === chip.modelData.key
-                                 ? Tokens.weightBold
-                                 : Tokens.weightMedium
+                    font.weight: chip.chosen ? Tokens.weightBold : Tokens.weightMedium
                     font.pixelSize: Tokens.sizeLabel
                 }
 
                 MouseArea {
-                    id: chipHit
                     anchors.fill: parent
-                    hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.filterRequested(chip.modelData.key)
                 }
             }
         }
+    }
+
+    Text {
+        id: noteText
+        visible: root.active && root.note !== ""
+        x: Math.round(Tokens.centreX - width / 2)
+        y: root.chipsCentreY + root.chipCapsuleH / 2 + Tokens.sp2
+        text: root.note
+        color: Tokens.textCaption
+        font.family: Tokens.fontFamily
+        font.weight: Tokens.weightRegular
+        font.pixelSize: Tokens.sizeCaption
+    }
+
+    // ---- focus and text, driven by DeckSurface ----------------------------------
+    // Both deferred one event-loop turn as well: `active` may still be settling
+    // in the same binding pass that set focusId.
+    function focusInput() {
+        if (root.active)
+            input.forceActiveFocus()
+        Qt.callLater(function () {
+            if (root.active) {
+                input.forceActiveFocus()
+                input.cursorPosition = input.text.length
+            }
+        })
+    }
+
+    function releaseFocus() {
+        debounce.stop()
+        input.focus = false
+    }
+
+    // Escape empties the typed text and drops any pending debounce.
+    function clearText() {
+        debounce.stop()
+        input.text = ""
+    }
+
+    // A query written from outside (IPC, deck) is shown without re-emitting.
+    onQueryChanged: {
+        if (input.text !== root.query)
+            input.text = root.query
     }
 }

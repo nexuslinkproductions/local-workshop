@@ -2,8 +2,10 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Services.Mpris
 
 import "../v4/ScreenRoles.js" as ScreenRoles
+import "actions.js" as Actions
 
 // DeckMain.qml - the v5 DP-2 deck's shell layer, and THE ONLY FILE UNDER v5/
 // THAT IMPORTS QUICKSHELL. Hard rule (MAIN-SCREEN-BUILD.md constraint 2):
@@ -71,10 +73,175 @@ Item {
     property bool assembling: false
     property real assembleProgress: 1
 
+    // ==== MEDIA inputs (OWNER M: Quickshell Mpris) =========================
+    // Selection rule as in the live medianotch plugin (read only): skip a player
+    // with no metadata, prefer the first playing one, else the first one.
+    readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
+    function mediaHasMeta(p) { return !!(p && (p.trackTitle || p.trackArtist)) }
+    readonly property var activePlayer: {
+        var fallback = null
+        for (var i = 0; i < mprisPlayers.length; ++i) {
+            var p = mprisPlayers[i]
+            if (!mediaHasMeta(p))
+                continue
+            if (p.isPlaying === true)
+                return p
+            if (fallback === null)
+                fallback = p
+        }
+        return fallback
+    }
+    readonly property string mediaTitle: activePlayer !== null ? String(activePlayer.trackTitle || "") : ""
+    readonly property string mediaArtist: activePlayer !== null ? String(activePlayer.trackArtist || "") : ""
+    readonly property bool mediaPlaying: activePlayer !== null && activePlayer.isPlaying === true
+    readonly property bool mediaAvailable: activePlayer !== null
+    // NEXUSLINK_HUD_V5_DRYRUN=1/true/on: toggles are logged, never sent.
+    readonly property bool mediaDryRun: {
+        var raw = Quickshell.env("NEXUSLINK_HUD_V5_DRYRUN")
+        if (raw === null || raw === undefined)
+            return false
+        var v = String(raw).toLowerCase()
+        return v === "1" || v === "true" || v === "on"
+    }
+
+    // ==== QUICK ACTIONS (OWNER Q) ==========================================
+    // The deck emits action ids; this layer maps them to typed commands. The
+    // table and the plan live in actions.js (pure JS, tested offscreen). This
+    // function only executes the plan: one Process, argv only, never a shell
+    // string. An unknown id runs nothing.
+    //
+    // Dry run: NEXUSLINK_HUD_V5_DRYRUN=1/true/on logs the plan instead of doing
+    // it (no process, no focus change, no playback toggle).
+    readonly property bool quickDryRun: {
+        var raw = Quickshell.env("NEXUSLINK_HUD_V5_DRYRUN")
+        if (raw === null || raw === undefined)
+            return false
+        var v = String(raw).toLowerCase()
+        return v === "1" || v === "true" || v === "on"
+    }
+
+    // Stub point: a harness replaces this with a function that records argv.
+    property var quickRunner: startQuickCommand
+
+    function startQuickCommand(argv) {
+        quickProc.command = argv
+        quickProc.running = true
+    }
+
+    Process {
+        id: quickProc
+        running: false
+    }
+
+    function runQuickAction(actionId) {
+        var id = String(actionId)
+        var p = Actions.plan(id, {})
+        if (!p.known)
+            return "unknown quick action " + id
+        if (hud.quickDryRun) {
+            var line = "QUICKACTION " + id + " " + JSON.stringify(p.argv)
+            console.log(line)
+            return line
+        }
+        if (p.deck === "launcher") {
+            hud.focusId = "launcher"
+            return "focus launcher"
+        }
+        if (p.deck === "media")
+            return hud.toggleMedia()
+        hud.quickRunner(p.argv)
+        return "started " + id
+    }
+
+    // ==== MEDIA toggle (OWNER M) ===========================================
+    // Toggles the player the pill shows and returns what happened, or why not.
+    // Under NEXUSLINK_HUD_V5_DRYRUN the player is never called: the intent is
+    // logged and returned instead.
+    function toggleMedia() {
+        var p = hud.activePlayer
+        if (p === null)
+            return "no player"
+        if (!p.canTogglePlaying)
+            return "player cannot toggle " + hud.mediaTitle
+        if (hud.mediaDryRun) {
+            console.log("MEDIA toggle " + hud.mediaTitle)
+            return "MEDIA toggle " + hud.mediaTitle
+        }
+        p.togglePlaying()
+        return "toggled " + hud.mediaTitle
+    }
+
+    // ==== FIND (OWNER Fq: process, keyboard focus mode, xdg-open) ============
     // A feed that has never answered keeps the deck in its calm rest state; a
     // feed that breaks after answering keeps its last good value (never blank,
     // never an error string on screen).
     property string lastFeedError: ""
+
+    // Find: the FIND process, kill-previous and xdg-open (OWNER Fq).
+    property bool findBusy: false
+    property string findNote: ""
+    property int findSeq: 0
+    readonly property string homeDir: String(Quickshell.env("HOME") || "")
+
+    // Every query edit restarts the reader: the previous process is stopped
+    // first, and a late stream from it is dropped by sequence number.
+    function runFind(text) {
+        var raw = String(text === undefined || text === null ? "" : text)
+        var q = raw.trim()
+        hud.findSeq += 1
+        findProc.running = false
+        hud.findQuery = raw
+        if (q.length === 0) {
+            hud.findBusy = false
+            hud.findNote = ""
+            hud.findResults = []
+            return
+        }
+        findProc.runSeq = hud.findSeq
+        findProc.command = ["python3", hud.feedsDir + "/find.py", "--query", q,
+                            "--filter", surface.findFilter, "--json"]
+        hud.findBusy = true
+        findProc.running = true
+    }
+
+    function findDone(seq, out) {
+        if (seq !== hud.findSeq)
+            return
+        hud.findBusy = false
+        var v = hud.readJson(out, null)
+        if (v === null || v.ok === false) {
+            hud.findNote = v === null ? "" : String(v.reason || "search failed")
+            hud.findResults = []
+            return
+        }
+        hud.findNote = String(v.note || "")
+        hud.findResults = v.results || []
+    }
+
+    Process {
+        id: findProc
+        property int runSeq: 0
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: hud.findDone(findProc.runSeq, text)
+        }
+    }
+
+    // Enter on a hit: xdg-open on the expanded path (the deck clears its focus).
+    function openFindHit(path) {
+        var p = String(path)
+        if (p.indexOf("~/") === 0)
+            p = hud.homeDir + p.slice(1)
+        openProc.running = false
+        openProc.command = ["xdg-open", p]
+        openProc.running = true
+    }
+
+    Process {
+        id: openProc
+        running: false
+    }
 
     // ---------------------------------------------------------------- clock
     // The clock is not a feed reader: it is local time, formatted. It is the one
@@ -283,14 +450,6 @@ Item {
     }
 
     FileView {
-        id: findFixture
-        path: hud.fixturesDir + "/find.json"
-        watchChanges: false
-        printErrors: false
-        onLoaded: if (hud.findResults.length === 0) hud.findResults = hud.readJson(text(), [])
-    }
-
-    FileView {
         id: metricsFixture
         path: hud.fixturesDir + "/metrics.json"
         watchChanges: false
@@ -348,7 +507,7 @@ Item {
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.namespace: "nexuslink-hud-v5"
         WlrLayershell.layer: WlrLayer.Background
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: surface.wantsKeyboard ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
         // The four Satoshi faces live in DeckSurface.qml, not here: DeckSurface is
         // instantiated below, so the shell gets them, and a pure-QtQuick render
@@ -356,7 +515,14 @@ Item {
         // them without Quickshell. Nothing else in this file loads a font.
 
         DeckSurface {
+            id: surface
             anchors.fill: parent
+
+            findBusy: hud.findBusy
+            findNote: hud.findNote
+            findHome: hud.homeDir
+            onFindQueryEdited: function (text) { hud.runFind(text) }
+            onFindOpenRequested: function (path) { hud.openFindHit(path) }
 
             clockText: hud.clockText
             dayText: hud.dayText
@@ -377,6 +543,10 @@ Item {
             focusRequest: hud.focusId
             assembling: hud.assembling
             assembleProgress: hud.assembleProgress
+            mediaTitle: hud.mediaTitle
+            mediaArtist: hud.mediaArtist
+            mediaPlaying: hud.mediaPlaying
+            mediaAvailable: hud.mediaAvailable
             animate: true
 
             // The deck owns focus while a pointer or the keyboard is driving it;
@@ -384,6 +554,8 @@ Item {
             onFocusChanged: function (id) { hud.focusId = id }
             onLaunchRequested: function (slug) { hud.launch(slug) }
             onSessionActivated: function (sessionId) { hud.focusId = "" }
+            onQuickActionRequested: function (actionId) { hud.runQuickAction(actionId) }
+            onMediaToggleRequested: hud.toggleMedia()
         }
     }
 
@@ -462,8 +634,8 @@ Item {
             return "focus " + hud.focusId
         }
         function clearFocus(): string { hud.focusId = ""; return "focus cleared" }
-        function query(text: string): string { hud.findQuery = String(text); return "query " + hud.findQuery }
-        function filter(name: string): string { hud.findFilter = String(name); return hud.findFilter }
+        function query(text: string): string { hud.runFind(String(text)); return "query " + hud.findQuery }
+        function filter(name: string): string { hud.findFilter = String(name); hud.runFind(hud.findQuery); return hud.findFilter }
         function assembly(p: string): string {
             hud.assembleProgress = Math.max(0, Math.min(1, Number(p)))
             hud.assembling = hud.assembleProgress < 1
