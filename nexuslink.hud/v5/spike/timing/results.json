@@ -1,0 +1,6 @@
+{"case":"a-knot-540","mode":"rhi","api":"metal","frames":"300","size":"540x540","mean_ms":"0.567","sd_ms":"0.221","p50_ms":"0.500","p95_ms":"1.197","max_ms":"1.649"}
+{"case":"b-knot-540","mode":"rhi","api":"metal","frames":"300","size":"540x540","mean_ms":"0.971","sd_ms":"0.307","p50_ms":"0.839","p95_ms":"1.601","max_ms":"2.626"}
+{"case":"c-knot-540","mode":"rhi","api":"metal","frames":"300","size":"540x540","mean_ms":"1.019","sd_ms":"0.337","p50_ms":"0.892","p95_ms":"1.755","max_ms":"3.150"}
+{"case":"a-knot-1080","mode":"rhi","api":"metal","frames":"300","size":"1080x1080","mean_ms":"0.757","sd_ms":"0.247","p50_ms":"0.687","p95_ms":"1.402","max_ms":"1.811"}
+{"case":"b-knot-1080","mode":"rhi","api":"metal","frames":"300","size":"1080x1080","mean_ms":"1.527","sd_ms":"0.306","p50_ms":"1.397","p95_ms":"2.120","max_ms":"3.299"}
+{"case":"c-knot-1080","mode":"rhi","api":"metal","frames":"300","size":"1080x1080","mean_ms":"1.885","sd_ms":"0.279","p50_ms":"1.783","p95_ms":"2.520","max_ms":"3.130"}
