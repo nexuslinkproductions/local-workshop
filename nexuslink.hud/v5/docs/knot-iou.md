@@ -244,6 +244,9 @@ leaves the ring strip in the still, so it is not shipped.
 | progress 0.6 | `docs/knot-stills/knot-a60-deck.jpg` | `docs/knot-stills/knot-a60-540.jpg` |
 | progress 1.0 | `docs/knot-stills/knot-a100-deck.jpg` | `docs/knot-stills/knot-a100-540.jpg` |
 
+Side by side for the R2 check (s2's crop left, the render's crop right, 1:1):
+`docs/knot-stills/knot-vs-s2.jpg`.
+
 ## Reproduce
 
 From the worktree root, Python 3 with PIL only — **no numpy**; the tool is stdlib
