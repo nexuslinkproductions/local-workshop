@@ -67,6 +67,19 @@ Item {
 
     readonly property double startMs: Date.now()
 
+    // ----------------------------------------------------- v5 deck flag
+    // The v5 live-preview deck loads only when this file exists. The file is
+    // read once at startup (blockLoading, no watch). Rollback is deleting the
+    // file and restarting the shell; without the file nothing below changes.
+    FileView {
+        id: v5FlagFile
+        path: Quickshell.env("HOME") + "/.config/nexuslink/hud-v5"
+        blockLoading: true
+        watchChanges: false
+        printErrors: false
+    }
+    readonly property bool v5Enabled: v5FlagFile.loaded
+
     // ------------------------------------------------------------------ state
     property var stats: ({})
     property var probeMap: ({})        // static keys merged into every frame
@@ -1105,9 +1118,27 @@ Item {
                     Loader {
                         id: deckLoader
                         anchors.fill: parent
-                        sourceComponent: win.isCommand ? commandScreen
+                        sourceComponent: win.isCommand ? (hud.v5Enabled ? v5Screen : commandScreen)
                                        : win.isHardware ? tokensScreen
                                        : systemScreen
+                    }
+                    // v5 live-preview deck: parsed only when the flag file exists,
+                    // because the Loader below is created only through this Component.
+                    Component {
+                        id: v5Screen
+                        Item {
+                            anchors.fill: parent
+                            Loader {
+                                id: v5Loader
+                                anchors.fill: parent
+                                source: Qt.resolvedUrl("../v5/live/DeckV5.qml")
+                            }
+                            Binding { target: v5Loader.item; property: "stats"; value: hud.stats; when: v5Loader.item !== null }
+                            Binding { target: v5Loader.item; property: "tokData"; value: hud.tokData; when: v5Loader.item !== null }
+                            Binding { target: v5Loader.item; property: "crew"; value: hud.crew; when: v5Loader.item !== null }
+                            Binding { target: v5Loader.item; property: "shown"; value: deck.shown; when: v5Loader.item !== null }
+                            Binding { target: v5Loader.item; property: "window"; value: win; when: v5Loader.item !== null }
+                        }
                     }
                     Component {
                         id: commandScreen
@@ -1149,6 +1180,7 @@ Item {
                     // machined slab edge — the deck's chrome frame
                     Rectangle {
                         anchors.fill: parent
+                        visible: !(win.isCommand && hud.v5Enabled)
                         color: "transparent"
                         border.width: 1
                         border.color: win.flashId === win.deckId
@@ -1158,6 +1190,7 @@ Item {
                     // focus flash — a brief accent pulse on ipc focus
                     Rectangle {
                         anchors.fill: parent
+                        visible: !(win.isCommand && hud.v5Enabled)
                         color: "transparent"
                         border.width: 2
                         border.color: Style.c.accent
@@ -1171,6 +1204,7 @@ Item {
                     // inside the mask region for the whole gesture
                     Item {
                         id: grip
+                        visible: !(win.isCommand && hud.v5Enabled)
                         width: 26
                         height: 26
                         anchors.right: parent.right
