@@ -4,9 +4,10 @@ One JSON object for the deck's Recent and Pinned widget: the newest downloads,
 screenshots and recent files, the pinned folders, and a census by file type.
 Python 3, standard library only, no network, no daemon, no watcher. The HUD
 polls the script; a 10 s cache keeps two live ticks from walking the tree twice.
-A fixture file read is never cached and reads no host state, so its output is
-the same on every machine; `--fixture DIR` is the one fixture mode that reads
-the host (see Fixtures).
+A fixture read is never cached and never reads the host, so its output is the
+same on every machine: a fixture file carries the tree as data, and `--fixture
+DIR` stands in for the whole machine, where `~` is that directory and a root
+outside it is refused rather than read (see Fixtures).
 
     nexuslink.hud/v5/feeds/recent.py --json
     nexuslink.hud/v5/feeds/recent.py --config ~/NEXUS_AI_CENTER/my_paths.json --limit 4 --json
@@ -83,13 +84,15 @@ is reported as `ok: false`, not a crash.
   buckets, zeros included. It is a census of the widget, not of the disk.
 * `pinned` is not deduplicated against the file lists: a pin is a deliberate
   shortcut, not a recent item. `kind` is `"dir"`, `"file"`, or `null` when the
-  path is gone. Pins are never subject to `--limit`.
+  path is gone. Pins are never subject to `--limit`. A pin row carries a
+  `reason` only when one of its boolean fields was not a boolean (see Fixtures).
 * `broken` counts symlinks under the scanned roots whose target is gone.
   `outside` counts symlinks resolving outside every configured root (they are
   never followed). Both are totals; `roots[]` carries the per-root split.
 * A missing, unreadable or non-directory root contributes nothing, records a
   `reason` on its `roots[]` row, and leaves `ok: true`. The rest of the feed
-  is still real data.
+  is still real data. A root whose `exists`, or a file row whose `broken`, was
+  not a boolean also records the note there.
 * Entries starting with `.` are skipped, as are directories in the file lists
   (folders belong in `pinned`).
 
@@ -139,12 +142,12 @@ in the same directory then `os.replace`, so a reader never sees half a payload.
 * Environment hooks: `NEXUSLINK_STATE_DIR` moves the cache directory,
   `NEXUSLINK_NO_CACHE=1` turns the cache off. `HOME` is read for live reads: to
   expand `~` in the config and to shorten a live path to its `~` display form.
-  It also resolves a `~` in a path named on the command line — including the
-  `--fixture` path itself, only so that file can be opened. A fixture file's
-  `~` is its own `home`, never `HOME`, and a fixture path is printed exactly as
-  it was given, so no `HOME` value reaches a fixture file's output (`--fixture
-  DIR` is the host-reading exception described under Fixtures). Nothing else
-  reads the environment.
+  It also resolves a `~` in a path named on the command line, including the
+  `--fixture` path itself, only so that path can be opened. No fixture mode
+  expands `~` against `HOME`: a fixture file uses its own `home` (or keeps the
+  `~` form) and `--fixture DIR` uses the directory. A fixture path is printed
+  exactly as it was given, so no `HOME` value reaches a fixture's output.
+  Nothing else reads the environment.
 
 ## Fixtures
 
@@ -193,11 +196,22 @@ held:
   target was gone. Containment against the configured roots is computed on the
   strings, so a fixture file never asks the host filesystem whether a path
   exists, and never reads a cache, a digest or a directory listing.
-* `--fixture DIR` is the one fixture mode that walks the host: `DIR/hud_paths.json`
-  is the config, relative roots resolve inside `DIR`, `~` resolves against the
-  running user's home, and symlinks are resolved on the host. It runs the live
-  scan, so its output has the shape of the machine it ran on rather than of a
-  fixed fixture. Useful for a bigger, real-shaped check on Linux.
+* Boolean fields are read strictly, never by truthiness. `true` or the string
+  `"true"` is true; `false`, the string `"false"`, `""`, `0` and `"0"` are
+  false; `null`, a list, an object or any other string is not a boolean at all,
+  so the field counts as absent and the row's `reason` names it, for example
+  `exists for ~/Downloads is not a boolean (null), treated as absent`. This
+  covers `exists` on a root or a pin and `broken` on a file row, so a `"false"`
+  string can never make a file look broken or a missing root look present.
+* `--fixture DIR` is fixture mode as well, with the directory standing in for
+  the whole machine: `DIR/hud_paths.json` is the config, `~` resolves to `DIR`,
+  a relative root resolves inside `DIR`, and a root that resolves outside `DIR`
+  is reported as `"root is outside the fixture directory"` and never read. A
+  symlink whose target leaves `DIR` is counted as `outside` without a stat, so
+  no host path is touched. The walk is the live one, so `roots[].path` prints in
+  its `~` form relative to `DIR` and item paths are absolute inside `DIR`. No
+  cache file and no state directory are used. Useful for a bigger, real-shaped
+  check: copy a tree into a directory, point the feed at it, get that tree.
 
 ## Exit codes
 
@@ -208,8 +222,9 @@ held:
 
 Missing or malformed *content* never raises and never takes the process down:
 a HUD tick sees a JSON object with a reason, not a traceback. Non-UTF-8 bytes,
-JSON nested beyond the reader's limit, and non-finite numbers (`NaN`,
-`Infinity`, `1e400`) are all `kind: malformed`, exit 0.
+JSON nested beyond the reader's limit, non-finite numbers (`NaN`, `Infinity`,
+`1e400`) and a string holding a lone surrogate (`"\ud800"`: legal JSON that
+UTF-8 cannot carry) are all `kind: malformed`, exit 0, one JSON line.
 
 ## Self-check
 
@@ -230,10 +245,18 @@ gives identical output apart from `generated_at`; and a fixture holding `null`,
 `5`, `true`, `1.5` or `[]` answers `ok: false`, `kind: malformed`, exit 0.
 Malformed content has its own group: a non-UTF-8 fixture, a 200k-deep array, a
 `NaN`, `Infinity` or `1e400` size, and a config with `limit: 1e400` or
-`depth: 1e400` all answer exit 0, `ok: false`, `kind: malformed`; an empty
-`--fixture` or `--config` value exits 2 with `kind: caller`; and a fixture row
-named `../escape.png`, `.`, `..` or `sub/nested.png` is skipped, so only the
-bare `kept.png` row survives under its root.
+`depth: 1e400` all answer exit 0, `ok: false`, `kind: malformed`; a lone
+surrogate in a name, a `home`, a root key or a reason answers the same way, with
+an ASCII reason and no traceback; an empty `--fixture` or `--config` value exits
+2 with `kind: caller`; and a fixture row named `../escape.png`, `.`, `..` or
+`sub/nested.png` is skipped, so only the bare `kept.png` row survives under its
+root. Strict booleans have their own group too: `exists` and `broken` are proven
+for `true`, `"true"`, `false`, `"false"`, `""`, `0` and `"0"`, and `null`, `[]`,
+`{}` and `"no"` are proven to count as absent with the field named in the
+reason. Fixture-directory purity is proven on a directory holding its own tree:
+`~` resolves to the directory, a root outside it is refused, the output is
+identical under two `HOME` values, a host mtime change leaves it unchanged, and
+no state directory appears.
 Error paths run through the real CLI (named missing config → 2, malformed
 config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
 2, absent default config → 0). It never reads `~/Downloads` or any real root,

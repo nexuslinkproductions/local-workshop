@@ -3,14 +3,15 @@
 
 Emits the latest downloads, screenshots and recent files, the pinned folders,
 and a type census, from a paths config. Stdlib only, no network, no daemon:
-the HUD polls this script and a live read is cached for 10 s. A fixture file
-is never cached and reads no host state, so its output is the same on every
-machine; --fixture DIR is the one fixture mode that reads the host.
+the HUD polls this script and a live read is cached for 10 s. A fixture is
+never cached and never reads the host: a fixture file carries the tree as data,
+and --fixture DIR stands in for the whole machine, so ~ is that directory,
+relative roots resolve inside it, and a root outside it is refused, not read.
 
     recent.py --json
     recent.py --config ./hud_paths.json --limit 4 --json
     recent.py --fixture nexuslink.hud/v5/fixtures/recent.json --json
-    recent.py --fixture ./snapshot-dir --json     # a dir holding hud_paths.json
+    recent.py --fixture ./snapshot-dir --json     # a dir standing in for the machine
     recent.py --self-check
 
 Exit codes: 0 for data and honest absence ({"ok": false, "reason": ...}),
@@ -156,6 +157,46 @@ def finite_float(value):
     except (OverflowError, TypeError, ValueError):
         return None
     return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+# A JSON field is only a boolean when it is one. `true` and the string "true"
+# are true; `false`, the string "false", "" (an empty string), 0 and "0" are
+# false; null, a list, an object or any other string is not a boolean at all,
+# so the caller treats the field as absent and records a reason instead of
+# guessing what the author meant. Read strictly: "FALSE" and " true " are not
+# booleans, because a near miss is the bug this rule exists for.
+NOT_A_BOOLEAN = object()
+
+
+def strict_bool(value):
+    """JSON value -> True, False, or NOT_A_BOOLEAN. See the rule above."""
+    if value is True or value is False:
+        return value
+    if isinstance(value, str):
+        if value == "true":
+            return True
+        if value in ("false", ""):
+            return False
+        if value == "0":
+            return False
+        return NOT_A_BOOLEAN
+    if isinstance(value, (int, float)):
+        try:
+            return False if float(value) == 0.0 else NOT_A_BOOLEAN
+        except (OverflowError, TypeError, ValueError):
+            return NOT_A_BOOLEAN
+    return NOT_A_BOOLEAN
+
+
+def boolean_note(field, value):
+    """A field that is not a boolean -> the one-line reason we print for it."""
+    try:
+        shown = json.dumps(value, ensure_ascii=True, default=repr)
+    except (TypeError, ValueError):
+        shown = repr(value)
+    if len(shown) > 60:
+        shown = shown[:57] + "..."
+    return "%s is not a boolean (%s), treated as absent" % (field, shown)
 
 
 def home():
@@ -364,6 +405,36 @@ def _json_constant(text):
     raise _NonFinite(text)
 
 
+def _no_broken_utf8(raw, what, shown):
+    """Reject a document holding a string UTF-8 cannot encode.
+
+    A lone surrogate is half a UTF-16 pair: `"\\ud800"` is legal JSON and
+    parses into a Python string, then dies the moment the answer is printed.
+    That makes it bad content, so it gets the malformed answer instead of a
+    traceback. The walk is iterative because a parseable document can nest
+    deeper than a recursive walk may go.
+    """
+    stack = [raw]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                quoted = json.dumps(item, ensure_ascii=True)
+                if len(quoted) > 60:
+                    quoted = quoted[:57] + "..."
+                raise Malformed(
+                    "%s at %s holds a string UTF-8 cannot encode: %s" % (what, shown, quoted)
+                )
+        elif isinstance(item, dict):
+            for key, value in item.items():
+                stack.append(key)
+                stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+
+
 def read_json_file(path, what, shown=None):
     """Read one JSON file. Bad bytes and bad content are answers, not crashes.
 
@@ -384,45 +455,52 @@ def read_json_file(path, what, shown=None):
     if not text.strip():
         raise Missing("%s at %s is empty" % (what, display))
     try:
-        return json.loads(text, parse_float=_json_float, parse_constant=_json_constant)
+        parsed = json.loads(text, parse_float=_json_float, parse_constant=_json_constant)
     except _NonFinite as exc:
         raise Malformed("%s at %s has a non-finite number: %s" % (what, display, exc.text))
     except RecursionError:
         raise Malformed("%s at %s nests deeper than this reader allows" % (what, display))
     except ValueError as exc:
         raise Malformed("%s at %s is not valid JSON: %s" % (what, display, exc))
+    _no_broken_utf8(parsed, what, display)
+    return parsed
 
 
 # --------------------------------------------------------------------------
 # live scan
 
 
-def scan_root(root, depth, allowed_roots):
+def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
     """Walk one root. Returns (entries, stats). Raises Problem when unreadable.
 
     Each entry carries its display name, absolute path, size, mtime and type,
     plus a private identity key. Symlinks are resolved before stat, broken
     ones are counted and skipped, and a link whose target leaves every
-    configured root is counted and skipped, never followed out.
+    configured root is counted and skipped, never followed out. `confined` is
+    the fixture directory in DIR mode: a link that leaves it is judged on its
+    target string alone, so no host path is ever stat'ed from there.
     """
     entries = []
     stats = {"broken": 0, "outside": 0}
     root = os.path.abspath(root)
     if not os.path.exists(root):
-        raise Missing("no such directory: %s" % tilde(root))
+        raise Missing("no such directory: %s" % tilde(root, home_dir))
     if not os.path.isdir(root):
-        raise Missing("not a directory: %s" % tilde(root))
+        raise Missing("not a directory: %s" % tilde(root, home_dir))
     single_level = depth == 1
 
     def consider(path):
         name = os.path.basename(path)
         is_link = os.path.islink(path)
         if is_link:
+            outside = not within(os.path.realpath(path), allowed_roots)
+            if outside and confined is not None:
+                stats["outside"] += 1
+                return
             if not os.path.exists(path):
                 stats["broken"] += 1
                 return
-            real = os.path.realpath(path)
-            if not within(real, allowed_roots):
+            if outside:
                 stats["outside"] += 1
                 return
         try:
@@ -460,9 +538,12 @@ def scan_root(root, depth, allowed_roots):
                     if os.path.islink(child):
                         # A linked directory is never followed; count it the
                         # same way a linked file is counted.
-                        if not os.path.exists(child):
+                        outside = not within(os.path.realpath(child), allowed_roots)
+                        if outside and confined is not None:
+                            stats["outside"] += 1
+                        elif not os.path.exists(child):
                             stats["broken"] += 1
-                        elif not within(os.path.realpath(child), allowed_roots):
+                        elif outside:
                             stats["outside"] += 1
                         continue
                     kept.append(name)
@@ -474,17 +555,22 @@ def scan_root(root, depth, allowed_roots):
                         continue
                     consider(os.path.join(dirpath, name))
     except PermissionError:
-        raise Missing("permission denied: %s" % tilde(root))
+        raise Missing("permission denied: %s" % tilde(root, home_dir))
     except OSError as exc:
-        raise Missing("cannot read %s: %s" % (tilde(root), exc.strerror or exc))
+        raise Missing("cannot read %s: %s" % (tilde(root, home_dir), exc.strerror or exc))
     return entries, stats
 
 
-def pin_rows(pins):
+def pin_rows(pins, home_dir=HOST_HOME, confined=None):
     rows = []
     for pin in pins:
         path = pin["path"]
-        name = pin["name"] or os.path.basename(path.rstrip(os.sep)) or tilde(path)
+        name = pin["name"] or os.path.basename(path.rstrip(os.sep)) or tilde(path, home_dir)
+        if confined is not None and not within(os.path.abspath(path), [confined]):
+            # Same rule as a root: a pin outside the fixture directory is
+            # reported missing, never stat'ed on the host.
+            rows.append({"name": name, "path": path, "exists": False, "kind": None})
+            continue
         exists = os.path.isdir(path)
         kind = "dir" if exists else None
         if not exists:
@@ -514,7 +600,7 @@ def fixture_name(name):
     return text
 
 
-def _fixture_entry(raw, root, allowed_roots, stats, home_dir):
+def _fixture_entry(raw, root, allowed_roots, stats, home_dir, notes):
     """One fixture file row -> entry or None (mirrors the live rules)."""
     if not isinstance(raw, dict):
         return None
@@ -526,16 +612,23 @@ def _fixture_entry(raw, root, allowed_roots, stats, home_dir):
         return None
     path = os.path.join(root, name)
     link = raw.get("link")
+    # A boolean field is read strictly: "false" is false, and null or "no" is
+    # not a boolean at all, so it counts as absent and is named in the reason.
+    raw_broken = raw.get("broken", False)
+    broken = strict_bool(raw_broken)
+    if broken is NOT_A_BOOLEAN:
+        notes.append(boolean_note("broken for %s" % name, raw_broken))
+        broken = False
     if isinstance(link, str) and link.strip():
         target = path_for(link, root, home_dir)
-        if raw.get("broken"):
+        if broken:
             stats["broken"] += 1
             return None
         if not within(target, allowed_roots):
             stats["outside"] += 1
             return None
         key = ("path", target)
-    elif raw.get("broken"):
+    elif broken:
         stats["broken"] += 1
         return None
     else:
@@ -645,32 +738,47 @@ def envelope(mode, limit, lists, pinned, roots, broken, outside):
     }
 
 
-def build_live(config, limit, mode="live"):
+def build_live(config, limit, mode="live", home_dir=HOST_HOME, confined=None):
+    """Scan the configured roots. Live mode reads the host; --fixture DIR mode
+    passes its own directory as home_dir and confined, so every read lands in
+    that directory and a root outside it is refused instead of read."""
     lists = dict((key, []) for key in LISTS)
     roots = []
     broken = 0
     outside = 0
+
+    def inside(path):
+        return confined is None or within(os.path.abspath(path), [confined])
+
     allowed = []
     for key in LISTS:
         for root in config["roots"][key]:
-            allowed.append(os.path.realpath(root["path"]))
+            if inside(root["path"]):
+                allowed.append(os.path.realpath(root["path"]))
     for pin in config["pinned"]:
-        allowed.append(os.path.realpath(pin["path"]))
+        if inside(pin["path"]):
+            allowed.append(os.path.realpath(pin["path"]))
 
     for key in LISTS:
         for root in config["roots"][key]:
             row = {
                 "list": key,
-                "path": tilde(root["path"]),
+                "path": tilde(root["path"], home_dir),
                 "depth": root["depth"],
-                "exists": os.path.isdir(root["path"]),
+                "exists": os.path.isdir(root["path"]) if inside(root["path"]) else False,
                 "files": 0,
                 "broken": 0,
                 "outside": 0,
                 "reason": None,
             }
+            if not inside(root["path"]):
+                # A fixture directory is the whole machine: outside it there is
+                # no data to read, only the host this mode must not touch.
+                row["reason"] = "root is outside the fixture directory"
+                roots.append(row)
+                continue
             try:
-                entries, stats = scan_root(root["path"], root["depth"], allowed)
+                entries, stats = scan_root(root["path"], root["depth"], allowed, confined, home_dir)
             except Problem as problem:
                 row["reason"] = problem.reason
                 roots.append(row)
@@ -683,7 +791,7 @@ def build_live(config, limit, mode="live"):
             lists[key].extend(entries)
             roots.append(row)
 
-    pinned = pin_rows(config["pinned"])
+    pinned = pin_rows(config["pinned"], home_dir, confined)
     claimed = set()
     selected = {}
     for key in LISTS:
@@ -718,11 +826,19 @@ def build_fixture(raw, shown, limit):
         for root in config["roots"][key]:
             display = tilde(root["path"], home_dir)
             node = tree.get(display)
+            # Strict boolean: a root's `exists` defaults to true when the key is
+            # absent, and a value that is not a boolean counts as absent.
+            notes = []
+            raw_exists = node.get("exists", True) if isinstance(node, dict) else True
+            exists = strict_bool(raw_exists)
+            if exists is NOT_A_BOOLEAN:
+                notes.append(boolean_note("exists for %s" % display, raw_exists))
+                exists = True
             row = {
                 "list": key,
                 "path": display,
                 "depth": root["depth"],
-                "exists": bool(isinstance(node, dict) and node.get("exists", True)),
+                "exists": exists,
                 "files": 0,
                 "broken": 0,
                 "outside": 0,
@@ -732,7 +848,7 @@ def build_fixture(raw, shown, limit):
                 row["reason"] = "root not present in fixture"
                 roots.append(row)
                 continue
-            if not row["exists"]:
+            if not exists:
                 reason = node.get("reason")
                 row["reason"] = reason if isinstance(reason, str) and reason.strip() else "no such directory"
                 roots.append(row)
@@ -742,7 +858,7 @@ def build_fixture(raw, shown, limit):
             claimed_here = 0
             if isinstance(rows, list):
                 for item in rows:
-                    entry = _fixture_entry(item, root["path"], allowed, stats, home_dir)
+                    entry = _fixture_entry(item, root["path"], allowed, stats, home_dir, notes)
                     if entry is not None:
                         lists[key].append(entry)
                         claimed_here += 1
@@ -751,6 +867,8 @@ def build_fixture(raw, shown, limit):
             row["outside"] = stats["outside"]
             broken += stats["broken"]
             outside += stats["outside"]
+            if notes:
+                row["reason"] = "; ".join(notes)
             roots.append(row)
 
     pinned = []
@@ -758,13 +876,21 @@ def build_fixture(raw, shown, limit):
         display = tilde(pin["path"], home_dir)
         node = tree.get(display)
         name = pin["name"] or os.path.basename(pin["path"].rstrip(os.sep)) or display
-        exists = bool(isinstance(node, dict) and node.get("exists", False))
+        raw_exists = node.get("exists", False) if isinstance(node, dict) else False
+        exists = strict_bool(raw_exists)
+        notes = []
+        if exists is NOT_A_BOOLEAN:
+            notes.append(boolean_note("exists for %s" % display, raw_exists))
+            exists = False
         kind = node.get("kind") if isinstance(node, dict) else None
         if not isinstance(kind, str) or kind not in ("dir", "file"):
             kind = None
         if exists and kind is None:
             kind = "dir"
-        pinned.append({"name": name, "path": pin["path"], "exists": exists, "kind": kind if exists else None})
+        row = {"name": name, "path": pin["path"], "exists": bool(exists), "kind": kind if exists else None}
+        if notes:
+            row["reason"] = "; ".join(notes)
+        pinned.append(row)
 
     claimed = set()
     selected = {}
@@ -836,7 +962,10 @@ def cache_write(key, payload, built_at):
         )
         try:
             with handle:
-                json.dump({"key": key, "built_at": built_at, "payload": payload}, handle, ensure_ascii=False, indent=1)
+                # ASCII-safe: a cache file must never fail to write because a
+                # path holds a byte UTF-8 cannot carry (json.load reads it back
+                # to the same value).
+                json.dump({"key": key, "built_at": built_at, "payload": payload}, handle, ensure_ascii=True, indent=1)
                 handle.write("\n")
             os.replace(handle.name, target)
         except BaseException:
@@ -845,7 +974,7 @@ def cache_write(key, payload, built_at):
             except OSError:
                 pass
             raise
-    except OSError:
+    except (OSError, ValueError):
         # A cache we cannot write is a slower HUD, never a broken feed.
         return
 
@@ -866,7 +995,12 @@ def run(args):
         if not os.path.exists(target):
             raise CallerError("no fixture at %s" % shown)
         if os.path.isdir(target):
-            config_path = os.path.join(target, "hud_paths.json")
+            # DIR is fixture mode as well: the directory stands in for the
+            # machine, so ~ is the directory itself, a relative root resolves
+            # inside it, and a root that resolves outside it is refused instead
+            # of read. Nothing outside DIR is stat'ed, and no cache is touched.
+            root_dir = os.path.abspath(target)
+            config_path = os.path.join(root_dir, "hud_paths.json")
             shown_config = os.path.join(shown, "hud_paths.json")
             if not os.path.isfile(config_path):
                 raise CallerError("fixture dir %s has no hud_paths.json" % shown)
@@ -876,8 +1010,8 @@ def run(args):
                 limit = DEFAULT_LIMIT
                 if isinstance(raw, dict):
                     limit = _int_or(raw.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
-            config = parse_config(raw, shown_config, target)
-            payload = build_live(config, limit, mode="fixture")
+            config = parse_config(raw, shown_config, root_dir, home_dir=root_dir)
+            payload = build_live(config, limit, mode="fixture", home_dir=root_dir, confined=root_dir)
         else:
             raw = read_json_file(target, "fixture", shown)
             limit = args.limit
@@ -915,13 +1049,31 @@ def run(args):
     return payload
 
 
-def emit(payload, compact):
+def render(payload, compact, ascii_only=False):
     if compact:
-        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    else:
-        line = json.dumps(payload, ensure_ascii=False, indent=2)
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+        return json.dumps(payload, ensure_ascii=ascii_only, separators=(",", ":"))
+    return json.dumps(payload, ensure_ascii=ascii_only, indent=2)
+
+
+def write_line(line):
+    """One line, UTF-8 bytes, so the answer does not depend on the locale."""
+    data = (line + "\n").encode("utf-8")
+    stream = getattr(sys.stdout, "buffer", None)
+    if stream is None:
+        sys.stdout.write(data.decode("utf-8"))
+        sys.stdout.flush()
+        return
+    stream.write(data)
+    stream.flush()
+
+
+def emit(payload, compact):
+    write_line(render(payload, compact))
+
+
+def emit_ascii(payload, compact):
+    """The fallback: escape anything UTF-8 cannot carry, so it always prints."""
+    write_line(render(payload, compact, True))
 
 
 def failure(mode, exc, kind):
@@ -956,17 +1108,23 @@ def main(argv=None):
     try:
         payload = run(args)
     except CallerError as exc:
-        emit(failure(mode, exc, "caller"), args.json)
+        emit_ascii(failure(mode, exc, "caller"), args.json)
         return EXIT_CALLER
     except Problem as exc:
-        emit(failure(mode, exc, exc.kind), args.json)
+        emit_ascii(failure(mode, exc, exc.kind), args.json)
         return EXIT_OK
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as exc:  # noqa: BLE001 - a bug is a bug
-        emit(failure(mode, "programming error: %s: %s" % (type(exc).__name__, exc), "programming"), args.json)
+        emit_ascii(failure(mode, "programming error: %s: %s" % (type(exc).__name__, exc), "programming"), args.json)
         return EXIT_CALLER
-    emit(payload, args.json)
+    try:
+        emit(payload, args.json)
+    except UnicodeEncodeError:
+        # A value the answer cannot carry as UTF-8 (a lone surrogate in a path)
+        # is bad content, not a bug: one ASCII-safe line, exit 0, no traceback.
+        emit_ascii(failure(mode, "the answer holds a string UTF-8 cannot carry", "malformed"), True)
+        return EXIT_OK
     return EXIT_OK
 
 
@@ -1146,6 +1304,60 @@ def self_check():
         check("fixture dir same pins", isinstance(fixture_payload, dict) and [p["exists"] for p in fixture_payload.get("pinned", [])] == [True, True, False], fixture_payload and fixture_payload.get("pinned"))
         check("fixture source", isinstance(fixture_payload, dict) and fixture_payload.get("source") == "fixture", fixture_payload and fixture_payload.get("source"))
 
+        # --- a fixture dir stands in for the machine: no host read at all ---
+        for fake in ("dir-home-a", "dir-home-b"):
+            _touch(os.path.join(tmp, fake, "Downloads", "host-only.png"), 500)
+        dir_fixture = os.path.join(tmp, "dir-fixture")
+        _write(
+            os.path.join(dir_fixture, "hud_paths.json"),
+            '{"limit": 8, "downloads": ["~/Downloads"], "screenshots": ["%s"],'
+            ' "pinned": [{"name": "Home", "path": "~/Downloads"}]}'
+            % os.path.join(tmp, "dir-home-a", "Downloads"),
+        )
+        _touch(os.path.join(dir_fixture, "Downloads", "inside.png"), 600)
+        dir_state_a = os.path.join(tmp, "dir-state-a")
+        dir_state_b = os.path.join(tmp, "dir-state-b")
+        dir_a = run_cli(["--fixture", dir_fixture, "--json"], home=os.path.join(tmp, "dir-home-a"), state_path=dir_state_a)
+        dir_b = run_cli(["--fixture", dir_fixture, "--json"], home=os.path.join(tmp, "dir-home-b"), state_path=dir_state_b)
+        payload_dir_a = as_json(dir_a)
+        payload_dir_b = as_json(dir_b)
+        check("dir fixture exit 0", dir_a.returncode == 0 and dir_b.returncode == 0, [dir_a.returncode, dir_a.stderr[:200]])
+        check(
+            "dir fixture lists only what is inside it",
+            isinstance(payload_dir_a, dict) and _names(payload_dir_a, "downloads") == ["inside.png"],
+            _names(payload_dir_a or {}, "downloads"),
+        )
+        check(
+            "dir fixture ~ is the directory",
+            isinstance(payload_dir_a, dict)
+            and payload_dir_a["downloads"][0]["path"] == os.path.join(os.path.abspath(dir_fixture), "Downloads", "inside.png"),
+            (payload_dir_a or {}).get("downloads"),
+        )
+        dir_rows = (payload_dir_a or {}).get("roots") or []
+        check(
+            "dir fixture refuses a root outside it",
+            [row.get("reason") for row in dir_rows] == [None, "root is outside the fixture directory"],
+            dir_rows,
+        )
+        check("dir fixture ~ pin found inside it", [p["exists"] for p in (payload_dir_a or {}).get("pinned") or []] == [True], (payload_dir_a or {}).get("pinned"))
+        stable_dir_a = dict(payload_dir_a) if isinstance(payload_dir_a, dict) else {}
+        stable_dir_b = dict(payload_dir_b) if isinstance(payload_dir_b, dict) else {}
+        stable_dir_a.pop("generated_at", None)
+        stable_dir_b.pop("generated_at", None)
+        check(
+            "dir fixture identical under two HOMEs",
+            isinstance(payload_dir_a, dict) and stable_dir_a == stable_dir_b,
+            "DIR output depends on HOME",
+        )
+        check("dir fixture writes no state", not os.path.exists(dir_state_a) and not os.path.exists(dir_state_b))
+        _touch(os.path.join(tmp, "dir-home-a", "Downloads", "host-only.png"), 700)
+        dir_touched = as_json(
+            run_cli(["--fixture", dir_fixture, "--json"], home=os.path.join(tmp, "dir-home-a"), state_path=os.path.join(tmp, "dir-state-c"))
+        )
+        stable_touched = dict(dir_touched) if isinstance(dir_touched, dict) else {}
+        stable_touched.pop("generated_at", None)
+        check("dir fixture ignores a host mtime change", stable_touched == stable_dir_a, stable_touched)
+
         # --- the shipped fixture file ---
         shipped = os.path.join(os.path.dirname(os.path.dirname(script)), "fixtures", "recent.json")
         # A state dir of its own, so this also proves a fixture run writes none.
@@ -1286,6 +1498,43 @@ def self_check():
             answer,
         )
 
+        # A lone surrogate is half a UTF-16 pair: legal JSON, unprintable string.
+        # It is bad content, so the answer is an envelope, never a traceback.
+        for label, body in (
+            (
+                "name",
+                '{"config":{"downloads":["~/Downloads"]},"roots":{"~/Downloads":{"exists":true,'
+                '"files":[{"name":"\\ud800.png","size":1,"mtime":1792703402}]}}}',
+            ),
+            ("home", '{"home":"/Users/\\ud800","config":{"downloads":["~/Downloads"]},"roots":{}}'),
+            (
+                "key",
+                '{"config":{"downloads":["~/Downloads"]},"roots":{"~/Down\\ud800loads":{"exists":true,"files":[]}}}',
+            ),
+            (
+                "reason",
+                '{"config":{"downloads":["~/Downloads"]},"roots":{"~/Downloads":{"exists":false,'
+                '"reason":"gone \\ud800"}}}',
+            ),
+        ):
+            path = os.path.join(tmp, "surrogate-%s.json" % label)
+            _write(path, body)
+            proc = run_cli(["--fixture", path, "--json"])
+            answer = as_json(proc)
+            check("surrogate %s exits 0" % label, proc.returncode == 0, proc.returncode)
+            check("surrogate %s stderr empty" % label, proc.stderr == "", proc.stderr[:300])
+            check("surrogate %s one line" % label, proc.stdout.strip().count("\n") == 0, proc.stdout[:120])
+            check(
+                "surrogate %s is malformed" % label,
+                isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "malformed",
+                answer,
+            )
+            check(
+                "surrogate %s reason is ASCII" % label,
+                isinstance(answer, dict) and all(ord(ch) < 128 for ch in answer.get("reason") or ""),
+                answer and answer.get("reason"),
+            )
+
         deep = os.path.join(tmp, "deep.json")
         _write(deep, "[" * 200000 + "]" * 200000)
         proc = run_cli(["--fixture", deep, "--json"])
@@ -1363,6 +1612,81 @@ def self_check():
             and answer["roots"][0]["files"] == 1,
             (answer or {}).get("downloads"),
         )
+
+        # --- booleans are read strictly, never by truthiness ---
+        def bool_case(label, document):
+            path = os.path.join(tmp, "bool-%s.json" % label)
+            _write(path, document)
+            proc = run_cli(["--fixture", path, "--json"])
+            return proc, as_json(proc)
+
+        root_exists = (
+            '{"home":"/Users/x","config":{"downloads":["~/Downloads"]},"roots":{"~/Downloads":'
+            '{"exists":%s,"files":[{"name":"a.png","size":1,"mtime":1792703402}]}}}'
+        )
+        for literal, want in (
+            ("true", True),
+            ('"true"', True),
+            ("false", False),
+            ('"false"', False),
+            ('""', False),
+            ("0", False),
+            ('"0"', False),
+        ):
+            proc, answer = bool_case("exists-%s" % literal.replace('"', "q"), root_exists % literal)
+            rows = (answer or {}).get("roots") or [{}]
+            names = _names(answer or {}, "downloads")
+            check("exists %s exits 0" % literal, proc.returncode == 0, proc.returncode)
+            check("exists %s reads as %s" % (literal, want), rows[0].get("exists") is want, rows[0])
+            check(
+                "exists %s lists %d file(s)" % (literal, 1 if want else 0),
+                len(names) == (1 if want else 0),
+                names,
+            )
+
+        root_broken = (
+            '{"home":"/Users/x","config":{"downloads":["~/Downloads"]},"roots":{"~/Downloads":{"exists":true,'
+            '"files":[{"name":"link.png","link":"~/Downloads/target.png","broken":%s,"mtime":1792703402},'
+            '{"name":"kept.png","size":2,"mtime":1792703401}]}}}'
+        )
+        for literal, want_broken, want_files in (
+            ("true", 1, 1),
+            ('"true"', 1, 1),
+            ("false", 0, 2),
+            ('"false"', 0, 2),
+            ('""', 0, 2),
+            ("0", 0, 2),
+            ('"0"', 0, 2),
+        ):
+            proc, answer = bool_case("broken-%s" % literal.replace('"', "q"), root_broken % literal)
+            check("broken %s exits 0" % literal, proc.returncode == 0, proc.returncode)
+            check("broken %s counts %d" % (literal, want_broken), (answer or {}).get("broken") == want_broken, (answer or {}).get("broken"))
+            check(
+                "broken %s keeps %d file(s)" % (literal, want_files),
+                len(_names(answer or {}, "downloads")) == want_files,
+                _names(answer or {}, "downloads"),
+            )
+
+        for literal in ("null", "[]", "{}", '"no"'):
+            label = literal.replace('"', "q").replace("[", "l").replace("]", "r").replace("{", "b").replace("}", "b")
+            proc, answer = bool_case("absent-%s" % label, root_exists % literal)
+            row = ((answer or {}).get("roots") or [{}])[0]
+            check("exists %s exits 0" % literal, proc.returncode == 0, proc.returncode)
+            check(
+                "exists %s is absent, not coerced" % literal,
+                row.get("exists") is True and len(_names(answer or {}, "downloads")) == 1,
+                row,
+            )
+            check("exists %s names the field" % literal, "is not a boolean" in (row.get("reason") or ""), row.get("reason"))
+
+        proc, answer = bool_case(
+            "pin",
+            '{"home":"/Users/x","config":{"downloads":["~/Downloads"],"pinned":[{"name":"P","path":"~/P"}]},'
+            '"roots":{"~/Downloads":{"exists":true,"files":[]},"~/P":{"exists":"maybe"}}}',
+        )
+        pin = ((answer or {}).get("pinned") or [{}])[0]
+        check("pin exists is not truthy-read", pin.get("exists") is False and pin.get("kind") is None, pin)
+        check("pin exists names the field", "is not a boolean" in (pin.get("reason") or ""), pin.get("reason"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
