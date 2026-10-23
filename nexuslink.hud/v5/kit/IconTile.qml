@@ -79,34 +79,106 @@ Item {
     // strength or below the approved dim floor.
     readonly property real dimAmount: Math.max(0, Math.min(1, focusLevel))
 
+    // ---- motion ----------------------------------------------------------
+    // Both channels run the wave's measured curves, not a Qt spring.
+    //
+    // Scale is a lift: expand in on Easing.OutBack at parameter 1.15 (peak
+    // 1.04871 = 4.87 percent, inside Motion.expandOvershoot's 4 to 6 band) over
+    // Motion.expandMillis, return out on Easing.OutCubic over Motion.returnMillis
+    // with no overshoot. Dim is a fade and takes the kit's return spec both ways:
+    // no overshoot, so it can never lighten the tile past full strength or dim
+    // it below Tokens.focusDimMax.
+    //
+    // Not a SpringAnimation, and that is the repair: on Qt 6.12 the integrator
+    // clamps `damping` to [0, 1] and applies the spring term without a dt
+    // factor, so the analytic pairs this tile used to hand it (spring =
+    // omega^2 = 278.89 and damping = 2 * zeta * omega = 23.05 on the way out,
+    // 81 and 18 on the way back) are not the Motion states, they are barely
+    // damped explicit Euler springs. Measured before the repair: the scale
+    // reached 1.7e+39 within 1.4 s and 2.9e+35 on a 150 ms stalled frame, and
+    // the dim was already at the floor 133 ms after its trigger instead of over
+    // Motion.returnMillis. Numbers, closed form and probe:
+    // v5/docs/w3-gauges-spring.md and v5/tools/w3-gauge-spring-trace.py.
+    //
+    // Easing.overshoot is the OutBack *parameter*, not Motion.expandOvershoot
+    // (0.05, the analytic zeta peak). Requested as Motion.expandBackOvershoot.
+    readonly property real expandBackOvershoot: 1.15
+    readonly property real targetOpacity: 1 - tile.dimAmount * (1 - Tokens.focusDimMax)
+    // The two numbers the tile is drawn at. Component.onCompleted snaps them to
+    // their targets so a still is deterministic; after that the animations own
+    // them, because one Behavior can hold only one curve and each channel needs
+    // two directions.
+    property real tileOpacity: 1.0
+    property real tileScale: 1.0
+    // Set by Component.onCompleted, after the snap. Nothing animates before it:
+    // at creation the targets go from their declared defaults to the real values,
+    // and without this guard a tile created already selected or already dimmed
+    // (W5 sets focusLevel on every unselected tile) would animate in from full
+    // strength instead of starting where it belongs.
+    property bool motionReady: false
+
+    Component.onCompleted: {
+        tile.tileOpacity = tile.targetOpacity
+        tile.tileScale = tile.restScale
+        tile.motionReady = true
+    }
+
+    onTargetOpacityChanged: {
+        if (!tile.motionReady)
+            return
+        fade.stop()
+        fade.to = tile.targetOpacity
+        fade.restart()
+    }
+
+    onRestScaleChanged: {
+        if (!tile.motionReady)
+            return
+        var up = tile.restScale > tile.tileScale
+        grow.stop()
+        settle.stop()
+        var anim = up ? grow : settle
+        anim.to = tile.restScale
+        anim.restart()
+    }
+
+    NumberAnimation {
+        id: grow
+        target: tile
+        property: "tileScale"
+        duration: Motion.expandMillis
+        easing.type: Easing.OutBack
+        easing.overshoot: tile.expandBackOvershoot
+    }
+
+    NumberAnimation {
+        id: settle
+        target: tile
+        property: "tileScale"
+        duration: Motion.returnMillis
+        easing.type: Easing.OutCubic
+    }
+
+    NumberAnimation {
+        id: fade
+        target: tile
+        property: "tileOpacity"
+        duration: Motion.returnMillis
+        easing.type: Easing.OutCubic
+    }
+
     implicitWidth: size
     implicitHeight: size
     width: size
     height: size
     transformOrigin: Item.Center
 
-    // dim is one mechanism: the whole tile fades, no element recolours. The
-    // spring is the kit's return spec: critically damped, so no overshoot.
-    opacity: 1 - dimAmount * (1 - Tokens.focusDimMax)
-    Behavior on opacity {
-        SpringAnimation {
-            spring: Motion.returnOmega * Motion.returnOmega
-            damping: 2 * Motion.returnZeta * Motion.returnOmega
-        }
-    }
+    // dim is one mechanism: the whole tile fades, no element recolours.
+    opacity: tile.tileOpacity
 
-    // Selected is scale only: the spring grows the tile to selectedScale and
-    // returns to 1.0. No box, no outline, no plate, no colour or weight change.
-    scale: restScale
-    Behavior on scale {
-        SpringAnimation {
-            mass: 1
-            spring: (tile.selected ? Motion.expandOmega : Motion.returnOmega)
-                    * (tile.selected ? Motion.expandOmega : Motion.returnOmega)
-            damping: 2 * (tile.selected ? Motion.expandZeta : Motion.returnZeta)
-                     * (tile.selected ? Motion.expandOmega : Motion.returnOmega)
-        }
-    }
+    // Selected is scale only: the tile grows to selectedScale and returns to
+    // 1.0. No box, no outline, no plate, no colour or weight change.
+    scale: tile.tileScale
 
     // launch-count ring: one round node per launch, clockwise from the top
     Shape {
