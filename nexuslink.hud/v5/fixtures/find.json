@@ -1,51 +1,51 @@
 [
   {
-    "path": "/home/marcel/NEXUS_AI_CENTER/04_PROJECTS/HUD/MAIN-SCREEN-BUILD.md",
+    "path": "/home/operator/NEXUS_AI_CENTER/04_PROJECTS/HUD/MAIN-SCREEN-BUILD.md",
     "kind": "doc",
     "score": 0.97
   },
   {
-    "path": "/home/marcel/Documents/HUD/deck-charter-2026-10-20.md",
+    "path": "/home/operator/Documents/HUD/deck-charter-2026-10-20.md",
     "kind": "doc",
     "score": 0.91
   },
   {
-    "path": "/home/marcel/Pictures/deck/s2-rest.png",
+    "path": "/home/operator/Pictures/deck/s2-rest.png",
     "kind": "image",
     "score": 0.88
   },
   {
-    "path": "/home/marcel/Downloads/screenshot-2026-10-22-hud-final.png",
+    "path": "/home/operator/Downloads/screenshot-2026-10-22-hud-final.png",
     "kind": "download",
     "score": 0.84
   },
   {
-    "path": "/home/marcel/NEXUS_AI_CENTER/04_PROJECTS/Vari8/models/deck-v5-q4.gguf",
+    "path": "/home/operator/NEXUS_AI_CENTER/04_PROJECTS/Vari8/models/deck-v5-q4.gguf",
     "kind": "file",
     "score": 0.77
   },
   {
-    "path": "/home/marcel/.config/omarchy/plugins/nexuslink.hud/v4/PixelLogo.qml",
+    "path": "/home/operator/.config/omarchy/plugins/nexuslink.hud/v4/PixelLogo.qml",
     "kind": "file",
     "score": 0.66
   },
   {
-    "path": "/home/marcel/Downloads/arc-raiders-session.mp4",
+    "path": "/home/operator/Downloads/arc-raiders-session.mp4",
     "kind": "download",
     "score": 0.58
   },
   {
-    "path": "/home/marcel/Documents/notes/2026-10-23-deck-decisions.md",
+    "path": "/home/operator/Documents/notes/2026-10-23-deck-decisions.md",
     "kind": "doc",
     "score": 0.51
   },
   {
-    "path": "/home/marcel/Pictures/deck/knot-frames/frame-0042.png",
+    "path": "/home/operator/Pictures/deck/knot-frames/frame-0042.png",
     "kind": "image",
     "score": 0.44
   },
   {
-    "path": "/home/marcel/NEXUS_AI_CENTER/04_PROJECTS/HUD/plugins/tools/qml-shot.sh",
+    "path": "/home/operator/NEXUS_AI_CENTER/04_PROJECTS/HUD/plugins/tools/qml-shot.sh",
     "kind": "file",
     "score": 0.32
   }
