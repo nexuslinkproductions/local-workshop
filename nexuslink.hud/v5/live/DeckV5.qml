@@ -10,7 +10,7 @@ import "feeds"
 // HudV4 loads this file only when ~/.config/nexuslink/hud-v5 exists. It takes the
 // same inputs as the other decks (stats, tokData, crew, shown) plus the host window,
 // runs the feeds only while the deck is shown, and adapts the signals of the view to
-// the plugin's launcher, the yuri search feed and the keyboard grab for the Find field.
+// the plugin's launcher, the yuri search feed and the keyboard request for the Find field.
 //
 // The deck is laid out for 2560 x 1440 and scales to fit the slab it lives in.
 Item {
@@ -127,9 +127,8 @@ Item {
 
     // ---- Find open state (IPC entry points, HudV4 forwards here) ----------
     // findOpen lives on the view; these are the only writers besides the view's
-    // own rest pill and Escape handling. Never assign the grab directly.
+    // own rest pill and Escape handling.
     readonly property bool findOpen: deckView.findOpen
-    readonly property bool grabActive: grab.active
 
     function openFind() {
         if (!root.shown)
@@ -143,7 +142,7 @@ Item {
     }
 
     onFindOpenChanged: {
-        console.log("v5 find: open=" + root.findOpen + " grab=" + root.grabActive)
+        console.log("v5 find: open=" + root.findOpen)
         // a new search starts empty; the pill text follows deckView.findQuery
         if (!root.findOpen)
             deckView.findQuery = ""
@@ -159,7 +158,7 @@ Item {
     }
 
     // ---- inactivity guard ------------------------------------------------
-    // Find holds the keyboard (focus grab plus the surface keyboard mode), so a
+    // Find holds the keyboard (the surface keyboard mode), so a
     // forgotten overlay would eat every key. One timer, armed only while Find
     // is open and restarted by every sign of life (open, query edit, filter,
     // selection move), closes Find after 30 s without input.
@@ -184,22 +183,12 @@ Item {
         function onFindSelectedChanged() { findIdle.restart() }
     }
 
-    // Typing needs the keyboard: the host surface is WlrKeyboardFocus.None.
-    // Two independent asks, both derived from deckView.findOpen so they cannot
-    // drift apart: (1) the hyprland focus grab (AppGrid/AppDial idiom) and
-    // (2) the layer-shell keyboard mode, mirrored onto the host window.
-    HyprlandFocusGrab {
-        id: grab
-        windows: root.hostWindow ? [root.hostWindow] : []
-        // bound, never assigned imperatively: flip deckView.findOpen instead
-        active: deckView.findOpen && root.shown && !!root.hostWindow
-        // the compositor dropped the grab (click outside, another grab won):
-        // the pill must not stay open claiming a keyboard it no longer has
-        onCleared: {
-            console.log("v5 find: grab cleared")
-            deckView.findOpen = false
-        }
-    }
+    // Typing needs the keyboard: the host surface is WlrKeyboardFocus.None and is
+    // asked for Exclusive only while Find is open (syncHostKeys). No
+    // HyprlandFocusGrab: the compositor clears a grab armed on a background-layer
+    // surface at once, and its onCleared closed Find on every open (live journal,
+    // 22 and 23 Oct: "grab cleared" follows every "open=true"). Click-outside is
+    // FindPill's full-overlay dismiss, Escape is FindPill's key handler.
 
     // Mirror the open state onto the host surface's layer-shell keyboard mode.
     // HudV4 declares findKeysWanted on the PanelWindow; a plain window (test

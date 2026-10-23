@@ -34,6 +34,9 @@ WidgetBase {
     id: root
 
     property var crew: ({})
+    // click opens the crew focus view (DeckView onExpandRequested); WidgetBase
+    // only forwards the click when expandable is set.
+    expandable: true
     readonly property int count: sessions.length
 
     // ---- s10 geometry (deck px, 2560 x 1440 space) -----------------------
