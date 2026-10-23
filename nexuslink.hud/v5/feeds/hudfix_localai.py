@@ -574,7 +574,7 @@ def status_payload(ctx=None, use_cache=None):
         mtime_ns = int(os.stat(path).st_mtime_ns)
     except OSError:
         pass
-    if want_cache:
+    if want_cache and mtime_ns is not None:
         hit = cache_get(cache_path(ctx), key, mtime_ns)
         if hit is not None:
             cached, age = hit
@@ -1631,6 +1631,18 @@ def self_check(args):
         and second_probe.get("cached") is True
         and isinstance(second_probe.get("cache_age_s"), float),
         "calls=%d first=%r second=%r" % (len(probe_calls), first_probe, second_probe),
+    )
+
+    # 6c. a metrics file that vanished is not served from the cache
+    os.unlink(live_metrics)
+    rc, gone, _, _ = _run_child([
+        "--json", "run", "localai.status", "--metrics", live_metrics, "--cache", cache_file,
+    ])
+    check(
+        "a vanished metrics file is re-read, not served from the cache",
+        rc == 0 and isinstance(gone, dict) and gone.get("ok") is False
+        and "chief metrics" in str(gone.get("reason", "")),
+        "rc=%s payload=%r" % (rc, gone),
     )
 
     # 7. plan purity: every plan in fixture mode leaves the sandbox untouched
