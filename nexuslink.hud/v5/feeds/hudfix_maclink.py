@@ -96,6 +96,8 @@ TAILSCALE_CLI_CANDIDATES = (
 DEFAULT_STALE_AFTER_S = 600
 DEFAULT_TIMEOUT_S = 20.0
 PAGE_LIMIT = 5
+STATUS_CACHE_TTL_S = 10.0
+SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9._:@-]{1,80}$")
 
 ORDER = (
     "maclink.status",
@@ -234,6 +236,7 @@ def state_paths(ctx):
         "root": root,
         "caffeinate": os.path.join(root, "caffeinate.pid"),
         "log": os.path.join(root, "hudfix.log"),
+        "status_cache": os.path.join(root, "maclink-status.json"),
     }
 
 
@@ -670,8 +673,28 @@ def card_from_command(cmdline):
     return None
 
 
+def argv0_name(cmdline):
+    """The basename of argv[0], and nothing else, when it is a plain token."""
+    tokens = tokens_of(cmdline)
+    if not tokens:
+        return None
+    base = os.path.basename(str(tokens[0]))
+    return base if SAFE_LABEL_RE.match(base) else None
+
+
+def safe_argv_label(value):
+    """An argv-derived value safe to print. Never a command line, never a secret."""
+    if not value:
+        return "<none>"
+    text = str(value)
+    return text if SAFE_LABEL_RE.match(text) else "<redacted>"
+
+
 def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
-    """Return (True, None) when the pid provably is that profile on that card."""
+    """Return (True, None) when the pid provably is that profile on that card.
+
+    Never echoes argv text: a reason carries the pid and at most basename(argv[0]).
+    """
     body = (cmdline or "").strip()
     if not body:
         return False, "pid %s has no command line, so it is gone or unreadable" % pid
@@ -695,13 +718,17 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
         os.path.basename(token) in ("hermes", "devin") for token in tokens[:3]
     )
     if not hermes_runtime:
-        return False, "pid %d is not a Hermes or Devin worker: %s" % (
-            pid_int,
-            one_line(body, 160),
-        )
+        name = argv0_name(body)
+        if name:
+            return False, "pid %d is not a Hermes or Devin worker (argv0: %s)" % (pid_int, name)
+        return False, "pid %d is not a Hermes or Devin worker" % pid_int
     found_profile = profile_from_command(body)
     if found_profile != profile:
-        return False, "pid %d carries profile %r, not %r" % (pid_int, found_profile, profile)
+        return False, "pid %d carries profile %r, not %r" % (
+            pid_int,
+            safe_argv_label(found_profile),
+            profile,
+        )
     found_card = card_from_command(body)
     if not found_card:
         return False, "pid %d does not name a card, so it cannot be tied to %s" % (
@@ -709,7 +736,11 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
             card_id,
         )
     if found_card != card_id:
-        return False, "pid %d names card %s, not %s" % (pid_int, found_card, card_id)
+        return False, "pid %d names card %s, not %s" % (
+            pid_int,
+            safe_argv_label(found_card),
+            card_id,
+        )
     return True, None
 
 
@@ -768,7 +799,8 @@ def stale_workers(ctx, runtime):
                 "heartbeat_age_s": age,
                 "heartbeat_source": source,
                 "heartbeat_iso": iso_from_epoch(stamp),
-                "command": one_line(cmdline, 300),
+                "argv0": argv0_name(cmdline),
+                "command_sha256": command_digest(cmdline),
             }
         )
     stale.sort(key=lambda item: (-item["heartbeat_age_s"], item["card"]))
@@ -1094,7 +1126,8 @@ def plan_kick_bot(ctx=None, runtime=None):
         "heartbeat_source": chosen["heartbeat_source"],
         "heartbeat_iso": chosen["heartbeat_iso"],
         "command": command,
-        "command_sha256": command_digest(chosen["command"]),
+        "command_sha256": chosen["command_sha256"],
+        "argv0": chosen["argv0"],
         "argv": ["kill", "-TERM", str(chosen["pid"])],
     }
     return _plan_base(
@@ -1248,8 +1281,8 @@ def plan_wake_off(ctx=None, runtime=None):
     if not process_is_caffeinate(command_line):
         return _plan_unavailable(
             "maclink.wake-off",
-            "pid %d is not caffeinate (%s); refusing to signal it"
-            % (pid, one_line(command_line, 120)),
+            "pid %d is not caffeinate (argv0: %s); refusing to signal it"
+            % (pid, argv0_name(command_line) or "unknown"),
         )
     if not runtime.alive(pid):
         return _plan_unavailable(
@@ -1264,7 +1297,7 @@ def plan_wake_off(ctx=None, runtime=None):
                 "command": "kill -TERM %d" % pid,
                 "argv": ["kill", "-TERM", str(pid)],
                 "recorded_in": tilde(paths["caffeinate"]),
-                "command_line": one_line(command_line, 200),
+                "argv0": argv0_name(command_line),
             }
         ],
         0,
@@ -1377,11 +1410,77 @@ def _guard_run(name, ctx, confirm, runtime):
     return None
 
 
+def status_cache_read(ctx, now=None):
+    """A status payload younger than STATUS_CACHE_TTL_S, marked cached, or None."""
+    path = state_paths(ctx)["status_cache"]
+    try:
+        with open(path, encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    payload = record.get("payload")
+    stamp = record.get("cached_at")
+    raw_epoch = record.get("cached_epoch")
+    try:
+        epoch = float(raw_epoch) if isinstance(raw_epoch, (int, float)) else float(str(raw_epoch))
+    except (TypeError, ValueError):
+        return None
+    age = (time.time() if now is None else now) - epoch
+    if not isinstance(payload, dict) or payload.get("action") != "maclink.status":
+        return None
+    if not isinstance(stamp, str) or age < 0 or age >= STATUS_CACHE_TTL_S:
+        return None
+    served = dict(payload)
+    served["cached"] = True
+    served["cached_at"] = stamp
+    served["cache_age_s"] = round(age, 3)
+    return served
+
+
+def status_cache_write(ctx, payload):
+    """Atomically keep one status payload for STATUS_CACHE_TTL_S. Never fails the read."""
+    path = state_paths(ctx)["status_cache"]
+    parent = os.path.dirname(path) or "."
+    record = {
+        "source": SOURCE,
+        "action": "maclink.status",
+        "cached_at": utc_now_iso(),
+        "cached_epoch": time.time(),
+        "payload": payload,
+    }
+    temp_name = None
+    try:
+        os.makedirs(parent, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=".maclink-status-", suffix=".tmp",
+            dir=parent, delete=False,
+        )
+        temp_name = handle.name
+        with handle:
+            json.dump(record, handle, ensure_ascii=False, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        return True
+    except OSError:
+        if temp_name and os.path.exists(temp_name):
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+        return False
+
+
 def run_status(ctx=None, confirm=None, runtime=None):
     runtime = runtime or Runtime()
     guard = _guard_run("maclink.status", ctx, confirm, runtime)
     if guard:
         return guard
+    cached = status_cache_read(ctx)
+    if cached:
+        return cached
     reasons = {}
     relay = {"label": RELAY_LABEL, "present": False}
     relay_ok = False
@@ -1456,7 +1555,11 @@ def run_status(ctx=None, confirm=None, runtime=None):
         tunnel.get("backend_state") if tunnel_ok else "unreadable",
         uptime_text or "unreadable",
     )
-    return _run_base("maclink.status", result, summary)
+    payload = _run_base("maclink.status", result, summary)
+    payload["cached"] = False
+    payload["cached_at"] = None
+    status_cache_write(ctx, payload)
+    return payload
 
 
 def run_restart_relay(ctx=None, confirm=None, runtime=None):
@@ -1720,8 +1823,8 @@ def run_wake_off(ctx=None, confirm=None, runtime=None):
     if not fresh or not process_is_caffeinate(fresh):
         return _refused(
             "maclink.wake-off",
-            "pid %d no longer looks like caffeinate (%s); refusing to signal it"
-            % (pid, one_line(fresh, 120) or "gone"),
+            "pid %d no longer looks like caffeinate (argv0: %s); refusing to signal it"
+            % (pid, argv0_name(fresh) or "gone"),
         )
     out, err, code = runtime.run(item["argv"], timeout=10.0)
     result = {
@@ -2394,7 +2497,280 @@ def self_check():
         str(log_rows[:1]),
     )
 
+    # --- caller errors: a named file that does not exist is exit 2 --------
+    named_missing_db = os.path.join(root, "kanban-missing.db")
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", named_missing_db, "--state-dir",
+         os.path.join(temp_home, ".local", "state", "nexuslink")],
+        env,
+    )
+    check("named-missing-db-exit-2", code == 2, "exit=%s %s" % (code, one_line(stderr)))
+    check("named-missing-db-no-stdout", stdout.strip() == "", repr(stdout[:120]))
+    check(
+        "named-missing-db-one-stderr-line",
+        len(stderr.strip().splitlines()) == 1 and "does not exist" in stderr,
+        repr(stderr[:200]),
+    )
+    empty_db = os.path.join(root, "kanban-empty.db")
+    with open(empty_db, "w", encoding="utf-8"):
+        pass
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", empty_db, "--state-dir",
+         os.path.join(temp_home, ".local", "state", "nexuslink")],
+        env,
+    )
+    empty_payload = json.loads(stdout) if stdout.strip().startswith("{") else {}
+    check(
+        "existing-empty-db-exit-0",
+        code == 0 and empty_payload.get("ok") is False and bool(empty_payload.get("reason")),
+        "exit=%s %s" % (code, one_line(stderr)),
+    )
+    garbage_db = os.path.join(root, "kanban-garbage.db")
+    with open(garbage_db, "w", encoding="utf-8") as handle:
+        handle.write("this is not a sqlite database\n")
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", garbage_db, "--state-dir",
+         os.path.join(temp_home, ".local", "state", "nexuslink")],
+        env,
+    )
+    garbage_payload = json.loads(stdout) if stdout.strip().startswith("{") else {}
+    check(
+        "existing-garbage-db-exit-0",
+        code == 0 and garbage_payload.get("ok") is False and bool(garbage_payload.get("reason")),
+        "exit=%s %s" % (code, one_line(stderr)),
+    )
+
+    # --- status cache: 10 s, atomic, and never probes on a hit -------------
+    cache_dir = os.path.join(temp_home, ".local", "state", "nexuslink")
+    cache_file = os.path.join(cache_dir, "maclink-status.json")
+    cache_now = time.time()
+    cache_outputs = {
+        "launchctl": (relay_text, "", 0),
+        "sysctl": ("{ sec = %d, usec = 0 }" % (int(cache_now) - 5000), "", 0),
+    }
+    utc_stamp_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+    def read_cache():
+        with open(cache_file, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def write_cache(record):
+        with open(cache_file, "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+
+    cache_cli_original = globals()["tailscale_cli"]
+    try:
+        globals()["tailscale_cli"] = lambda: None
+        first_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_first = run_status({"state_dir": cache_dir}, None, first_runtime)
+        check(
+            "cache-first-not-cached",
+            cache_first.get("cached") is False and cache_first.get("cached_at") is None,
+            str(cache_first.get("cached")),
+        )
+        check("cache-first-probes", len(first_runtime.runs) == 3, str(first_runtime.runs))
+        check("cache-file-written", os.path.isfile(cache_file), cache_file)
+        second_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_second = run_status({"state_dir": cache_dir}, None, second_runtime)
+        check(
+            "cache-second-hit",
+            cache_second.get("cached") is True
+            and bool(utc_stamp_re.match(cache_second.get("cached_at") or "")),
+            str(cache_second.get("cached_at")),
+        )
+        check(
+            "cache-second-no-probe",
+            second_runtime.runs == [] and second_runtime.ps_calls == [],
+            str(second_runtime.runs),
+        )
+        check(
+            "cache-second-keeps-generated-at",
+            cache_second.get("generated_at") == cache_first.get("generated_at"),
+            "%s vs %s" % (cache_second.get("generated_at"), cache_first.get("generated_at")),
+        )
+        check(
+            "cache-second-age-under-limit",
+            isinstance(cache_second.get("cache_age_s"), float)
+            and 0 <= cache_second["cache_age_s"] < STATUS_CACHE_TTL_S,
+            str(cache_second.get("cache_age_s")),
+        )
+        record = read_cache()
+        record["cached_epoch"] = time.time() - 9.5
+        write_cache(record)
+        near_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_near = run_status({"state_dir": cache_dir}, None, near_runtime)
+        check(
+            "cache-9.5s-still-served",
+            cache_near.get("cached") is True and near_runtime.runs == [],
+            "cached=%s runs=%s" % (cache_near.get("cached"), near_runtime.runs),
+        )
+        record = read_cache()
+        record["cached_epoch"] = time.time() - 10.5
+        write_cache(record)
+        late_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_late = run_status({"state_dir": cache_dir}, None, late_runtime)
+        check(
+            "cache-10.5s-expired",
+            cache_late.get("cached") is False and len(late_runtime.runs) == 3,
+            "cached=%s runs=%s" % (cache_late.get("cached"), len(late_runtime.runs)),
+        )
+        real_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        run_status({"state_dir": cache_dir}, None, real_runtime)
+        time.sleep(3.0)
+        real_hit_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_real_hit = run_status({"state_dir": cache_dir}, None, real_hit_runtime)
+        check(
+            "cache-real-3s-hit",
+            cache_real_hit.get("cached") is True and real_hit_runtime.runs == [],
+            "cached=%s runs=%s" % (cache_real_hit.get("cached"), real_hit_runtime.runs),
+        )
+        time.sleep(7.3)
+        real_late_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
+        cache_real_late = run_status({"state_dir": cache_dir}, None, real_late_runtime)
+        check(
+            "cache-real-10.3s-miss",
+            cache_real_late.get("cached") is False and len(real_late_runtime.runs) == 3,
+            "cached=%s runs=%s" % (cache_real_late.get("cached"), len(real_late_runtime.runs)),
+        )
+    finally:
+        globals()["tailscale_cli"] = cache_cli_original
+    check(
+        "cache-no-temp-file-left",
+        [name for name in os.listdir(cache_dir) if name.startswith(".maclink-status-")] == [],
+        str(os.listdir(cache_dir)),
+    )
+    check(
+        "cache-file-atomic-shape",
+        isinstance(read_cache().get("payload"), dict)
+        and read_cache()["payload"].get("action") == "maclink.status",
+        "cache record does not carry the status payload",
+    )
+
+    # --- no argv text, no token, in classify_worker or the kick-bot plan --
+    secret = "FAKE-SECRET-f8c-selfcheck"
+    token_pid = 4245
+    token_worker_pid = 4246
+    token_nonworker_cmd = "python3 -m http.server 8000 --token=%s" % secret
+    token_worker_cmd = worker_cmd + " --token=%s" % secret
+    ok, reason = classify_worker(token_nonworker_cmd, "kakashi", "t_selfcheck_stale", token_pid, set(), None)
+    check(
+        "classify-reason-has-no-argv-text",
+        ok is False
+        and secret not in (reason or "")
+        and "http.server" not in (reason or "")
+        and "4245" in (reason or "")
+        and "argv0: python3" in (reason or ""),
+        str(reason),
+    )
+    token_state = os.path.join(root, "state-token-wakeoff")
+    os.makedirs(token_state, exist_ok=True)
+    with open(os.path.join(token_state, "caffeinate.pid"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": token_pid, "action": "fixture", "command": "caffeinate -d"}, handle)
+    token_caffeinate_cmd = "caffeinate -d -t 3600 --token=%s" % secret
+    token_wake_plan = plan_wake_off(
+        {"state_dir": token_state},
+        RecordingRuntime(ps_map={token_pid: token_caffeinate_cmd}, alive_map={token_pid: True}),
+    )
+    token_wake_text = json.dumps(token_wake_plan)
+    check(
+        "wake-off-plan-has-no-argv-text",
+        token_wake_plan.get("ok") is True
+        and secret not in token_wake_text
+        and "command_line" not in token_wake_text
+        and (token_wake_plan.get("items") or [{}])[0].get("argv0") == "caffeinate",
+        token_wake_text[:200],
+    )
+    token_wake_refusal = plan_wake_off(
+        {"state_dir": token_state},
+        RecordingRuntime(ps_map={token_pid: token_nonworker_cmd}, alive_map={token_pid: True}),
+    )
+    check(
+        "wake-off-refusal-has-no-argv-text",
+        token_wake_refusal.get("ok") is False
+        and secret not in json.dumps(token_wake_refusal)
+        and "argv0: python3" in (token_wake_refusal.get("reason") or ""),
+        str(token_wake_refusal.get("reason"))[:200],
+    )
+    token_run_runtime = RecordingRuntime(
+        ps_sequence={token_pid: [token_caffeinate_cmd, token_nonworker_cmd]},
+        alive_map={token_pid: True},
+    )
+    token_wake_run = ACTIONS["maclink.wake-off"]["run"](
+        {"state_dir": token_state}, "maclink.wake-off", token_run_runtime
+    )
+    check(
+        "wake-off-run-refusal-has-no-argv-text",
+        token_wake_run.get("refused") is True
+        and secret not in json.dumps(token_wake_run)
+        and token_run_runtime.changes == [],
+        str(token_wake_run)[:200],
+    )
+    with open(os.path.join(fix_dir, "ps.json"), "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                str(stale_pid): worker_cmd,
+                str(token_pid): token_nonworker_cmd,
+                str(token_worker_pid): token_worker_cmd,
+            },
+            handle,
+        )
+    token_db = os.path.join(root, "kanban-token.db")
+    token_connection = sqlite3.connect(token_db)
+    token_connection.execute(
+        "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, "
+        "worker_pid INTEGER, last_heartbeat_at INTEGER, current_run_id INTEGER, started_at INTEGER)"
+    )
+    token_connection.executemany(
+        "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)",
+        [
+            ("t_selfcheck_nonworker", "non-worker with a token", "kakashi", "running",
+             token_pid, int(time.time()) - 3000, 1, int(time.time()) - 3200),
+            ("t_selfcheck_stale", "worker with a token", "kakashi", "running",
+             token_worker_pid, int(time.time()) - 2000, 2, int(time.time()) - 2200),
+        ],
+    )
+    token_connection.commit()
+    token_connection.close()
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", token_db, "--state-dir",
+         os.path.join(temp_home, ".local", "state", "nexuslink")],
+        env,
+    )
+    try:
+        token_plan = json.loads(stdout)
+    except ValueError:
+        token_plan = {}
+    token_item = (token_plan.get("items") or [{}])[0]
+    token_rejected = (token_plan.get("rejected") or [])
+    check("token-plan-exit-0", code == 0, "exit=%s %s" % (code, one_line(stderr)))
+    check("token-not-in-plan-stdout", secret not in stdout, "the token reached stdout")
+    check("token-not-in-plan-stderr", secret not in stderr, "the token reached stderr")
+    check(
+        "token-plan-prints-no-argv-text",
+        "http.server" not in stdout and "hermes_cli.main" not in stdout,
+        "argv text reached the plan",
+    )
+    check(
+        "token-plan-candidate-identity-only",
+        token_item.get("pid") == token_worker_pid
+        and token_item.get("argv0") == "python3"
+        and token_item.get("command") == "kill -TERM %d" % token_worker_pid
+        and bool(token_item.get("command_sha256")),
+        str(token_item),
+    )
+    check(
+        "token-plan-rejected-names-pid-only",
+        len(token_rejected) == 1
+        and token_rejected[0].get("pid") == token_pid
+        and "4245" in (token_rejected[0].get("reason") or "")
+        and "argv0: python3" in (token_rejected[0].get("reason") or ""),
+        str(token_rejected),
+    )
+
     # --- confirm refusals through the CLI ---------------------------------
+    if os.path.exists(log_file):
+        with open(log_file, encoding="utf-8") as handle:
+            stub_lines = [line.strip() for line in handle if line.strip()]
     relay_refusal_before = len(stub_lines)
     code, stdout, stderr = _cli(
         ["run", "maclink.restart-relay", "--db", db_path, "--state-dir", os.path.join(temp_home, ".local", "state", "nexuslink")],
@@ -2666,6 +3042,12 @@ def main(argv=None):
         return EXIT_REFUSED
 
     ctx = build_ctx(args)
+    if ctx.get("db_path") and not os.path.exists(expand(ctx["db_path"])):
+        sys.stderr.write(
+            "hudfix_maclink: --db names a file that does not exist: %s\n"
+            % tilde(ctx["db_path"])
+        )
+        return EXIT_REFUSED
     log_override = getattr(args, "log", None)
     log_target = log_path_for(ctx, log_override)
 
