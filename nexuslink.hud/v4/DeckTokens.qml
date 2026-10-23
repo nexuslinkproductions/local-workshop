@@ -292,7 +292,7 @@ Item {
                     "code": "LIM-" + d.key.toUpperCase(), "sub": "LIMIT FEED", "name": d.name,
                     "stag": "ERR", "sev": "alert", "frac": null, "win": null,
                     "statusLine": "NO NUMBER", "lines": [], "winlab": "", "action": null,
-                    "gstate": "error", "ageText": "", "errText": "error: " + String(gz.error || "unknown"),
+                    "gstate": "error", "ageText": "", "errText": "error: " + String(gz.error || "unknown").slice(0, 80),
                     "ord": 0 });
                 continue;
             }
