@@ -8,7 +8,7 @@ import "../v4/ScreenRoles.js" as ScreenRoles
 // DeckMain.qml - the v5 DP-2 deck's shell layer, and THE ONLY FILE UNDER v5/
 // THAT IMPORTS QUICKSHELL. Hard rule (MAIN-SCREEN-BUILD.md constraint 2):
 //
-//   grep -rn "import Quickshell" nexuslink.hud/v5/   ->  this file only
+//   a grep for the Quickshell import line under nexuslink.hud/v5/  ->  this file only
 //
 // Everything the deck paints lives in DeckSurface.qml next to this file, which
 // is pure QtQuick and is what tools/qml-shot.sh renders offscreen. This layer

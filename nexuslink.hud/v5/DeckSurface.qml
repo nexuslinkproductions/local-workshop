@@ -9,8 +9,8 @@ import NexusHud.V5 1.0
 // Quickshell layer - PanelWindow, IPC, FileView, Process - and Quickshell is not
 // installed here, so a file that imports it cannot be loaded by tools/qml-shot.sh
 // at all. The composition therefore lives here, driven only by properties, and
-// DeckMain binds feeds into it. `grep -rn "import Quickshell" nexuslink.hud/v5/`
-// matches DeckMain.qml and nothing else.
+// DeckMain binds feeds into it. The Quickshell import rule for this tree (the
+// only importer is DeckMain.qml) is checked with a plain grep in docs/integration.md.
 //
 // LAYOUT (fixed 2560x1440 surface, Tokens guides, never scaled by hand)
 //   knot      540 at (Tokens.knotCentreX 1280, Tokens.goldenY1 550)

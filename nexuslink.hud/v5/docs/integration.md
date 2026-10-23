@@ -12,8 +12,8 @@ widget expands into its deeper view, and how the whole thing rolls back.
 | `nexuslink.hud/v5/kit/*` | `QtQuick`, `QtQuick.Shapes`, `QtQuick.Effects`, `NexusHud.V5` | Wave 1 components, property-driven, no I/O |
 | `nexuslink.hud/v4/HudV4.qml` | unchanged imports | the v4 root, with one flag and one extra `Loader` |
 
-`grep -rn "import Quickshell" nexuslink.hud/v5/` matches `DeckMain.qml` and
-nothing else — the hard rule from the plan.
+A grep for the Quickshell import line under `nexuslink.hud/v5/` matches
+`DeckMain.qml` and nothing else — the hard rule from the plan.
 
 The split is not decoration. Quickshell is not installed on this Mac and there is
 no Wayland compositor, so a file that imports it cannot be loaded by
