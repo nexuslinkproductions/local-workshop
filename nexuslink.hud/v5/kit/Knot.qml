@@ -46,7 +46,7 @@ Item {
     // nothing is painted outside the knot and nothing needs clipping.
     // KEEP IN SYNC: this number is what `tools/knot-iou.py trace` prints for the
     // shipped asset. A 1.5 percent mismatch costs ~0.09 band_iou (measured).
-    readonly property real pxPerUnit: 230.48
+    readonly property real pxPerUnit: 231.16
     readonly property real swarmSize: size * pxPerUnit / Tokens.knotDiameter / 0.30
 
     implicitWidth: size

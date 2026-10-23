@@ -234,7 +234,7 @@ def opening(mask, size):
     return np.array(im) > 127
 
 
-def trace_mask(lum, thr=0.10, close=9, open_px=5, r_max=276.0, min_area=2000):
+def trace_mask(lum, thr=0.10, close=9, open_px=7, r_max=276.0, min_area=2000):
     """The knot's strand band from the s2 crop, without s2's outer dot ring.
 
     s2's knot carries a faint decorative ring of dots outside the lobes (class
@@ -303,7 +303,7 @@ def trace_stats(mask):
 
 
 def bake_sdf(lum, tube_px, offset_px, out_path=None, size=SDF_SIZE,
-             thr=0.10, close=9, open_px=5, r_max=276.0, min_area=2000):
+             thr=0.10, close=9, open_px=7, r_max=276.0, min_area=2000):
     """Bake the centre-line distance texture Swarm marches.
 
     R = (tube_px - offset_px - s_in) / px_per_unit, clipped to 0..SDF_RANGE
@@ -589,11 +589,11 @@ def main():
     ap.add_argument("--out", help="trace: SDF png to write (default: print only)")
     ap.add_argument("--tube-px", type=float, default=None,
                     help="trace: strand half width in px (default: ridge median)")
-    ap.add_argument("--offset-px", type=float, default=0.0,
+    ap.add_argument("--offset-px", type=float, default=1.0,
                     help="trace: dilate the silhouette by this many px")
     ap.add_argument("--trace-thr", type=float, default=0.10)
     ap.add_argument("--trace-close", type=int, default=9)
-    ap.add_argument("--open-px", type=int, default=5,
+    ap.add_argument("--open-px", type=int, default=7,
                     help="trace: opening kernel, removes the thin ring arcs")
     ap.add_argument("--r-max", type=float, default=276.0)
     ap.add_argument("--mask-out", help="trace: write the traced band mask (png)")

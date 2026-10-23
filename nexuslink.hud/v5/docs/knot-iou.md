@@ -9,11 +9,11 @@ Summary of the numbers (all reproduced by one script, commands at the end):
 
 | what | value |
 |---|---|
-| the shipped asset's own silhouette (level set) vs the s2 crop band | **0.8280** |
-| the most any ring-free render can score on this crop | **0.8836** |
-| render at rest, measured still | **0.7260** raw crop / 0.7582 with s2's ring cut / 0.8159 against its own trace |
-| render `silhouette_iou_blur6` (the C2 verifier's meter) | 0.5481 |
-| dot coverage at rest | 0.0626 against the reference's 0.1153 |
+| the shipped asset's own level set vs the s2 crop band | **0.8149** |
+| the most any ring-free render can score on this crop | **0.8656** |
+| render at rest, measured still | **0.7218** raw crop / 0.7539 with s2's ring cut / 0.8276 against its own trace |
+| render `silhouette_iou_blur6` (the C2 verifier's meter) | 0.5327 |
+| dot coverage at rest | 0.0623 against the reference's 0.1153 |
 
 ## Reference and crop
 
@@ -55,22 +55,22 @@ That is why this run re-traces the knot from the still, as the card says.
 
 1. `lum > 0.10`, then a 9 px closing: s2's dots (926 of them, median 14 px each)
    merge into continuous strand bands.
-2. A 5 px opening. s2's knot is not only the ribbon: its own README says the mark
-   is 9 filled pieces, **6 thick ribbon + 3 thin ring**, and the ring is dotted
-   about five times more sparsely. Its arcs are 2 to 8 px thick and the closing
-   attaches parts of them to the knot, so the opening drops them.
+2. A **7 px opening**. s2's knot is not only the ribbon: its own README says the
+   mark is 9 filled pieces, **6 thick ribbon + 3 thin ring**, and the ring is
+   dotted about five times more sparsely. Its arcs are 2 to 8 px thick and the
+   closing attaches parts of them to the knot, so the opening drops them. At 5 px
+   one 10 px wide ring strip survives on the far left (x 23..34, y 280..340) and
+   renders as a stray dotted crescent, which is a "no rings" violation; 7 px
+   removes it and costs 0.004 `band_iou`.
 3. A radial cut at r <= 276 px, the gap between the outermost lobe tip (260 px
    from the crop centre) and the ring beyond it.
-4. Components under **2,000 px** are dropped. One ring arc (1,043 px, at x 29..81,
-   y 153..269) is thick enough to survive the opening and sits detached on the
-   left; the knot itself is one 51,464 px blob, so the floor removes it without
-   touching the mark. Without that floor the arc renders as a stray dotted
-   crescent, which is a "no rings" violation.
+4. Components under 2,000 px (background grain) are dropped. The knot itself is a
+   single 50k px blob, so the floor never touches the mark.
 
-The result is a 51,464 px band: bbox x 23..506, y 9..493, perimeter 4,184 px,
-strand half width **13.00 px** (median signed distance on the medial ridge; the
-2A/P estimator says 24.6 px because crossings and lobe tips are thicker than a
-strand and inflate it, so the ridge number is the strand).
+The result is a 50,416 px band: bbox x 28..506, y 9..493, strand half width
+**13.04 px** (median signed distance on the medial ridge; the 2A/P estimator says
+25.6 px because crossings and lobe tips are thicker than a strand and inflate it,
+so the ridge number is the strand).
 
 The bake then writes `kit/assets/swarm-knot-sdf.png` (1024x1024, R = distance to
 the band's centre lines, G = 1.0 so the renderer's ring channel can never hit,
@@ -78,76 +78,79 @@ A = 255 because Qt premultiplies image textures). Numbers that fall out of the
 trace and are hardcoded in `Knot.qml`:
 
 - Swarm's tube radius is a fixed 0.05640288 unit, so the renderer needs
-  **230.48 px per unit** for that tube to be 13.00 px wide,
-- therefore a 540 px `Knot` drives a **768.3 px** `Swarm`. The overhang is empty:
+  **231.16 px per unit** for that tube to be 13.04 px wide,
+- therefore a 540 px `Knot` drives a **770.5 px** `Swarm`. The overhang is empty:
   the shader writes `vec4(0)` outside the tube,
 - the lobe tip lands at 1.25 units, inside the shader's 1.34 unit march bound and
   inside the 1.45 unit texture.
 
-The shipped asset's own level set (with the 1 px silhouette offset described
-below) scores **0.8280** against the reference band, and the plain traced band
-scores 0.8836. That second number is the ceiling; the first is what the shader
-can physically produce.
+The shipped asset's own level set (with a 1 px silhouette offset, see the sweep)
+scores **0.8149** against the reference band, and the plain traced band scores
+0.8656. The second number is the ceiling; the first is what the shader is told to
+produce.
 
 **Keep `pxPerUnit` in sync.** A 1.5% mismatch between the bake's px-per-unit and
-`Knot.qml`'s (230.48 vs 227.05, measured by accident) costs 0.09 `band_iou`,
-because a uniform scale error of 1.5% moves every edge by 4 px.
+`Knot.qml`'s cost 0.09 `band_iou` when it happened by accident, because a uniform
+1.5% scale error moves every edge by 4 px.
 
 ## Why 0.90 is the ceiling, not a target
 
 s2's reference band is 58,246 px after the same closing. The triquetra trace is
-51,464 px of it. The remaining **6,782 px (11.6%)** are s2's ring: 2,597 px beyond
+50,416 px of it. The remaining **7,830 px (13.4%)** are s2's ring: 2,597 px beyond
 the r 276 cut, plus ring arcs inside it that the opening and the component floor
 remove. The card says the Knot has **no rings**, so a spec-compliant render cannot
 draw them, and
 
-    51,464 / 58,246 = 0.8836
+    50,416 / 58,246 = 0.8656
 
 is the highest `band_iou` any ring-free Knot can reach against this crop, even if
 its still reproduced the traced band exactly, pixel for pixel.
 
-The render lands at 0.7260, so the rest of the gap is the renderer, not the
+The render lands at 0.7218, so the rest of the gap is the renderer, not the
 geometry. Two measured causes, both bounded by the visual law:
 
 1. **No glow means sparse dots.** s2's dots carry a soft halo, so its band reads
    58% covered at the meter's threshold. Swarm draws hard round discs at a 0.45
    pitch ratio (C2's repair: discrete points with dark gaps). At 0.45 the discs
    cover 33% of the band at 0.10, so the closed band comes out about 1.2 px
-   narrower per side than the geometry: render vs its own trace is 0.8159 at
+   narrower per side than the geometry: render vs its own trace is 0.8276 at
    rest. Raising the dot radius back toward s2's ratio reintroduces the
    touching-square-tile defect C2 was repaired for; raising the gain moved
-   `band_iou` by +0.0055 (see the sweep below). Do not expect this to close.
+   `band_iou` by +0.0055 (sweep below). Do not expect this to close.
 2. **The lobe tips.** The band is 40 px wide at the top lobe's apex, but the
    tube's height above the plane goes to zero as the band narrows, so the dots at
    the tips are the dimmest and the first to fall under the threshold.
 
-## Sweeps (all with `pxPerUnit` synced to each bake)
+## Sweeps (each with `pxPerUnit` synced to its own bake)
 
-    variant                    band_iou   cut    blur6
-    shipped: open 5, off 0      0.7142    0.7467  0.5541
-    opening 7 px                0.7112    0.7436  0.5387
-    opening 9 px                0.7085    0.7409  0.5328
-    silhouette offset 1 px      0.7260    0.7582  0.5481   <- shipped
-    silhouette offset 2 px      0.7084    0.7382  0.5338
-    gain 2.2 (C2 default 1.28)  0.7197    0.7524  0.5591
+    variant                        band_iou   cut    blur6
+    opening 5, offset 0             0.7142   0.7467  0.5541
+    opening 7, offset 0             0.7112   0.7436  0.5387
+    opening 9, offset 0             0.7085   0.7409  0.5328
+    opening 5, offset 1             0.7260   0.7582  0.5481  (keeps the ring strip)
+    opening 5, offset 2             0.7084   0.7382  0.5338
+    opening 5, offset 0, gain 2.2   0.7197   0.7524  0.5591
+    opening 7, offset 1     SHIPPED 0.7218   0.7539  0.5327
 
-The 1 px silhouette offset is shipped: it is the measured compensation for the
-dot inset, and it is the only variant that gains. Larger offsets lose, because
-dilating the silhouette also dilates the enclosed holes and the reference has
-none there. Gain 2.2 would give +0.0055 but brightens every dot toward solid;
-C2's 1.28 is kept and the measurement is recorded here instead.
+The 1 px silhouette offset is the measured compensation for the dot inset and is
+the reason the shipped row beats the other ring-free rows. Larger offsets lose,
+because dilating the silhouette also dilates the enclosed holes and the reference
+has none there. Gain 2.2 would add +0.0055 but brightens every dot toward solid;
+C2's 1.28 is kept and the measurement is recorded instead. Opening 5 with offset
+1 scores 0.004 higher than the shipped row but leaves the ring strip in the
+still, so it is not shipped.
 
 ## What has to be decided (triage)
 
 The card's own two rules disagree on this crop. Three ways out, in cost order:
 
-- **Accept the ring-free number.** 0.8836 is the ceiling, 0.8280 is the shipped
-  level set, 0.7260 is the render, and this file explains all three. Nothing else
+- **Accept the ring-free number.** 0.8656 is the ceiling, 0.8149 is the shipped
+  level set, 0.7218 is the render, and this file explains all three. Nothing else
   about the knot is unfinished.
 - **Put s2's ring back.** The renderer already has the channel (G, `u_rRing`
   0.01277046 unit = 2.9 px radius; s2's ring tube is 5.5 px, so that constant
-  would roughly double). It covers the missing 6,782 px, but the same render
-  would land near 0.80, still short of 0.90 for the dot-fill reason above, so it
+  would roughly double). It covers the missing 7,830 px, but the same render
+  would land near 0.79, still short of 0.90 for the dot-fill reason above, so it
   buys design fidelity, not the number.
 - **Allow a glow.** It breaks the visual law ("no glow around the knot") and
   would lift the dot coverage toward s2's 58%.
@@ -162,8 +165,8 @@ jitter of up to half a dot pitch that decays to zero, so the points stream in
 scattered over the whole mark and settle into the strand as progress reaches 1.
 With `assembling: false` the shader is handed exactly 1.0 and skips the branch:
 the rest frame is **byte-identical** to `assembling: true, assembleProgress: 1`
-(same PNG sha256, `1fad32d5b473dfe6`), verified in the run that produced the
-stills.
+(the two committed JPEGs have the same sha256, `6c6a50bfed61366b…`), verified in
+the run that produced the stills.
 
 A spatial scatter (each dot thrown ~38 px off its cell) was tried first and
 rendered an **empty frame** at progress 0.3: fragments exist only where the ray
@@ -176,10 +179,10 @@ Stills (2560x1440 deck frame and the 540 crop, JPEG, all under 1 MB):
 
 | state | deck | crop | `band_iou` | lit px |
 |---|---|---|---|---|
-| rest (`assembling: false`) | `docs/knot-stills/knot-rest-deck.jpg` | `knot-rest-540.jpg` | 0.7260 | 18,264 |
-| progress 0.3 | `knot-a30-deck.jpg` | `knot-a30-540.jpg` | 0.2650 | 4,911 |
-| progress 0.6 | `knot-a60-deck.jpg` | `knot-a60-540.jpg` | 0.6307 | 10,736 |
-| progress 1.0 (`assembling: true`) | `knot-a100-deck.jpg` | `knot-a100-540.jpg` | 0.7260 | 18,264 |
+| rest (`assembling: false`) | `docs/knot-stills/knot-rest-deck.jpg` | `knot-rest-540.jpg` | 0.7218 | 18,152 |
+| progress 0.3 | `knot-a30-deck.jpg` | `knot-a30-540.jpg` | 0.2570 | 4,817 |
+| progress 0.6 | `knot-a60-deck.jpg` | `knot-a60-540.jpg` | 0.6345 | 10,638 |
+| progress 1.0 (`assembling: true`) | `knot-a100-deck.jpg` | `knot-a100-540.jpg` | 0.7218 | 18,152 |
 
 The progress numbers are low on purpose: the same meter on frames that are
 deliberately still assembling (30% and 60% of the dots present).
@@ -189,7 +192,7 @@ deliberately still assembling (30% and 60% of the dots present).
 From the worktree root, Python 3 with PIL + numpy (no other dependency):
 
     # 1. bake the trace into the shipped asset and print the fit
-    /usr/bin/python3 tools/knot-iou.py trace --offset-px 1 \
+    /usr/bin/python3 tools/knot-iou.py trace \
         --out nexuslink.hud/v5/kit/assets/swarm-knot-sdf.png
 
     # 2. render + measure one state (writes <prefix>-deck.jpg and -540.jpg/.png)
@@ -205,9 +208,10 @@ From the worktree root, Python 3 with PIL + numpy (no other dependency):
 `trace` prints the band, half width, px-per-unit, Swarm size and the level set's
 predicted IoU; `measure` prints `band_iou`, `silhouette_iou_blur6`, both
 coverages and the translation it found, and exits 1 below `--min-band`, so it can
-gate a card. The stills on this card were made with `--rest` and
-`--progress 0.3/0.6/1.0` at the default 2560x1440 deck frame; the 540 crop is
-taken at x=1010, y=280.
+gate a card. The defaults are the shipped configuration (threshold 0.10, closing
+9, opening 7, r_max 276, 2,000 px floor, 1 px silhouette offset). The stills on
+this card were made with `--rest` and `--progress 0.3/0.6/1.0` at the default
+2560x1440 deck frame; the 540 crop is taken at x=1010, y=280.
 
 ## Files this card touches
 
