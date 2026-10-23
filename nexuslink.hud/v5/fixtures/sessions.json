@@ -11,7 +11,7 @@
     "last_activity_at": 1792703190,
     "last_activity_iso": "2026-10-22T21:06:30Z",
     "idle_s": 32,
-    "title": "Draft vari8-beta issues for Marcel and Hanzlah",
+    "title": "Draft vari8-beta issues for the crew",
     "activity": "starting new turn"
   },
   {
@@ -26,7 +26,7 @@
     "last_activity_at": 1792703202,
     "last_activity_iso": "2026-10-22T21:06:42Z",
     "idle_s": 20,
-    "title": "Enable marcel-mode",
+    "title": "Enable operator-mode",
     "activity": "delegate_task: subagent receiving stream response (iteration 6/100000)"
   },
   {
