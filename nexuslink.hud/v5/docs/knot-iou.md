@@ -156,10 +156,13 @@ for a focus or assemble cue.
 
 Bright pixels at rest (luminance > 0.35, 14,473 px), mean RGB **(109,151,161)**,
 **V 0.632**, **B >= G > R 100.0%**, **hue in the 170-230 degree window 100.0%**,
-**lime 0.0%**. The s2 crop reads (93,137,152), V 0.609, on its own 16,291 bright
-px: B >= G > R 94.8%, hue window 94.9%, and 3.1% lime, which is its ring. Both
-shares are reported because they are different meters: "azure/ice" is the
-B >= G > R share, and the hue window is the one that would catch a colour
+**lime 0.0%**. Both readings are on the crop PNG that `still` writes; the
+committed JPEG of the same frame reads (121,146,156), V **0.613**, 14,375 px,
+because JPEG artefacts move the 0.35 boundary by a few levels — both sit inside
+the 0.61 +/- 0.05 window. The s2 crop reads (93,137,152), V 0.609, on its own
+16,291 bright px: B >= G > R 94.8%, hue window 94.9%, and 3.1% lime, which is its
+ring. Both shares are reported because they are different meters: "azure/ice" is
+the B >= G > R share, and the hue window is the one that would catch a colour
 drifting out of s2's ramp. The pre-repair build measured 96.8% and 90.3%, so the
 old label "96% azure/ice" named neither cleanly. Lime is 0.0% under both.
 
