@@ -1,0 +1,12 @@
+{
+  "_fixture": true,
+  "_label": "FIXTURE - s10 mockup values for the render only. Not live data. The live source is the Kanban board read by feeds/AgentsFeed.qml.",
+  "status": "fresh",
+  "reason": "",
+  "running": 6,
+  "blocked": 1,
+  "waiting": 2,
+  "ageS": 0,
+  "lastEventTs": 0,
+  "checkedTs": 0
+}
