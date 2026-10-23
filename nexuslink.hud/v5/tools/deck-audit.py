@@ -182,6 +182,7 @@ def audit(qml, wrapper):
                       " (fallback %.3f)" % (t["t"], t["adv"], t["advSatoshi"], t["advFallback"]))
         ok = False
     print("   %s" % ("PASS" if ok else "FAIL"))
+    print()
     return ok
 
 

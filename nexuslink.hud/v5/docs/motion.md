@@ -40,26 +40,34 @@ attempts:
 
 | run | closed form, all 5 attempts | frame lower bound, 5 attempts | frame samples per attempt | frame grid | exit |
 |---|---|---|---|---|---|
-| 1 | +4.874 % | +4.542 to +4.844 % | 19 to 33 | 28.0 to 48.7 ms | 0 |
-| 2 | +4.874 % | +3.927 to +4.874 % | 22 to 34 | 27.7 to 40.0 ms | 0 |
-| 3 | +4.874 % | +4.249 to +4.871 % | 22 to 27 | 34.1 to 42.9 ms | 0 |
-| 4 | +4.874 % | +3.889 to +4.805 % | 19 to 27 | 33.3 to 47.1 ms | 0 |
-| 5 | +4.874 % | +3.585 to +4.873 % | 21 to 28 | 33.1 to 44.1 ms | 0 |
+| 1 | +4.874 % | +4.182 to +4.874 % | 21 to 30 | 31.8 to 44.0 ms | 0 |
+| 2 | +4.874 % | +3.840 to +4.874 % | 23 to 39 | 23.7 to 41.1 ms | 0 |
+| 3 | +4.874 % | +4.329 to +4.822 % | 23 to 27 | 35.4 to 39.3 ms | 0 |
+| 4 | +4.874 % | +4.683 to +4.874 % | 19 to 29 | 32.4 to 48.0 ms | 0 |
+| 5 | +4.874 % | +4.031 to +4.857 % | 17 to 33 | 28.5 to 52.2 ms | 0 |
 
 Every attempt in every run read the same closed form, `+4.874 %`, and every
-closed form fell inside its own frame bound (`5 of 5` in each run). Three frame
-lower bounds sit under the 4 % floor of the band (3.585, 3.889, 3.927) — those are
-the readings the round-2 verifier saw as failures.
+closed form fell inside its own frame bound (`5 of 5` in each run). One frame
+lower bound in this pass (3.840) sits under the 4 % floor of the band. An earlier
+five-run pass on the same deck content read `3.585 to 4.874 %` and put three of
+its 25 attempts under that floor. Those are exactly the readings the round-2
+verifier saw as failures, and the closed form was `+4.874 %` in every one of
+those attempts too.
+
+The frame column is clock-bound, so it is a dated record, not a target: a re-run
+reproduces every closed-form reading and prints its own bounds. The sub-4 %
+values are what a frame landing 35 to 45 ms off the vertex does, which is why the
+column is not the gate.
 
 The other signals, from the same five runs:
 
 | signal | measured across the five runs | band |
 |---|---|---|
 | expand peak | 1.4194972 at 223 ms (closed form, every attempt) | — |
-| stretched read | +4.868 to +4.874 % (82 to 112 samples, 31.0 to 58.5 ms grid = 3.1 to 5.8 ms on the deck's 347 ms timeline) | 4 to 6 % |
+| stretched read | +4.867 to +4.874 % (83 to 115 samples, 31.0 to 56.0 ms grid = 3.1 to 5.6 ms on the deck's 347 ms timeline) | 4 to 6 % |
 | return | min 1.0000, 0 rises, last 1.0000 in every run | ≥ 1.0, 0 rises |
-| idle drift | max \|d\| 1.890 to 1.891 px, x range 1.679 to 1.794, y range 3.038 to 3.135 | > 0 |
-| breath period | 5.776 to 5.823 s (119 to 127 samples at a 102.6 to 110.1 ms grid) | 5 to 6 s |
+| idle drift | max \|d\| 1.890 to 1.891 px in every run; x range 1.65 to 1.79, y range 3.01 to 3.14 (a sampled window of a 13 s and a 21 s sine, so a re-run's range depends on the phase it catches) | > 0 |
+| breath period | 5.786 to 5.809 s in this pass (5.776 to 5.823 s across all recorded runs), 120 to 127 samples at a 103.6 to 110.1 ms grid | 5 to 6 s |
 | committed traces | `expand.json` and `deck.json` regenerated from the current probes, re-parsed with `--json`, exit 0 | — |
 | token | `Motion.expandMillis` 347, `Motion.returnMillis` 444, `Motion.expandOvershoot` 5.00 % (spring band), `Motion.curveOvershoot5` 1.15 (read by `FindField`; `CrewOrb` carries the same 1.15 as a local literal), `Motion.driftAmpMax` 2.0, `Motion.breathPeriod` 5.8 | — |
 
@@ -75,17 +83,18 @@ Reading it:
   the frame-sampled settle times of the two legs are clock-bound and are not
   used as evidence of any ordering.
 * **Idle drift** peaks at 1.890 to 1.891 px on `Motion.driftAmpMax` = 2.0 every
-  run, with an x range of 1.679 to 1.794 px and a y range of 3.038 to 3.135 px:
-  two sine terms at period and period × phi, so the deck is never fully still and
-  never repeats. A second `IdleDrift` moves the launcher and find pill on its own
-  phase (`phaseOffset` 0.37, `Motion.driftAmpMin`, period × phi), so the chrome
-  and the widget band never move in step. The 96 px clock is the one fixed
-  element: a 2 px wobble on type that large reads as broken typography, not as
-  life.
-* **Breath** measured 5.776 to 5.823 s across the five runs against
-  `Motion.breathPeriod` = 5.8 s, by timing the mid-level crossings across two
-  full cycles. The shell renders it in the swarm shader at a 30 Hz tick, not in a
-  wrapper animation.
+  run, with an x range of 1.65 to 1.79 px and a y range of 3.04 to 3.14 px across
+  all the recorded runs: two sine terms at period and period × phi, so the deck is
+  never fully still and never repeats. The range is the window a run happens to
+  catch, not a property of the curve; the constant is the 2.0 peak. A second
+  `IdleDrift` moves the launcher and find pill on its own phase (`phaseOffset`
+  0.37, `Motion.driftAmpMin`, period × phi), so the chrome and the widget band
+  never move in step. The 96 px clock is the one fixed element: a 2 px wobble on
+  type that large reads as broken typography, not as life.
+* **Breath** measured 5.786 to 5.809 s in the five runs above (5.776 to 5.823 s
+  across every recorded pass) against `Motion.breathPeriod` = 5.8 s, by timing the
+  mid-level crossings across two full cycles. The shell renders it in the swarm
+  shader at a 30 Hz tick, not in a wrapper animation.
 
 ## Why the peak is not read off the frame samples
 

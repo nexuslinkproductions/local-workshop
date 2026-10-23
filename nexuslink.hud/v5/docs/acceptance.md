@@ -30,8 +30,9 @@ nexuslink.hud/v5/tools/deck-shot.sh nexuslink.hud/v5/stills/i1-deck-rest.qml \
 
 Stills: `v5/stills/i1-deck-rest.png`, `v5/stills/i1-deck-crew-focus.png`,
 `v5/stills/i1-deck-launcher-focus.png` (PNG, 2560x1440) and the same three at
-full size as JPEG (`.jpg`, 116 to 196 KB) for reading in chat.
-`deck-shot.sh`, so a silently flat frame exits 1.
+full size as JPEG (`.jpg`, 116 to 196 KB) for reading in chat. The harness fails
+below `QML_SHOT_MIN_DISTINCT`, which `deck-shot.sh` sets to 64, so a silently
+flat frame exits 1.
 
 ### Fonts
 
@@ -42,13 +43,16 @@ Every render above is Satoshi, and that is measured, not assumed.
 
   ```
   nexuslink.hud/v5/tools/deck-shot.sh nexuslink.hud/v5/tests/i1/FontProof.qml \
-      "$TMPDIR/font-proof.png" 2>&1 | grep FONT
+      "$TMPDIR/font-proof.png" 2>&1 | grep -E 'FONT|Cannot load font'
   qml: FONT {"family":"Satoshi","familiesHasSatoshi":true,"familiesCount":249,
     "clockDigit96":63.359,"clockDigit96Fallback":58.203,"clockOne96":63.359,
     "clockColon96":27.063,"clockColon96Fallback":20.797,
     "label16":101.672,"label16Fallback":102.188,
     "value20":62.984,"value20Fallback":62.047}
   ```
+
+  The `grep` covers both halves of the claim: the FONT line prints, and no
+  `Cannot load font` line does.
 
 * `deck-audit.py` compares every painted `Text` three ways (its own advance, a
   Satoshi twin, a fallback twin): at rest **16 of 16 decisive texts carry the
@@ -60,22 +64,35 @@ Every render above is Satoshi, and that is measured, not assumed.
   for `18:48` and for the resting clock, and `TNUM on 0000=443.500 1111=443.500
   delta=0.000` against `delta=236.516` with the feature off. At the deck's 96 px
   that is the `63.359` digit advance, 0.660 em.
-* `DeckSurface.qml` holds the only four `FontLoader`s in the tree; `DeckMain.qml`
-  has none (it instantiates `DeckSurface`, so the shell gets them too).
-  `deck-shot.sh`, `deck-audit.py` and `deck-trace.py` also mirror `v5/fonts` to
+* `DeckSurface.qml` carries the deck's four `FontLoader`s, from `Tokens.fontFiles`,
+  and `DeckMain.qml` carries none: it instantiates `DeckSurface`, so the shell
+  gets them too. (Other loaders exist in the tree for other owners — `kit/Clock.qml`
+  keeps its own four module-relative ones, the W2/W3 still harnesses and
+  `tests/w7/ClockProof.qml` load what they paint. None of them is the deck's.)
+  `deck-shot.sh`, `deck-audit.py` and `deck-trace.py` mirror `v5/fonts` to
   `<imports>/NexusHud/fonts`, which is where a kit component's `../fonts/...`
   lands through the module import path.
 
 What round 2 saw, and what it was: at `cfdee53` each render printed four
 `FontLoader: Cannot load font` lines, and all four were `kit/Clock.qml`'s
 module-relative loaders, not the deck's. The deck itself was already Satoshi.
-Measured, not argued: the same still with the module fonts link and without it
-differs by **15 pixels at a maximum channel delta of 1** (antialiasing), and the
-audit reports the Satoshi advance on all 16 painted texts either way. The repair
-closes the class anyway: the deck's loaders now live where every non-shell render
-gets them, the import path the three tools build resolves the kit's own loaders,
-and the audit exits non-zero if a painted text ever regresses to the fallback
-face.
+Measured, not argued: rendering this still with the fonts mirror and without it
+gives the same image — no pixel differs by more than one channel value, and the
+number that differs is the same order as render-to-render noise. Four renders of
+this still, compared with `sips` + numpy:
+
+| comparison | pixels differing | max channel delta |
+|---|---|---|
+| link run 1 vs link run 2 (same configuration) | 24 | 1 |
+| link run 1 vs no-link run 1 | 34 | 1 |
+| no-link run 1 vs no-link run 2 (same configuration) | 26 | 1 |
+
+So the mirror is not what makes the deck Satoshi (the audit reports the Satoshi
+advance on all 16 painted texts either way); it is what stops four per-render
+error lines and what makes a kit component rendered on its own resolve its own
+faces. The repair closes the class anyway: the deck's loaders now live where every
+non-shell render gets them, and the audit exits non-zero if a painted text ever
+regresses to the fallback face.
 
 ## 2. Layout against the guides and against s2
 

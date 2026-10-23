@@ -287,8 +287,11 @@ def run_checks(m):
     frame landed off the vertex, not that the deck changed. They are printed per
     run as a two-sided bound with their sample counts. A curve that actually
     moved is caught here anyway: the closed form is built from the easing object
-    read live off the running transition, so its type, parameter and band are all
-    gated.
+    read live off the running transition, so its type is gated directly, its
+    parameter through the peak landing inside the band, and the band itself.
+    The one frame-side check that IS a gate is the impossible direction: a frame
+    sample cannot sit above the curve's maximum, so a lower bound above the
+    closed-form peak means the analytic model understates the deck.
     """
     fails = []
     setup = m["stretch_setup"]
@@ -319,6 +322,15 @@ def run_checks(m):
     if m.get("return_rises", 1) > 0 or m.get("return_min", 0.0) < m["rest"] - 0.002:
         fails.append("return not monotone to rest (min %.4f, %d rises)"
                      % (m.get("return_min", -1), m.get("return_rises", -1)))
+    # The only frame-side direction that is a gate: a sample can sit at or below
+    # the curve's maximum but never above it, so a lower bound above the closed
+    # form means the analytic model is wrong, not the clock. A late frame cannot
+    # trip this, so it does not bring the round-2 failure mode back.
+    if ("frame_lower_pct" in m
+            and m["frame_lower_pct"] > m["curve_peak_pct"] + FRAME_TOLERANCE_PP):
+        fails.append("a frame sample reads %+.3f %%, above the closed-form peak"
+                     " %+.3f %%: the curve understates the deck"
+                     % (m["frame_lower_pct"], m["curve_peak_pct"]))
     return fails
 
 
