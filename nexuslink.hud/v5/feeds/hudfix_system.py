@@ -717,9 +717,23 @@ def cache_read(ctx, action, now):
     if not os.path.isfile(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            stored = json.load(handle)
-    except (OSError, ValueError):
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    if not raw.strip():
+        return None
+    # Every cache read goes through the same bounded loader as the captures.
+    # json.load raises RecursionError on a file nested 1200 deep, which is not a
+    # ValueError: it escaped as exit 2 programming_error. A cache nested past the
+    # cap is hostile, so it answers ok:false kind:malformed at exit 0; a cache
+    # that is merely corrupt or empty is still treated as no cache, which is the
+    # behaviour the earlier rounds proved.
+    try:
+        stored = loads_bounded(raw, "cache for %s at %s" % (action, tilde(path)))
+    except Malformed as problem:
+        if problem.deep:
+            raise
         return None
     if not isinstance(stored, dict):
         return None
@@ -2861,6 +2875,47 @@ def self_check():
                  str(payload.get("reason")))
         check.ok("nested" in (payload.get("reason") or ""),
                  "the nesting refusal names the depth", str(payload.get("reason")))
+
+        # 4g. a live cache file nested past the depth cap. json.load raised
+        # RecursionError there (exit 2); the bounded loader answers malformed.
+        print("-- hostile cache")
+        cache_state = os.path.join(temp_root, "deep-cache-state")
+        os.makedirs(cache_state)
+        cache_file = os.path.join(cache_state, "hudfix_system.system.failed-jobs.json")
+        for label, levels in (("1200", 1200), ("100", 100)):
+            with open(cache_file, "w", encoding="utf-8") as handle:
+                handle.write("[" * levels + "]" * levels)
+            payload, code = _cli(["--action", "system.failed-jobs", "--json",
+                                  "--state-dir", cache_state])
+            payload = payload or {}
+            check.equal(code, 0, "a cache nested %s deep exits 0" % label)
+            check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                     "a cache nested %s deep says ok false and malformed" % label,
+                     str(payload.get("reason")))
+            check.ok("nested" in (payload.get("reason") or ""),
+                     "the cache refusal %s names the nesting" % label,
+                     str(payload.get("reason")))
+        with open(cache_file, "w", encoding="utf-8") as handle:
+            handle.write("{not json at all")
+        clean_bin = os.path.join(temp_root, "bin-clean")
+        os.makedirs(clean_bin)
+        clean_launchctl = os.path.join(clean_bin, "launchctl")
+        with open(clean_launchctl, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nprintf 'PID\\tStatus\\tLabel\\n'; "
+                         "printf -- '-\\t0\\tcom.example.ok\\n'\n")
+        os.chmod(clean_launchctl, 0o755)
+        saved_path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = clean_bin + os.pathsep + saved_path
+            payload, code = _cli(["--action", "system.failed-jobs", "--json",
+                                  "--state-dir", cache_state])
+        finally:
+            os.environ["PATH"] = saved_path
+        payload = payload or {}
+        check.equal(code, 0, "a corrupt cache still falls through to a probe")
+        check.ok(payload.get("ok") is True and payload.get("cached") is not True,
+                 "a corrupt cache is treated as no cache, not as hostile nesting",
+                 str(payload.get("reason")))
 
         # 5. quarantine: fake report -> MANIFEST row, original gone
         print("-- quarantine")
