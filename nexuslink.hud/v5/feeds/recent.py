@@ -3,7 +3,9 @@
 
 Emits the latest downloads, screenshots and recent files, the pinned folders,
 and a type census, from a paths config. Stdlib only, no network, no daemon:
-the HUD polls this script and the result is cached for 10 s.
+the HUD polls this script and a live read is cached for 10 s. A fixture read
+is never cached and keeps no host state, so its output is the same on every
+machine.
 
     recent.py --json
     recent.py --config ./hud_paths.json --limit 4 --json
@@ -150,11 +152,45 @@ def abs_path(value, base=None):
     return os.path.abspath(text)
 
 
-def tilde(path):
+# A fixture file must print the same paths on any machine, so its ~ is not the
+# running user's home. HOST_HOME marks the modes that expand ~ against the host;
+# a fixture passes the home it declares, or None to keep the ~ form verbatim.
+HOST_HOME = object()
+
+
+def fixture_path(value, base=None, home_dir=None):
+    """Fixture path -> the string fixture mode prints. Pure string work:
+    no cwd, no host home, no filesystem."""
+    text = str(value).strip()
+    if home_dir is not None:
+        if text == "~":
+            text = home_dir
+        elif text.startswith("~" + os.sep):
+            text = home_dir + text[1:]
+    if not text:
+        return text
+    if os.path.isabs(text) or text.startswith("~"):
+        return os.path.normpath(text)
+    return os.path.normpath(os.path.join(base, text)) if base else os.path.normpath(text)
+
+
+def path_for(value, base=None, home_dir=HOST_HOME):
+    """One configured path, resolved the way the reading mode needs it."""
+    if home_dir is HOST_HOME:
+        return abs_path(value, base)
+    return fixture_path(value, base, home_dir)
+
+
+def tilde(path, home_dir=HOST_HOME):
     """Display form. Home is shortened; nothing else is."""
     if not path:
         return ""
-    root = home().rstrip(os.sep)
+    if home_dir is HOST_HOME:
+        root = home().rstrip(os.sep)
+    elif home_dir:
+        root = str(home_dir).rstrip(os.sep)
+    else:
+        return path
     if path == root:
         return "~"
     if root and path.startswith(root + os.sep):
@@ -193,9 +229,9 @@ def state_dir():
     return os.path.join(home(), ".local", "state", "nexuslink")
 
 
-def cache_file(mode):
-    name = "recent.json" if mode == "live" else "recent-fixture.json"
-    return os.path.join(state_dir(), name)
+def cache_file():
+    """Live cache path. A fixture run keeps no cache file at all."""
+    return os.path.join(state_dir(), "recent.json")
 
 
 # --------------------------------------------------------------------------
@@ -248,7 +284,7 @@ def _pin_entry(item):
     return None
 
 
-def parse_config(raw, shown, base):
+def parse_config(raw, shown, base, home_dir=HOST_HOME):
     """JSON object -> normalised config. Tolerates partial and odd shapes."""
     if not isinstance(raw, dict):
         raise Malformed("config at %s is not a JSON object" % shown)
@@ -269,7 +305,7 @@ def parse_config(raw, shown, base):
             entry = _root_entry(item)
             if entry is None:
                 continue
-            entry["path"] = abs_path(entry["path"], base)
+            entry["path"] = path_for(entry["path"], base, home_dir)
             roots.append(entry)
         config["roots"][key] = roots
     value = raw.get("pinned")
@@ -280,7 +316,7 @@ def parse_config(raw, shown, base):
             entry = _pin_entry(item)
             if entry is None:
                 continue
-            entry["path"] = abs_path(entry["path"], base)
+            entry["path"] = path_for(entry["path"], base, home_dir)
             config["pinned"].append(entry)
     if not any(config["roots"][key] for key in LISTS) and not config["pinned"]:
         raise Malformed("config at %s names no usable roots" % shown)
@@ -406,7 +442,7 @@ def pin_rows(pins):
 # fixture scan
 
 
-def _fixture_entry(raw, root, allowed_roots, stats):
+def _fixture_entry(raw, root, allowed_roots, stats, home_dir):
     """One fixture file row -> entry or None (mirrors the live rules)."""
     if not isinstance(raw, dict):
         return None
@@ -417,7 +453,7 @@ def _fixture_entry(raw, root, allowed_roots, stats):
     path = os.path.join(root, name)
     link = raw.get("link")
     if isinstance(link, str) and link.strip():
-        target = abs_path(link, root)
+        target = path_for(link, root, home_dir)
         if raw.get("broken"):
             stats["broken"] += 1
             return None
@@ -446,13 +482,27 @@ def _fixture_entry(raw, root, allowed_roots, stats):
     }
 
 
-def fixture_config(raw, shown, fixture_dir):
+def fixture_config(raw, shown, base, home_dir):
     """A fixture file carries its own config; a fixture dir points at one."""
+    if not isinstance(raw, dict):
+        # null, a number or a boolean has no keys, so the membership tests
+        # below would raise TypeError. Bad content is an answer, not a bug.
+        raise Malformed("fixture at %s has neither a config block nor roots" % shown)
     if "config" in raw:
-        return parse_config(raw["config"], shown, fixture_dir)
+        return parse_config(raw["config"], shown, base, home_dir)
     if "roots" in raw or "pinned" in raw:
-        return parse_config(raw, shown, fixture_dir)
+        return parse_config(raw, shown, base, home_dir)
     raise Malformed("fixture at %s has neither a config block nor roots" % shown)
+
+
+def fixture_home(raw, shown):
+    """The home a fixture declares for ~, or None to keep the ~ form."""
+    value = raw.get("home")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip().startswith(os.sep):
+        raise Malformed("fixture at %s declares home %r, which is not an absolute path" % (shown, value))
+    return os.path.normpath(value.strip())
 
 
 # --------------------------------------------------------------------------
@@ -567,8 +617,14 @@ def build_live(config, limit, mode="live"):
     return envelope(mode, limit, selected, pinned, roots, broken, outside)
 
 
-def build_fixture(raw, shown, fixture_dir, limit):
-    config = fixture_config(raw, shown, fixture_dir)
+def build_fixture(raw, shown, limit):
+    """Read a fixture file. Pure: no host home, no cwd, no stat, no cache."""
+    if not isinstance(raw, dict):
+        raise Malformed("fixture at %s has neither a config block nor roots" % shown)
+    home_dir = fixture_home(raw, shown)
+    # No base for the config: a relative fixture root stays relative, so the
+    # output never picks up the directory the fixture happens to sit in.
+    config = fixture_config(raw, shown, None, home_dir)
     tree = raw.get("roots")
     if not isinstance(tree, dict):
         raise Malformed("fixture at %s has no roots object" % shown)
@@ -586,7 +642,7 @@ def build_fixture(raw, shown, fixture_dir, limit):
     outside = 0
     for key in LISTS:
         for root in config["roots"][key]:
-            display = tilde(root["path"])
+            display = tilde(root["path"], home_dir)
             node = tree.get(display)
             row = {
                 "list": key,
@@ -612,7 +668,7 @@ def build_fixture(raw, shown, fixture_dir, limit):
             claimed_here = 0
             if isinstance(rows, list):
                 for item in rows:
-                    entry = _fixture_entry(item, root["path"], allowed, stats)
+                    entry = _fixture_entry(item, root["path"], allowed, stats, home_dir)
                     if entry is not None:
                         lists[key].append(entry)
                         claimed_here += 1
@@ -625,7 +681,7 @@ def build_fixture(raw, shown, fixture_dir, limit):
 
     pinned = []
     for pin in config["pinned"]:
-        display = tilde(pin["path"])
+        display = tilde(pin["path"], home_dir)
         node = tree.get(display)
         name = pin["name"] or os.path.basename(pin["path"].rstrip(os.sep)) or display
         exists = bool(isinstance(node, dict) and node.get("exists", False))
@@ -647,9 +703,9 @@ def build_fixture(raw, shown, fixture_dir, limit):
 # cache
 
 
-def cache_key(mode, identity, limit):
+def cache_key(identity, limit):
     digest = hashlib.sha1()
-    digest.update(mode.encode("utf-8"))
+    digest.update(b"live")
     digest.update(b"\0%d" % limit)
     digest.update(b"\0" + SCHEMA.encode("utf-8"))
     for path in identity:
@@ -667,12 +723,12 @@ def cache_key(mode, identity, limit):
     return digest.hexdigest()
 
 
-def cache_read(mode, key):
+def cache_read(key):
     """Cached payload inside the TTL, else None. Never raises."""
     if os.environ.get("NEXUSLINK_NO_CACHE"):
         return None
     try:
-        with open(cache_file(mode), "r", encoding="utf-8") as handle:
+        with open(cache_file(), "r", encoding="utf-8") as handle:
             record = json.load(handle)
     except (OSError, ValueError):
         return None
@@ -693,11 +749,11 @@ def cache_read(mode, key):
     return served
 
 
-def cache_write(mode, key, payload, built_at):
+def cache_write(key, payload, built_at):
     """Atomic write: temp file in the same directory, then os.replace."""
     if os.environ.get("NEXUSLINK_NO_CACHE"):
         return
-    target = cache_file(mode)
+    target = cache_file()
     parent = os.path.dirname(target)
     try:
         os.makedirs(parent, exist_ok=True)
@@ -725,7 +781,6 @@ def cache_write(mode, key, payload, built_at):
 
 
 def run(args):
-    mode = "fixture" if args.fixture else "live"
     if args.fixture:
         target = abs_path(args.fixture)
         if not os.path.exists(target):
@@ -741,10 +796,6 @@ def run(args):
                 limit = DEFAULT_LIMIT
                 if isinstance(raw, dict):
                     limit = _int_or(raw.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
-            key = cache_key(mode, [config_path], limit)
-            cached = cache_read(mode, key)
-            if cached is not None:
-                return cached
             config = parse_config(raw, shown, target)
             payload = build_live(config, limit, mode="fixture")
         else:
@@ -755,11 +806,10 @@ def run(args):
                 limit = DEFAULT_LIMIT
                 if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
                     limit = _int_or(raw["config"].get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
-            key = cache_key(mode, [target], limit)
-            cached = cache_read(mode, key)
-            if cached is not None:
-                return cached
-            payload = build_fixture(raw, shown, os.path.dirname(target), limit)
+            payload = build_fixture(raw, shown, limit)
+        # Fixture purity: no cache read, no cache write, no state file. Two
+        # runs give the same bytes apart from generated_at, cached false.
+        return payload
     else:
         explicit = bool(args.config)
         config_path = abs_path(args.config) if explicit else abs_path(DEFAULT_CONFIG)
@@ -774,13 +824,13 @@ def run(args):
         base = os.path.dirname(config_path)
         config = parse_config(raw, tilde(config_path), base)
         limit = args.limit if args.limit is not None else config["limit"]
-        key = cache_key(mode, [config_path], limit)
-        cached = cache_read(mode, key)
+        key = cache_key([config_path], limit)
+        cached = cache_read(key)
         if cached is not None:
             return cached
         payload = build_live(config, limit)
 
-    cache_write(mode, key, payload, time.time())
+    cache_write(key, payload, time.time())
     return payload
 
 
@@ -865,9 +915,9 @@ def _names(payload, key):
 def self_check():
     failures = []
 
-    def check(label, condition, detail=""):
+    def check(label, condition, detail=None):
         if not condition:
-            failures.append("%s%s" % (label, (": " + str(detail)) if detail != "" else ""))
+            failures.append("%s%s" % (label, (": " + str(detail)) if detail is not None else ""))
 
     tmp = tempfile.mkdtemp(prefix="f6-recent-selfcheck-")
     state = os.path.join(tmp, "state")
@@ -915,9 +965,9 @@ def self_check():
         }
         _write(config_path, json.dumps(config, indent=2))
 
-        def run_cli(argv, home=None):
+        def run_cli(argv, home=None, state_path=None):
             env = os.environ.copy()
-            env["NEXUSLINK_STATE_DIR"] = state
+            env["NEXUSLINK_STATE_DIR"] = state_path or state
             env.pop("NEXUSLINK_NO_CACHE", None)
             if home:
                 env["HOME"] = home
@@ -1017,10 +1067,19 @@ def self_check():
 
         # --- the shipped fixture file ---
         shipped = os.path.join(os.path.dirname(os.path.dirname(script)), "fixtures", "recent.json")
-        fixture_run = run_cli(["--fixture", shipped, "--json"])
+        # A state dir of its own, so this also proves a fixture run writes none.
+        fixture_state = os.path.join(tmp, "fixture-state")
+        fixture_run = run_cli(["--fixture", shipped, "--json"], state_path=fixture_state)
         shipped_payload = as_json(fixture_run)
         check("shipped fixture exit 0", fixture_run.returncode == 0, fixture_run.stderr or fixture_run.stdout[:200])
         check("shipped fixture ok", isinstance(shipped_payload, dict) and shipped_payload.get("ok") is True, shipped_payload and shipped_payload.get("reason"))
+        check("shipped fixture cached false", isinstance(shipped_payload, dict) and shipped_payload.get("cached") is False, shipped_payload and shipped_payload.get("cached"))
+        check("shipped fixture age 0", isinstance(shipped_payload, dict) and shipped_payload.get("age_s") == 0, shipped_payload and shipped_payload.get("age_s"))
+        check("shipped fixture writes no state", not os.path.exists(fixture_state), os.path.exists(fixture_state))
+        again = run_cli(["--fixture", shipped, "--json"], state_path=fixture_state)
+        again_payload = as_json(again)
+        check("shipped fixture still cached false", isinstance(again_payload, dict) and again_payload.get("cached") is False, again_payload and again_payload.get("cached"))
+        check("shipped fixture still writes no state", not os.path.exists(fixture_state), os.path.exists(fixture_state))
         if isinstance(shipped_payload, dict) and shipped_payload.get("ok"):
             check("shipped four lists", all(len(shipped_payload.get(k) or []) > 0 for k in LISTS), {k: len(shipped_payload.get(k) or []) for k in LISTS})
             check(
@@ -1092,6 +1151,40 @@ def self_check():
             and "hud_paths.json" in (default_payload.get("reason") or ""),
             default_payload,
         )
+
+        # --- fixture purity: same bytes whatever the host HOME is ---
+        home_a = os.path.join(tmp, "home-a")
+        home_b = os.path.join(tmp, "home-b")
+        os.makedirs(home_a, exist_ok=True)
+        os.makedirs(home_b, exist_ok=True)
+        run_a = run_cli(["--fixture", shipped, "--json"], home=home_a, state_path=os.path.join(tmp, "state-a"))
+        run_b = run_cli(["--fixture", shipped, "--json"], home=home_b, state_path=os.path.join(tmp, "state-b"))
+        payload_a = as_json(run_a)
+        payload_b = as_json(run_b)
+        check("two homes exit 0", run_a.returncode == 0 and run_b.returncode == 0, [run_a.returncode, run_b.returncode, run_a.stderr[:200], run_b.stderr[:200]])
+        stable_a = dict(payload_a) if isinstance(payload_a, dict) else {}
+        stable_b = dict(payload_b) if isinstance(payload_b, dict) else {}
+        stable_a.pop("generated_at", None)
+        stable_b.pop("generated_at", None)
+        check(
+            "two homes identical",
+            isinstance(payload_a, dict) and isinstance(payload_b, dict) and stable_a == stable_b,
+            "output depends on HOME (%s vs %s)" % (home_a, home_b),
+        )
+        check("no state under either home", not os.path.exists(os.path.join(home_a, ".local")) and not os.path.exists(os.path.join(home_b, ".local")))
+
+        # --- a fixture that is not an object is bad content, not a bug ---
+        for literal in ("null", "5", "true", "1.5", "[]"):
+            scalar = os.path.join(tmp, "scalar-%s.json" % literal.replace(".", "-"))
+            _write(scalar, literal)
+            proc = run_cli(["--fixture", scalar, "--json"])
+            scalar_payload = as_json(proc)
+            check("fixture %s exits 0" % literal, proc.returncode == 0, proc.returncode)
+            check(
+                "fixture %s is malformed" % literal,
+                isinstance(scalar_payload, dict) and scalar_payload.get("ok") is False and scalar_payload.get("kind") == "malformed",
+                scalar_payload,
+            )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

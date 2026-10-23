@@ -1,5 +1,6 @@
 {
-  "note": "Illustrative snapshot for nexuslink.hud/v5/feeds/recent.py. Hand-written, not a copy of a live listing: names are plausible Mac files, times are anchored to the C1 data snapshot (2026-10-22T21:07:02Z). The fixture records the tree as it was, so reading it needs no host filesystem.",
+  "note": "Illustrative snapshot for nexuslink.hud/v5/feeds/recent.py. Hand-written, not a copy of a live listing: names are plausible Mac files, times are anchored to the C1 data snapshot (2026-10-22T21:07:02Z). The fixture records the tree as it was, so reading it needs no host filesystem. home is the ~ this snapshot stands in for, so the paths it prints are the same on any machine.",
+  "home": "/Users/marcel",
   "snapshot_at": "2026-10-22T21:07:02Z",
   "config": {
     "limit": 8,

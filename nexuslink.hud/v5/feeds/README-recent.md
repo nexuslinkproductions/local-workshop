@@ -3,7 +3,8 @@
 One JSON object for the deck's Recent and Pinned widget: the newest downloads,
 screenshots and recent files, the pinned folders, and a census by file type.
 Python 3, standard library only, no network, no daemon, no watcher. The HUD
-polls the script; a 10 s cache keeps two ticks from walking the tree twice.
+polls the script; a 10 s cache keeps two live ticks from walking the tree twice.
+A fixture read is never cached and keeps no host state.
 
     nexuslink.hud/v5/feeds/recent.py --json
     nexuslink.hud/v5/feeds/recent.py --config ~/NEXUS_AI_CENTER/my_paths.json --limit 4 --json
@@ -67,7 +68,10 @@ with no usable root at all is reported as `ok: false`, not a crash.
   first; equal mtimes sort by lowercased name, then name, so a tie is stable.
 * `size` is bytes, or `null` when a fixture did not measure it.
 * `path` is absolute — a path is the content here, the widget has to open it.
-  `roots[].path` is display-only and keeps the `~` form.
+  In a fixture file it is absolute under the `home` that fixture declares (`~`
+  expands to it), or the `~` form itself when the fixture declares no home; it
+  never embeds the running user's home. `roots[].path` is display-only and
+  keeps the `~` form.
 * A file appears at most once across the three lists. The first list that
   claims it wins (downloads, then screenshots, then recent files), and later
   lists skip past it to keep their count, so a screenshot that also lives in
@@ -114,34 +118,38 @@ are `other` because nothing in this feed can know what they are.
 
 ## Cache
 
-`~/.local/state/nexuslink/recent.json` for live reads,
-`~/.local/state/nexuslink/recent-fixture.json` for fixture reads (a fixture
-must never poison a live tick). One file, written atomically: a temp file in
-the same directory then `os.replace`, so a reader never sees half a payload.
+`~/.local/state/nexuslink/recent.json`, written and read by live reads only.
+A `--fixture` run, file or directory, never opens it and keeps no state
+directory and no digest of the fixture, so a fixture run can neither read a
+live payload nor leave one behind. The file is written atomically: a temp file
+in the same directory then `os.replace`, so a reader never sees half a payload.
 
 * A hit under 10.0 s re-serves the stored payload with `"cached": true` and
   `"age_s"` since it was built. `generated_at` stays the original build time —
   it is when the data was true, not when it was printed.
-* The key covers the mode, the limit, the schema string and the config (or
-  fixture) path plus its mtime, size and inode. Edit the config and the next
-  call rebuilds.
+* The key covers the limit, the schema string and the config path plus its
+  mtime, size and inode. Edit the config and the next call rebuilds.
 * Only `ok: true` payloads are cached; an honest absence is cheap to re-derive
   and should not stick for 10 s.
 * A cache directory that cannot be written makes the feed slower, not broken:
   the write is skipped and the fresh payload is still printed.
-* Two environment hooks exist for tests: `NEXUSLINK_STATE_DIR` moves the cache
-  directory, `NEXUSLINK_NO_CACHE=1` turns the cache off. Nothing else reads
-  the environment.
+* Environment hooks: `NEXUSLINK_STATE_DIR` moves the cache directory,
+  `NEXUSLINK_NO_CACHE=1` turns the cache off. `HOME` is read too: to expand `~`
+  in a live config and in the paths named on the command line, and to shorten a
+  live path to its `~` display form. A fixture file's `~` is its own `home`,
+  never `HOME`. Nothing else reads the environment.
 
 ## Fixtures
 
 `nexuslink.hud/v5/fixtures/recent.json` is the shipped snapshot: an
 illustrative Mac tree (hand-written, not a copy of a live listing), anchored to
 the C1 snapshot time so the ordering is checkable tomorrow. It carries the
-config it was taken with and the tree the roots held:
+config it was taken with, the home it stands in for, and the tree the roots
+held:
 
 ```json
 {
+  "home": "/Users/marcel",
   "config": { "limit": 8, "downloads": ["~/Downloads"], "pinned": [ ... ] },
   "roots": {
     "~/Downloads": {
@@ -153,25 +161,37 @@ config it was taken with and the tree the roots held:
 }
 ```
 
-* A `roots` key is the `~` display form of the configured root; entries are
-  the files it held. A root absent from `roots`, or `exists: false`, gives the
-  same `reason` on the `roots[]` row as a live missing directory.
+* `home` is the `~` the fixture stands in for, deliberately not the running
+  user's. Every `~` in its config expands to that value, so `path` stays
+  absolute and the output is byte-identical on any machine. A fixture without
+  `home` keeps the `~` form instead (also machine-independent). Either way the
+  host `HOME` is never consulted. `home` itself must be an absolute path; any
+  other value is `ok: false`, `kind: malformed`.
+* A relative root in a fixture file is kept as written: there is no host
+  directory to resolve it against. `--fixture DIR` still resolves relatives
+  inside `DIR`.
+* A `roots` key is the display form of the configured root (the `~` form for a
+  home path); entries are the files it held. A root absent from `roots`, or
+  `exists: false`, gives the same `reason` on the `roots[]` row as a live
+  missing directory.
 * `mtime` is epoch seconds; `mtime_iso` is the same value for humans and is
   the fallback when `mtime` is absent.
 * `"link": "<target>"` marks a symlink, `"broken": true` marks one whose
   target was gone. Containment against the configured roots is computed on the
-  strings, so fixture mode never touches the host filesystem — not even to ask
-  whether a path exists.
-* `--fixture DIR` scans a directory tree instead: `DIR/hud_paths.json` is the
-  config and relative roots resolve inside `DIR`. Same code path as live, no
-  host state. Useful for a bigger, real-shaped check on Linux.
+  strings, so a fixture file never asks the host filesystem whether a path
+  exists, and never reads a cache, a digest or a directory listing.
+* `--fixture DIR` is the one fixture mode that walks the host: `DIR/hud_paths.json`
+  is the config, relative roots resolve inside `DIR`, `~` resolves against the
+  running user's home, and symlinks are resolved on the host. It runs the live
+  scan, so its output has the shape of the machine it ran on rather than of a
+  fixed fixture. Useful for a bigger, real-shaped check on Linux.
 
 ## Exit codes
 
 | Code | When |
 |---|---|
 | `0` | data, and honest absence: `{"ok": false, "reason": "...", "kind": "missing"|"malformed"}` |
-| `2` | caller error (`--limit` out of range, unknown flag, a `--config`/`--fixture` file named on the command line that does not exist or is not a file) and unexpected bugs (`"kind": "programming"`) |
+| `2` | caller error (`--limit` out of range, unknown flag, a `--config` or `--fixture` path named on the command line that does not exist, a `--config` path that is not a file, a `--fixture` directory with no `hud_paths.json`) and unexpected bugs (`"kind": "programming"`) |
 
 Missing or malformed *content* never raises and never takes the process down:
 a HUD tick sees a JSON object with a reason, not a traceback.
@@ -186,13 +206,18 @@ tiebreak, hidden-file skipping, the `depth: 2` walk, cross-list dedupe (a
 symlink to an already-claimed file), every one of the seven type buckets and
 their exact census, the broken-symlink count, the outside-root refusal, the
 missing-root row with `ok: true`, all three pin states, the fixture-directory
-and shipped-fixture paths, and the cache: a second call with the tree deleted
-must serve the same lists from `recent.json`, and a call with the cache deleted
-must rebuild and see the tree gone. Error paths run through the real CLI
-(named missing config → 2, malformed config → 0 with `ok: false`, empty config
-→ 0, missing fixture → 2, bad flag → 2, absent default config → 0). It never
-reads `~/Downloads` or any real root, and it never writes to `~/.config`.
-Exit 0 when every check passes, 1 with the failed labels otherwise.
+and shipped-fixture paths, and the cache: a second live call with the tree
+deleted must serve the same lists from `recent.json`, and a call with the cache
+deleted must rebuild and see the tree gone. Fixture purity has its own checks:
+the shipped fixture run twice in a row stays `cached: false`, `age_s: 0` and
+creates no state directory; the same fixture under two different `HOME` values
+gives identical output apart from `generated_at`; and a fixture holding `null`,
+`5`, `true`, `1.5` or `[]` answers `ok: false`, `kind: malformed`, exit 0.
+Error paths run through the real CLI (named missing config → 2, malformed
+config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
+2, absent default config → 0). It never reads `~/Downloads` or any real root,
+and it never writes to `~/.config`. Exit 0 when every check passes, 1 with the
+failed labels otherwise.
 
 Linux owns the live-data check; this file proves the fixture and temp-tree
 behaviour on a Mac that must not read Marcel's real folders.
