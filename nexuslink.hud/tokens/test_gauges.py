@@ -32,4 +32,14 @@ assert d["error"] == "sign-in expired" and d["lastGood"]["windows"][0]["value"] 
 g2 = gauges.Gauge("s", "S", "src", 300, lambda: ([], now - 900), True, [])
 g2.poll(now); g2.write(now)
 assert json.loads((gauges.RUN / "s.json").read_text())["state"] == "stale"
+
+# units: contract percent (66.0) becomes the ledger fraction (0.66) the HUD expects
+import types, ledger
+(gauges.RUN / "claude.json").write_text(json.dumps({
+    "state": "fresh", "fetchedAt": "2026-10-23T11:00:00+00:00", "ttl": 300, "error": None,
+    "windows": [{"label": "Session (5-hour)", "value": 66.0, "unit": "%", "resetsAt": None}]}))
+led = types.SimpleNamespace(meta={})
+ledger.merge_gauge_contract(led)
+assert abs(led.meta["claude"]["limits"][0]["percent"] - 0.66) < 1e-9, led.meta
+assert led.meta["claude"]["gauge"]["ttl"] == 300
 print("test_gauges: ok")

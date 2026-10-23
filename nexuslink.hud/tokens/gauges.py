@@ -98,7 +98,8 @@ def fetch_claude():
     probe = mod.probe_limits(tok)
     if not probe.get("ok"):
         raise GaugeError(probe.get("helpText") or "usage endpoint failed")
-    wins = [win(l["label"], round(float(l["percent"]), 2), resets=l.get("resetsAt") or None)
+    # probe_limits returns a 0..1 fraction; the contract stores percent (limit 100)
+    wins = [win(l["label"], round(float(l["percent"]) * 100, 2), resets=l.get("resetsAt") or None)
             for l in probe["limits"]]
     return wins, None
 

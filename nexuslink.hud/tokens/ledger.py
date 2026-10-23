@@ -211,25 +211,32 @@ def collect_omarchy(led):
     merge_gauge_contract(led)
 
 
+GAUGE_PROVIDERS = (("claude", "claude"), ("opencode-go", "opencode-go"))
+
+
 def merge_gauge_contract(led):
-    """Claude limits from the gauges collector (gauges.py) when it has an answer.
+    """Limits from the gauges collector (gauges.py), per provider, when it has an answer.
 
     Omarchy's record keeps the last good numbers forever once the sign-in lapses.
-    An error from the collector replaces them with nothing and the reason, so the
-    HUD never shows an old percent as current.
+    An error from the collector replaces them with nothing; meta.gauge carries the
+    state, age (fetchedAt + ttl) and reason, so the HUD can show error or stale.
+    Contract values are percent (limit 100); ledger limits are fractions 0..1.
     """
-    try:
-        g = json.loads((Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-                        / "gauges" / "claude.json").read_text())
-    except (OSError, ValueError):
-        return
-    m = led.meta.setdefault("claude", {})
-    m["gauge"] = {"state": g.get("state"), "fetchedAt": g.get("fetchedAt"), "error": g.get("error")}
-    if g.get("state") == "error":
-        m["limits"], m["status"] = [], g.get("error")
-    else:
-        m["limits"] = [{"label": w["label"], "percent": w["value"], "resetsAt": w.get("resetsAt")}
-                       for w in g.get("windows") or []]
+    base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "gauges"
+    for name, pid in GAUGE_PROVIDERS:
+        try:
+            g = json.loads((base / f"{name}.json").read_text())
+        except (OSError, ValueError):
+            continue
+        m = led.meta.setdefault(pid, {})
+        m["gauge"] = {"state": g.get("state"), "fetchedAt": g.get("fetchedAt"),
+                      "ttl": g.get("ttl"), "error": g.get("error")}
+        if g.get("state") == "error":
+            m["limits"] = []
+        else:
+            m["limits"] = [{"label": w["label"], "percent": w["value"] / 100, "resetsAt": w.get("resetsAt")}
+                           for w in g.get("windows") or []
+                           if w.get("unit") == "%" and w.get("value") is not None]
 
 
 def _ro_db(path):
