@@ -1,0 +1,14 @@
+{
+  "_fixture": true,
+  "_label": "FIXTURE - s9/s10 mockup values for the render only. Not live data. The track, the play state and the level 0.6 come from s9/src/widgets.json and the s10 now_playing box (Nightcall, pause glyph, 17 of 28 dots lit). The artist is NOT in the mockup: Kavinsky is a placeholder so the artist row is exercised. The live source is the first active MPRIS player read by feeds/NowPlayingFeed.qml.",
+  "status": "fresh",
+  "reason": "",
+  "title": "Nightcall",
+  "artist": "Kavinsky",
+  "identity": "fixture",
+  "playing": true,
+  "canPrevious": true,
+  "canNext": true,
+  "canToggle": true,
+  "level": 0.6
+}
