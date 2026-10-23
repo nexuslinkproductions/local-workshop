@@ -20,8 +20,11 @@ Contract version: 1, 2026-10-23.
 - Written only by `game_mode.py --status` and `game_mode.py --toggle`.
   `--dry-run` and `--no-write` suppress it. Nothing else writes it, ever.
 - A `--fixture` run writes it only when the caller names `--state-dir` or
-  `--flag-file`. A fixture snapshot never picks up the live flag, and `since`
-  is then the moment of that run, not a value read off the host.
+  `--flag-file`, and it reads the flag only from that same named path. It never
+  reads the live flag, so a fixture snapshot cannot inherit a host value. When
+  the named file already records a gaming run, its `since` is kept: the run
+  started then, and a fixture tick is the next tick of that same run. Otherwise
+  `since` is the moment of that run.
 
 ## The fields
 
@@ -165,6 +168,11 @@ The cache is keyed on both targets, not just on time: `game_mode_net.json` store
 router or another public target inside the 10 s window is a miss. A round aimed
 at a dead target therefore reports that target's null with its own reason
 instead of inheriting the previous target's numbers.
+
+`--dry-run` runs no probe at all: the gateway is not discovered, neither target
+is pinged, the cache is neither read nor written, and both entries come back
+`null` with reason `dry-run`. `--no-net` does the same for `--status` with
+reason `network probe skipped (--no-net)`.
 
 ## Fixture schema
 

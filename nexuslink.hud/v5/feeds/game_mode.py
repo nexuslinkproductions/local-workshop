@@ -33,9 +33,10 @@ does not exist.
 
 Writes: ~/.local/state/nexuslink/game_mode.json (the proposed pause-heavy flag,
 atomic) and ~/.local/state/nexuslink/game_mode_net.json (net cache, atomic, 10 s
-floor, keyed on both ping targets). --state-dir moves both; --dry-run and
---no-write suppress writes. A --fixture run writes neither and reads no host
-state unless the caller names --state-dir, --flag-file or --cache-file;
+floor, keyed on both ping targets). --state-dir moves both; --no-write suppresses
+writes and --dry-run suppresses writes and the network probe (both targets come
+back null with reason "dry-run"). A --fixture run writes neither and reads no
+host state unless the caller names --state-dir, --flag-file or --cache-file;
 --toggle --fixture keeps its documented ptt.state write. Nothing else is
 written. Contract: GAME_MODE_CONTRACT.md next to this file.
 
@@ -102,6 +103,22 @@ def display_path(path):
         return str(path)
 
 
+def tilde_text(message):
+    """A message that may quote a path: the home prefix becomes ~.
+
+    Same job as W8's tilde_text in _common.py; F3 keeps its own copy so this
+    file stays standalone (W8 is not in v5/main-deck yet). The home prefix only
+    matches a whole path component, so a sibling like /Users/marcelspatz plus a
+    suffix is left alone. Every reason or warning built from an OSError goes
+    through it, so an error never prints $HOME absolute.
+    """
+    text = str(message or "")
+    for root in (str(Path.home()), os.path.realpath(str(Path.home()))):
+        if root and root != "/":
+            text = re.sub(re.escape(root) + r"(?=$|[/\\'\"\s:,)])", "~", text)
+    return text
+
+
 def read_text(path):
     try:
         with open(str(path), "r", encoding="utf-8", errors="replace") as f:
@@ -109,7 +126,7 @@ def read_text(path):
     except FileNotFoundError:
         return None, "missing"
     except OSError as e:
-        return None, str(e)
+        return None, tilde_text(e)
 
 
 def read_json(path):
@@ -129,7 +146,7 @@ def atomic_write_json(path, obj):
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
     except OSError as e:
-        return False, str(e)
+        return False, tilde_text(e)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2)
@@ -144,7 +161,7 @@ def atomic_write_json(path, obj):
             os.unlink(tmp)
         except OSError:
             pass
-        return False, str(e)
+        return False, tilde_text(e)
 
 
 def run_cmd(cmd, timeout):
@@ -153,11 +170,11 @@ def run_cmd(cmd, timeout):
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout)
     except FileNotFoundError:
-        return None, "", "command not found: %s" % cmd[0]
+        return None, "", "command not found: %s" % tilde_text(cmd[0])
     except subprocess.TimeoutExpired:
-        return None, "", "timed out after %ss: %s" % (timeout, " ".join(cmd))
+        return None, "", "timed out after %ss: %s" % (timeout, tilde_text(" ".join(cmd)))
     except OSError as e:
-        return None, "", "could not run %s: %s" % (cmd[0], e)
+        return None, "", tilde_text("could not run %s: %s" % (cmd[0], e))
     out = proc.stdout.decode("utf-8", "replace") if isinstance(proc.stdout, bytes) else proc.stdout
     err = proc.stderr.decode("utf-8", "replace") if isinstance(proc.stderr, bytes) else proc.stderr
     return proc.returncode, out, err
@@ -268,7 +285,8 @@ def parse_args(argv):
     p.add_argument("--cache-ttl", type=float, default=CACHE_TTL_FLOOR_S,
                    help="net cache seconds; clamped to the 10 s floor")
     p.add_argument("--no-write", action="store_true", help="do not write the flag or the cache")
-    p.add_argument("--dry-run", action="store_true", help="report intent, write and run nothing")
+    p.add_argument("--dry-run", action="store_true",
+                   help="report intent: no network probe, no writes")
     p.add_argument("--no-net", action="store_true", help="skip the network probe in --status")
     p.add_argument("--live-net", action="store_true",
                    help="with --fixture, still probe the real network (Mac demo)")
@@ -286,8 +304,9 @@ def load_fixture(path):
     """Returns (fx dict | None, error_kind | None, error message | None).
 
     error_kind: 'missing' (caller named a path that is not there -> exit 2)
-                'malformed' (tolerated -> ok:false, exit 0)
-                'empty' (directory without a fixture -> ok:false, exit 0)
+                'malformed' (unreadable or not JSON -> ok:false, exit 0)
+                'empty' (directory without a fixture, or a zero-byte file ->
+                         ok:false, exit 0, reported as kind 'missing')
     """
     if path is None:
         return None, None, None
@@ -299,11 +318,16 @@ def load_fixture(path):
         if not main.is_file():
             return None, "empty", "fixture directory has no %s: %s" % (
                 FIXTURE_MAIN, display_path(path))
+        target = main
         text, err = read_text(main)
     else:
+        target = path
         text, err = read_text(path)
     if text is None:
         return None, "malformed", "fixture unreadable: %s" % err
+    if not text.strip():
+        # The contract counts an absent and an empty fixture the same way.
+        return None, "empty", "fixture is empty: %s" % display_path(target)
     try:
         obj = json.loads(text)
     except ValueError as e:
@@ -460,9 +484,9 @@ def net_live(cfg, gateway_host=None, gateway_reason=None):
                                     stderr=subprocess.PIPE)
             started.append(("proc", proc, None))
         except FileNotFoundError:
-            started.append(("err", None, "ping not found: %s" % cmd[0]))
+            started.append(("err", None, "ping not found: %s" % tilde_text(cmd[0])))
         except OSError as e:
-            started.append(("err", None, "could not run ping: %s" % e))
+            started.append(("err", None, tilde_text("could not run ping: %s" % e)))
 
     entries = []
     for target, (kind, proc, err) in zip(targets, started):
@@ -584,9 +608,17 @@ def probe_net(cfg, fx=None):
         gateway_host, public_host = fixture_net_hosts(cfg, fx or {})
     else:
         gateway_host = cfg.gateway_host
-        if not gateway_host:
-            gateway_host, gateway_reason = discover_gateway()
         public_host = cfg.public_host
+
+    if cfg.dry_run:
+        # --dry-run runs nothing: no gateway discovery, no ping, no cache read,
+        # no cache write. Both targets are null with a reason, never a number.
+        return {"gateway": null_entry(gateway_host, "dry-run"),
+                "public": null_entry(public_host, "dry-run"),
+                "measured_at": None, "source": source, "cached": False}
+
+    if source == "live" and not gateway_host:
+        gateway_host, gateway_reason = discover_gateway()
 
     shared_cache = cache_persist_allowed(cfg)
     if shared_cache:
@@ -887,7 +919,7 @@ def apply_flag(cfg, gaming, now_iso):
         return obj, "pause-heavy flag not written (--no-write)"
     ok, err = atomic_write_json(cfg.flag_file, obj)
     if not ok:
-        return obj, "pause-heavy flag write failed: %s" % err
+        return obj, tilde_text("pause-heavy flag write failed: %s" % err)
     return obj, None
 
 
@@ -1001,7 +1033,7 @@ def toggle_state_file(cfg, mode):
         return False, "not written (--dry-run)", target
     ok, err = atomic_write_text(target, token + "\n")
     if not ok:
-        return False, "ptt state write failed: %s" % err, target
+        return False, tilde_text("ptt state write failed: %s" % err), target
     return True, None, target
 
 
@@ -1011,7 +1043,7 @@ def atomic_write_text(path, text):
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".%s." % path.name, dir=str(path.parent))
     except OSError as e:
-        return False, str(e)
+        return False, tilde_text(e)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
@@ -1025,7 +1057,7 @@ def atomic_write_text(path, text):
             os.unlink(tmp)
         except OSError:
             pass
-        return False, str(e)
+        return False, tilde_text(e)
 
 
 def flip(mode):
@@ -1081,8 +1113,9 @@ def build_toggle(cfg):
                 result["output"] = short(captured.get("output"), 200)
             if not written and err:
                 if "dry-run" not in err:
-                    return fail_payload("simulated toggle could not write ptt state: %s" % err,
-                                        kind=ERR_FAILED, source=source), 0
+                    return fail_payload(
+                        tilde_text("simulated toggle could not write ptt state: %s" % err),
+                        kind=ERR_FAILED, source=source), 0
                 result["ptt_state_write"] = err
     elif cfg.host == "linux":
         binary = cfg.toggle_cmd or shutil.which("ptt-toggle")
@@ -1092,7 +1125,8 @@ def build_toggle(cfg):
                 kind=ERR_UNAVAILABLE, source=source, action="toggle", before=before), 0
         rc, out, err = run_cmd([binary], TOGGLE_TIMEOUT_S)
         if rc is None:
-            return fail_payload("ptt-toggle could not run: %s" % err, kind=ERR_UNAVAILABLE,
+            return fail_payload(tilde_text("ptt-toggle could not run: %s" % err),
+                                kind=ERR_UNAVAILABLE,
                                 source=source, action="toggle", before=before), 0
         after_state, after_info = read_ptt(cfg, None)
         after = resolve_mode(after_state, game.get("running"))
@@ -1672,6 +1706,66 @@ def run_self_check(script):
     unknown_dry = unknown_dry or {}
     checks.eq("unknown mode before", unknown_dry.get("before"), "unknown")
     checks.eq("unknown mode after", unknown_dry.get("after"), None)
+
+    # 23. --dry-run runs no probe and writes nothing
+    dry_cache = tmp / "dry-cache.json"
+    if log.exists():
+        log.unlink()
+    rc, dry_status, out_ds, err_ds = ok_json(
+        ["--status", "--json", "--dry-run", "--ping-cmd", str(stub),
+         "--gateway-host", "192.168.0.1", "--cache-file", str(dry_cache),
+         "--state-dir", str(state), "--ptt-state", str(ptt)], env=ping_env)
+    checks.eq("dry-run status exit", rc, 0)
+    checks.eq("dry-run net gateway rtt",
+              (dry_status or {}).get("net", {}).get("gateway", {}).get("rtt_ms"), None)
+    checks.eq("dry-run net gateway reason",
+              (dry_status or {}).get("net", {}).get("gateway", {}).get("reason"), "dry-run")
+    checks.eq("dry-run net public reason",
+              (dry_status or {}).get("net", {}).get("public", {}).get("reason"), "dry-run")
+    checks.eq("dry-run net cached", (dry_status or {}).get("net", {}).get("cached"), False)
+    checks.eq("dry-run ran no ping", len(log.read_text().splitlines()) if log.exists() else 0, 0)
+    checks.eq("dry-run wrote no cache", dry_cache.exists(), False)
+    rc, dry_probe, out_dpr, err_dpr = ok_json(
+        ["--probe", "--json", "--dry-run", "--ping-cmd", str(stub),
+         "--gateway-host", "192.168.0.1", "--cache-file", str(dry_cache)], env=ping_env)
+    checks.eq("dry-run probe exit", rc, 0)
+    checks.eq("dry-run probe rtt",
+              (dry_probe or {}).get("net", {}).get("gateway", {}).get("rtt_ms"), None)
+    checks.eq("dry-run probe ran no ping", len(log.read_text().splitlines()) if log.exists() else 0, 0)
+
+    # 24. an unreadable fixture never prints an absolute home path
+    unreadable = _write(tmp / "unreadable.json", json.dumps(base_fixture), 0o000)
+    rc, unread, out_un, err_un = ok_json(["--status", "--fixture", str(unreadable)] + common)
+    checks.eq("unreadable fixture exit", rc, 0)
+    checks.eq("unreadable fixture ok", (unread or {}).get("ok"), False)
+    checks.eq("unreadable fixture kind", (unread or {}).get("kind"), "malformed")
+    checks.true("unreadable fixture reason",
+                "fixture unreadable" in str((unread or {}).get("reason")), str(unread))
+    checks.eq("unreadable fixture leaks no /Users", out_un.count("/Users"), 0)
+    checks.eq("unreadable fixture leaks no home path", out_un.count(home), 0)
+
+    # 25. a zero-byte fixture is kind missing, exit 0 (contract, exit codes)
+    zero_file = _write(tmp / "zero-bytes.json", "")
+    rc, zero, out_z, err_z = ok_json(["--status", "--fixture", str(zero_file)] + common)
+    checks.eq("zero-byte fixture exit", rc, 0)
+    checks.eq("zero-byte fixture ok", (zero or {}).get("ok"), False)
+    checks.eq("zero-byte fixture kind", (zero or {}).get("kind"), "missing")
+    checks.true("zero-byte fixture reason", "empty" in str((zero or {}).get("reason")), str(zero))
+
+    # 26. a named flag file that already records a gaming run keeps its since
+    prior_flag = _write_json(tmp / "prior-flag.json", {
+        "gaming": True, "pause_heavy": True, "since": "2020-01-01T00:00:00Z",
+        "updated_at": "2020-01-01T00:00:00Z"})
+    rc, prior, out_pri, err_pri = ok_json(
+        ["--status", "--fixture", str(game_fx), "--flag-file", str(prior_flag),
+         "--cache-file", str(tmp / "prior-cache.json"), "--ptt-state", str(ptt)])
+    checks.eq("named flag exit", rc, 0)
+    checks.eq("named flag keeps its since",
+              (prior or {}).get("pause_heavy", {}).get("since"), "2020-01-01T00:00:00Z")
+    prior_obj = json.loads(prior_flag.read_text(encoding="utf-8"))
+    checks.eq("named flag file keeps its since", prior_obj.get("since"), "2020-01-01T00:00:00Z")
+    checks.true("named flag updated_at moved",
+                prior_obj.get("updated_at") != "2020-01-01T00:00:00Z", str(prior_obj))
 
     print("\nfixtures and state under %s" % tmp)
     code = checks.summary()
