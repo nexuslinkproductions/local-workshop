@@ -40,11 +40,13 @@ Item {
     // ---- s2 framing -------------------------------------------------------
     // Swarm's own scale rule is u_pxPerUnit = 0.30 * size and its tube radius is
     // a fixed 0.05640288 unit, so the strand half width in px is 0.05640288 *
-    // 0.30 * size. The s2 trace's strand half width is 12.81 px, which puts the
-    // renderer at 227.05 px per unit, i.e. a 757 px Swarm inside this 540 px
+    // 0.30 * size. The s2 trace's strand half width is 13.00 px, which puts the
+    // renderer at 230.48 px per unit, i.e. a 768 px Swarm inside this 540 px
     // box. The overhang is empty: the shader writes vec4(0) outside the tube, so
     // nothing is painted outside the knot and nothing needs clipping.
-    readonly property real pxPerUnit: 227.05
+    // KEEP IN SYNC: this number is what `tools/knot-iou.py trace` prints for the
+    // shipped asset. A 1.5 percent mismatch costs ~0.09 band_iou (measured).
+    readonly property real pxPerUnit: 230.48
     readonly property real swarmSize: size * pxPerUnit / Tokens.knotDiameter / 0.30
 
     implicitWidth: size

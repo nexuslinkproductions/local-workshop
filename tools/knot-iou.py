@@ -234,19 +234,22 @@ def opening(mask, size):
     return np.array(im) > 127
 
 
-def trace_mask(lum, thr=0.10, close=9, open_px=5, r_max=276.0, min_area=800):
+def trace_mask(lum, thr=0.10, close=9, open_px=5, r_max=276.0, min_area=2000):
     """The knot's strand band from the s2 crop, without s2's outer dot ring.
 
     s2's knot carries a faint decorative ring of dots outside the lobes (class
-    `ring` in its own cloud; its lower-left arc is bright enough to pass the
-    meter's 0.10 threshold, and closing merges parts of it into the knot). This
-    card says the Knot has no ring, so the trace runs
+    `ring` in its own cloud; parts of it are bright enough to pass the meter's
+    0.10 threshold, and closing merges some of it into the knot). This card says
+    the Knot has no ring, so the trace runs
 
         threshold -> closing (dots to strands) -> opening (drop the thin ring
-        arcs the closing attached, and any specks) -> r_max cut -> blob filter
+        arcs the closing attached) -> r_max cut -> component floor
 
-    The strands are about 24 px wide, the ring arcs under 7 px, so an opening of
-    `open_px` removes the ring and keeps the knot.
+    The strands are about 26 px wide, the ring arcs under 8 px, so an opening of
+    `open_px` removes most of the ring and keeps the knot. `min_area` then drops
+    what is left detached: one 1,043 px arc on the left survives the opening, and
+    the knot itself is a single 51k px blob, so a 2,000 px floor removes the arc
+    without touching the mark.
     """
     size = lum.shape[0]
     base = lum > thr
@@ -300,7 +303,7 @@ def trace_stats(mask):
 
 
 def bake_sdf(lum, tube_px, offset_px, out_path=None, size=SDF_SIZE,
-             thr=0.10, close=9, open_px=5, r_max=276.0, min_area=800):
+             thr=0.10, close=9, open_px=5, r_max=276.0, min_area=2000):
     """Bake the centre-line distance texture Swarm marches.
 
     R = (tube_px - offset_px - s_in) / px_per_unit, clipped to 0..SDF_RANGE
