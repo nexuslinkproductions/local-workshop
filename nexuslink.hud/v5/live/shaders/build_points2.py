@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Build the v2 knot point texture (K3).
+"""Build the v2 knot point texture (K3), one of three variants.
 
-Source: knot3d.json (n, p, nr, s, q, c) built by build_knot.py. The v1 texture
-packed 4 texels per point from that file. This build keeps the same N and the
-same meaning for texels 0..3 of each point, adds a 5th texel, and replaces the
-ribbon (class 0) lattice with a jittered blue-noise sampling of the same tube
-surface (the source tube was a staggered 11-around helix lattice, which reads
-as rows across the ribbon).
+  --variant noise  best-candidate blue-noise resample of the tube surface
+                   -> knot-points2.png / knot-points2.meta.json  (the shipped one)
+  --variant keep   the ORIGINAL positions and normals, only u and occl corrected
+                   -> knot-points2-keep.png / knot-points2-keep.meta.json
+  --variant jit    original positions moved on the tube surface by 0.25..0.35 of
+                   the local on-surface nearest neighbour spacing, random
+                   tangent direction, deterministic -> knot-points2-jit.png
 
 Layout: 5 texels per point at linear texel index 5*i+k, row width WIDTH=2048.
   texel0 = (x_hi, x_lo, y_hi)
   texel1 = (y_lo, z_hi, z_lo)      x,y,z 16 bit fixed point over [-512, 512)
   texel2 = (nx, ny, nz) * 127.5 + 127.5
-  texel3 = (s * 255, q * 255, class * 255)
+  texel3 = (s * 255, q * 255, class * 255)      s = u
   texel4 = (u * 255, occl * 255, 0)     u true arc length 0..1 per class,
                                         occl under-strand weight 0..1 (front pose)
 RGB, alpha always 255. Nearest sampling, no mipmap.
 """
+import argparse
 import json
 import os
 
@@ -29,12 +31,18 @@ SRC = os.path.join(
     os.path.expanduser("~"),
     "NEXUS_AI_CENTER/04_PROJECTS/HUD/hud-candidates/comp-r1/s3/src/knot/knot3d.json",
 )
-NPZ = os.path.expanduser("~/.hermes/cache/scratch/hud-live/work2/K3/knot2.npz")
+NPZ_DIR = os.path.expanduser("~/.hermes/cache/scratch/hud-live/work2/K3")
 WIDTH = 2048
 RANGE = 512.0
 KNOT_PX = 540.0          # screen px per 900 knot units at the hero size
 CAM_D = 2.7 * 900.0
 SCALE = KNOT_PX / 900.0  # 0.6
+
+FILES = {
+    "noise": ("knot-points2.png", "knot-points2.meta.json"),
+    "keep": ("knot-points2-keep.png", "knot-points2-keep.meta.json"),
+    "jit": ("knot-points2-jit.png", "knot-points2-jit.meta.json"),
+}
 
 
 # ---------------------------------------------------------------- projection
@@ -74,11 +82,7 @@ def slice_index(s, ns):
 
 
 def blue_noise_cylinder(n, L, circ, rng):
-    """Best-candidate (Mitchell) blue noise on the closed tube parameter domain.
-
-    Works in (arc length, circumference) so the metric is close to Euclidean on
-    the surface. Returns arc fraction t in [0,1) and width fraction w in [0,1).
-    """
+    """Best-candidate (Mitchell) blue noise on the closed tube parameter domain."""
     pts = np.empty((n, 2))
     pts[0] = (rng.random() * L, rng.random() * circ)
     box = [L, circ]
@@ -87,8 +91,7 @@ def blue_noise_cylinder(n, L, circ, rng):
         best, bestd = 0, -1.0
         tree = cKDTree(pts[:j] % np.array(box), boxsize=box)
         for c in range(10):
-            q = cand[c]
-            d, _ = tree.query(q % np.array(box), k=1)
+            d, _ = tree.query(cand[c] % np.array(box), k=1)
             if d > bestd:
                 bestd, best = d, c
         pts[j] = cand[best]
@@ -130,14 +133,133 @@ def resample_ribbon(P, C, idx, ns, n_out, rng):
     return Q, nrm, u, i0, rr
 
 
-def occl_weight(P, cls, idx, nsl, reach=16.0, sig=8.0, dz=8.0):
-    """Front-pose under-strand weight in [0,1).
+# ------------------------------------------------------- on-surface distances
+def surf_min_dists(x, y, L, Y, chunk=800, self_=None):
+    """Nearest neighbour distance in the unwrapped tube metric (arc, width).
 
-    score_i = sum over points of the other strand (wrap-aware slice distance
-    > 10, so the two sides of the same tube never count) within reach screen px
-    of exp(-(d/sig)^2) * clamp((z_j - z_i)/dz, 0, 1).
-    occl = score / (score + s0), s0 = half the 99th percentile of the score.
+    x is arc length on the closed loop (period L), y is circumferential length
+    (period Y). Both in knot units. Exact pairwise, chunked to stay light.
     """
+    n = len(x)
+    out = np.full(n, np.inf)
+    for st in range(0, n, chunk):
+        e = min(n, st + chunk)
+        dx = np.abs(x[st:e, None] - x[None, :])
+        dx = np.minimum(dx, L - dx)
+        dy = np.abs(y[st:e, None] - y[None, :])
+        dy = np.minimum(dy, Y - dy)
+        D = np.hypot(dx, dy)
+        D[np.arange(e - st), np.arange(st, e)] = np.inf
+        out[st:e] = D.min(1)
+    return out
+
+
+def tube_coords(P, C, idx, ns):
+    """Unwrapped surface coordinates of points known to sit on slice idx."""
+    arccum, L = cum_arc(C)
+    T, U, V = frame(C)
+    r_slice = slice_radius(P, C, idx, ns)
+    rad = P - C[idx]
+    r = np.linalg.norm(rad, axis=1)
+    th = np.arctan2(np.sum(rad * V[idx], 1), np.sum(rad * U[idx], 1))
+    x = arccum[idx]
+    y = th * r_slice[idx]
+    return dict(x=x, y=y, th=th, r=r, L=L, r_slice=r_slice, T=T, U=U, V=V,
+                nrm0=(rad / np.maximum(r, 1e-9)[:, None]),
+                Y=2.0 * np.pi * float(r_slice.mean()))
+
+
+def jitter_ribbon(P, C, idx, ns, rng, lo=0.25, hi=0.35, dmin_frac=0.6, rounds=12):
+    """Move each point along the tube surface by a fraction of the local spacing.
+
+    Displacement d = mag * (cos(phi) * T + sin(phi) * E) with T the local tangent
+    and E the circumferential direction, mag in lo..hi times the point's own
+    on-surface nearest neighbour distance. The displaced point is then put back
+    on the tube surface (radial correction against the nearest centreline
+    sample, same per-slice radius plus the point's own radial offset), so it
+    never leaves the surface and the 3D move stays of order mag. Points that
+    come closer than dmin_frac of the original minimum spacing have their
+    offset halved and are rebuilt (deterministic, up to <rounds> times).
+    """
+    g = tube_coords(P, C, idx, ns)
+    x, y, L, Y = g["x"], g["y"], g["L"], g["Y"]
+    delta = g["r"] - g["r_slice"][idx]   # own radial offset, kept when rebuilding
+    nn0 = surf_min_dists(x, y, L, Y)
+    dmin0 = float(nn0.min())
+    mag0 = rng.uniform(lo, hi, len(x)) * nn0
+    phi = rng.uniform(0.0, 2.0 * np.pi, len(x))
+    Tv = g["T"][idx]
+    E = np.cross(g["nrm0"], Tv)
+    E /= np.linalg.norm(E, axis=1)[:, None] + 1e-12
+    d3 = (mag0 * np.cos(phi))[:, None] * Tv + (mag0 * np.sin(phi))[:, None] * E
+    scale = np.ones(len(x))
+    cand = (idx[:, None] + np.arange(-8, 9)[None, :]) % ns
+    ac, Lc = cum_arc(C)
+
+    def place(sc):
+        Qr = P + d3 * sc[:, None]
+        dd = np.linalg.norm(C[cand] - Qr[:, None, :], axis=2)
+        jj = cand[np.arange(len(P)), np.argmin(dd, axis=1)]
+        rad = Qr - C[jj]
+        rq = np.linalg.norm(rad, axis=1)
+        nrm = rad / np.maximum(rq, 1e-9)[:, None]
+        rr = g["r_slice"][jj] + delta
+        Q = C[jj] + rr[:, None] * nrm
+        th = np.arctan2(np.sum(nrm * g["V"][jj], 1), np.sum(nrm * g["U"][jj], 1))
+        return Q, nrm, jj, rr, th, th * rr
+
+    thr = dmin_frac * dmin0
+
+    def pairs_under(x2, y2, lim, chunk=800):
+        out = []
+        nn = len(x2)
+        for st in range(0, nn, chunk):
+            e = min(nn, st + chunk)
+            ddx = np.abs(x2[st:e, None] - x2[None, :])
+            ddx = np.minimum(ddx, L - ddx)
+            ddy = np.abs(y2[st:e, None] - y2[None, :])
+            ddy = np.minimum(ddy, Y - ddy)
+            D = np.hypot(ddx, ddy)
+            D[np.arange(e - st), np.arange(st, e)] = np.inf
+            ii, j = np.where(D < lim)
+            if len(ii):
+                out.append(np.c_[ii + st, j])
+        return np.vstack(out) if out else np.zeros((0, 2), dtype=np.int64)
+
+    Q = nrm = None
+    jj = rr = th = y2 = x2 = None
+    for it in range(rounds):
+        Q, nrm, jj, rr, th, y2 = place(scale)
+        x2 = ac[jj] + 0.0
+        x2 = np.mod(x2 + np.zeros(len(x2)), L)
+        pairs = pairs_under(x2, y2, thr)
+        if len(pairs) == 0:
+            break
+        bad = np.unique(pairs)
+        scale[bad] *= 0.5
+        print("  jitter round %d: %d pairs under %.2f units on the surface, %d points halved"
+              % (it + 1, len(pairs), thr, len(bad)))
+    disp = np.linalg.norm(Q - P, axis=1)
+    d, _ = cKDTree(Q).query(Q, 2)
+    print("  jitter: local spacing mean %.2f min %.2f | mag mean %.2f max %.2f units"
+          % (nn0.mean(), nn0.min(), mag0.mean(), mag0.max()))
+    print("  jitter: moved mean %.2f p95 %.2f max %.2f units | final 3D NN min %.2f | "
+          "surface NN min %.2f (floor %.2f) | halved %d"
+          % (disp.mean(), np.percentile(disp, 95), disp.max(), d[:, 1].min(),
+             float(surf_min_dists(ac[jj], th * rr, L, Y).min()), thr,
+             int((scale < 1.0).sum())))
+    u = ac[jj] / L
+    return Q, nrm, u, jj, rr, dict(nn0=nn0, dmin0=dmin0, mag=mag0, scale=scale, thr=thr,
+                                  disp=disp)
+
+
+def arccum_u(j, C):
+    a, L = cum_arc(C)
+    return a[j] / L
+
+
+def occl_weight(P, cls, idx, nsl, reach=16.0, sig=8.0, dz=8.0):
+    """Front-pose under-strand weight in [0,1) (unchanged K3 method)."""
     S = front(P)
     z = P[:, 2]
     tree = cKDTree(S)
@@ -161,69 +283,9 @@ def occl_weight(P, cls, idx, nsl, reach=16.0, sig=8.0, dz=8.0):
     return score / (score + s0), score, s0
 
 
-def main():
-    with open(SRC) as f:
-        d = json.load(f)
-    n = int(d["n"])
-    P = np.asarray(d["p"], dtype=np.float64).reshape(n, 3)
-    NR = np.asarray(d["nr"], dtype=np.float64).reshape(n, 3)
-    s = np.asarray(d["s"], dtype=np.float64)
-    q = np.asarray(d["q"], dtype=np.float64)
-    c = np.asarray(d["c"], dtype=np.float64)
-    C0 = np.asarray(d["cl"][0], dtype=np.float64).reshape(-1, 3)
-    C1 = np.asarray(d["cl"][1], dtype=np.float64).reshape(-1, 3)
-    ns0, ns1 = len(C0), len(C1)
-    rib = c < 0.5
-    idx = np.where(rib, slice_index(s, ns0), slice_index(s, ns1))
-
-    cnt0 = np.bincount(idx[rib], minlength=ns0)
-    cnt1 = np.bincount(idx[~rib], minlength=ns1)
-    print("slices ribbon", ns0, "points/slice", np.unique(cnt0),
-          "| ring", ns1, "points/slice", np.unique(cnt1))
-    r0 = np.linalg.norm(P[rib] - C0[idx[rib]], axis=1)
-    print("source tube radius ribbon mean %.3f sd %.4f" % (r0.mean(), r0.std()))
-
-    cv_before = {k: nn_stats(front(P[c == k])) for k in (0.0, 1.0)}
-
-    n0 = int(rib.sum())
-    rng = np.random.default_rng(7)
-    Q0, N0, u0, i0, rr0 = resample_ribbon(P[rib], C0, idx[rib], ns0, n0, rng)
-    arcc1, L1 = cum_arc(C1)
-    u1 = arcc1[idx[~rib]] / L1
-
-    P2 = np.vstack([Q0, P[~rib]])
-    N2 = np.vstack([N0, NR[~rib]])
-    q2 = np.r_[q[rib], q[~rib]]
-    c2 = np.r_[c[rib], c[~rib]]
-    u2 = np.r_[u0, u1]
-    # the source s was the slice index fraction, which is only approximately the
-    # arc parameter (measured deviation in audit.txt, section 1). After the
-    # resample the only meaningful strand parameter is u, so s follows it.
-    s2 = u2.copy()
-    idx2 = np.r_[i0, idx[~rib]]
-
-    cv_after = {k: nn_stats(front(P2[c2 == k])) for k in (0.0, 1.0)}
-    print("CV before ribbon %.3f ring %.3f | after ribbon %.3f ring %.3f" % (
-        cv_before[0.0]["cv"], cv_before[1.0]["cv"],
-        cv_after[0.0]["cv"], cv_after[1.0]["cv"]))
-    dist = np.min(np.linalg.norm(Q0[:, None, :] - P[rib][None, :, :], axis=2), axis=1)
-    print("new ribbon point to nearest old point: mean %.2f max %.2f units" % (
-        dist.mean(), dist.max()))
-
-    occl, score, s0 = occl_weight(P2, c2, idx2, {0.0: ns0, 1.0: ns1})
-    print("occl p50 %.3f p95 %.3f max %.3f frac>0.15 %.3f (s0 %.3f)" % (
-        np.percentile(occl, 50), np.percentile(occl, 95), occl.max(),
-        float((occl > 0.15).mean()), s0))
-    print("u ribbon [%.4f %.4f] ring [%.4f %.4f]" % (
-        u2[c2 < 0.5].min(), u2[c2 < 0.5].max(), u2[c2 > 0.5].min(), u2[c2 > 0.5].max()))
-
-    write_texture(P2, N2, s2, q2, c2, u2, occl, cv_before, cv_after, d)
-    os.makedirs(os.path.dirname(NPZ), exist_ok=True)
-    np.savez(NPZ, P=P2, N=N2, s=s2, q=q2, c=c2, u=u2, occl=occl, idx=idx2)
-
-
-def write_texture(P, N, s, q, c, u, occl, cv_before, cv_after, d):
+def write_texture(P, N, s, q, c, u, occl, meta_extra, variant):
     n = len(P)
+    png, metaname = FILES[variant]
 
     def q16(v):
         x = (np.clip(v, -RANGE, RANGE - 1e-6) + RANGE) / (2.0 * RANGE)
@@ -256,7 +318,7 @@ def write_texture(P, N, s, q, c, u, occl, cv_before, cv_after, d):
     rgba = np.zeros((rows * WIDTH, 4), dtype=np.uint8)
     rgba[:, :3] = buf
     rgba[:, 3] = 255
-    out_png = os.path.join(HERE, "knot-points2.png")
+    out_png = os.path.join(HERE, png)
     Image.frombytes("RGBA", (WIDTH, rows), rgba.tobytes()).convert("RGB").save(
         out_png, optimize=True)
 
@@ -266,9 +328,10 @@ def write_texture(P, N, s, q, c, u, occl, cv_before, cv_after, d):
         "rows": int(rows),
         "texels": int(total),
         "stride": 5,
+        "variant": variant,
         "range": [-RANGE, RANGE],
         "quant": 65535.0 / (2.0 * RANGE),
-        "height": float(d.get("H", 900)),
+        "height": 900.0,
         "classCounts": {str(int(k)): int(v) for k, v in
                         zip(*np.unique(c.astype(int), return_counts=True))},
         "sRange": [float(s.min()), float(s.max())],
@@ -276,18 +339,111 @@ def write_texture(P, N, s, q, c, u, occl, cv_before, cv_after, d):
         "uRange": [float(u.min()), float(u.max())],
         "occlRange": [float(occl.min()), float(occl.max())],
         "texel4": "(u*255, occl*255, 0)",
-        "ribbonResampled": True,
-        "nnCvBefore": {k: float(v["cv"]) for k, v in cv_before.items()},
-        "nnCvAfter": {k: float(v["cv"]) for k, v in cv_after.items()},
-        "nnBefore": {k: v for k, v in cv_before.items()},
-        "nnAfter": {k: v for k, v in cv_after.items()},
+        "ribbonResampled": bool(variant == "noise"),
+        "ribbonJittered": bool(variant == "jit"),
         "file": out_png,
     }
-    with open(os.path.join(HERE, "knot-points2.meta.json"), "w") as f:
+    meta.update(meta_extra)
+    with open(os.path.join(HERE, metaname), "w") as f:
         json.dump(meta, f, indent=2)
         f.write("\n")
     print("points", n, "texture", WIDTH, "x", rows, "->", out_png)
-    print("classes", meta["classCounts"])
+    return out_png
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--variant", choices=["keep", "jit", "noise"], default="keep")
+    ap.add_argument("--npz", default=None)
+    args = ap.parse_args()
+    var = args.variant
+
+    with open(SRC) as f:
+        d = json.load(f)
+    n = int(d["n"])
+    P = np.asarray(d["p"], dtype=np.float64).reshape(n, 3)
+    NR = np.asarray(d["nr"], dtype=np.float64).reshape(n, 3)
+    s = np.asarray(d["s"], dtype=np.float64)
+    q = np.asarray(d["q"], dtype=np.float64)
+    c = np.asarray(d["c"], dtype=np.float64)
+    C0 = np.asarray(d["cl"][0], dtype=np.float64).reshape(-1, 3)
+    C1 = np.asarray(d["cl"][1], dtype=np.float64).reshape(-1, 3)
+    ns0, ns1 = len(C0), len(C1)
+    rib = c < 0.5
+    idx = np.where(rib, slice_index(s, ns0), slice_index(s, ns1))
+    arc0, L0 = cum_arc(C0)
+    arc1, L1 = cum_arc(C1)
+
+    cnt0 = np.bincount(idx[rib], minlength=ns0)
+    print("variant", var, "| slices ribbon", ns0, "points/slice", np.unique(cnt0),
+          "| ring", ns1, "points/slice", np.unique(np.bincount(idx[~rib], minlength=ns1)))
+    cv_before = {k: nn_stats(front(P[c == k])) for k in (0.0, 1.0)}
+    extra = {}
+    n0 = int(rib.sum())
+    u1 = arc1[idx[~rib]] / L1
+
+    if var == "keep":
+        Q0, N0 = P[rib].copy(), NR[rib].copy()
+        u0 = arc0[idx[rib]] / L0
+        i0 = idx[rib]
+        rr0 = np.linalg.norm(Q0 - C0[i0], axis=1)
+        extra["note"] = "original positions and normals, corrected u and occl, no resampling"
+    elif var == "jit":
+        rng = np.random.default_rng(11)
+        Q0, N0, u0, i0, rr0, jinfo = jitter_ribbon(P[rib], C0, idx[rib], ns0, rng)
+        extra["jitter"] = {
+            "seed": 11,
+            "fractionOfLocalSpacing": [0.25, 0.35],
+            "localSpacingMean": float(jinfo["nn0"].mean()),
+            "localSpacingMin": float(jinfo["nn0"].min()),
+            "displacementMean": float(jinfo["mag"].mean()),
+            "displacementMax": float(jinfo["mag"].max()),
+            "separationFloor": float(jinfo["thr"]),
+            "origMinSpacing": float(jinfo["dmin0"]),
+            "pointsWithReducedOffset": int((jinfo["scale"] < 1.0).sum()),
+            "minPairDistance": float(cKDTree(Q0).query(Q0, 2)[0][:, 1].min()),
+        }
+        extra["note"] = "original positions jittered on the tube surface, normals recomputed radial"
+    else:
+        rng = np.random.default_rng(7)
+        Q0, N0, u0, i0, rr0 = resample_ribbon(P[rib], C0, idx[rib], ns0, n0, rng)
+        extra["note"] = "best-candidate blue-noise resample of the tube surface"
+
+    P2 = np.vstack([Q0, P[~rib]])
+    N2 = np.vstack([N0, NR[~rib]])
+    q2 = np.r_[q[rib], q[~rib]]
+    c2 = np.r_[c[rib], c[~rib]]
+    u2 = np.r_[u0, u1]
+    s2 = u2.copy()
+    idx2 = np.r_[i0, idx[~rib]]
+
+    cv_after = {k: nn_stats(front(P2[c2 == k])) for k in (0.0, 1.0)}
+    print("CV before ribbon %.3f ring %.3f | after ribbon %.3f ring %.3f" % (
+        cv_before[0.0]["cv"], cv_before[1.0]["cv"],
+        cv_after[0.0]["cv"], cv_after[1.0]["cv"]))
+
+    occl, score, s0 = occl_weight(P2, c2, idx2, {0.0: ns0, 1.0: ns1})
+    print("occl p50 %.3f p95 %.3f max %.3f frac>0.15 %.3f (s0 %.3f)" % (
+        np.percentile(occl, 50), np.percentile(occl, 95), occl.max(),
+        float((occl > 0.15).mean()), s0))
+    print("u ribbon [%.4f %.4f] ring [%.4f %.4f]" % (
+        u2[c2 < 0.5].min(), u2[c2 < 0.5].max(), u2[c2 > 0.5].min(), u2[c2 > 0.5].max()))
+
+    extra["nnCvBefore"] = {k: float(v["cv"]) for k, v in cv_before.items()}
+    extra["nnCvAfter"] = {k: float(v["cv"]) for k, v in cv_after.items()}
+    extra["nnAfter"] = {k: v for k, v in cv_after.items()}
+    extra["occlStats"] = {"p50": float(np.percentile(occl, 50)),
+                          "p90": float(np.percentile(occl, 90)),
+                          "p99": float(np.percentile(occl, 99)),
+                          "max": float(occl.max()),
+                          "fracAbove015": float((occl > 0.15).mean())}
+    write_texture(P2, N2, s2, q2, c2, u2, occl, extra, var)
+
+    npz = args.npz or os.path.join(NPZ_DIR, "var_%s.npz" % var)
+    os.makedirs(os.path.dirname(npz), exist_ok=True)
+    np.savez(npz, P=P2, N=N2, s=s2, q=q2, c=c2, u=u2, occl=occl, idx=idx2,
+             nr_src=NR, idx_src=idx, P_src=P)
+    print("npz", npz)
 
 
 if __name__ == "__main__":

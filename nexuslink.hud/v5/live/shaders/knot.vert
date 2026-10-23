@@ -7,9 +7,10 @@
 // are killed in the fragment stage by comparing a flat copy of the point id
 // with an interpolated copy.
 //
-// Motion (spec KNOT-SPEC sections A to G):
+// Motion (spec KNOT-SPEC sections A to G, addendum v2.1 items 1 to 5):
 //  A  small global pose (yaw 12, pitch 7) + 0.8 percent scale pulse
-//  B  three lobes breathing on their own clocks (5.0 / 6.1 / 7.0 s)
+//  B  three lobes breathing on their own clocks (5.0 / 6.1 / 7.0 s), slow FM
+//     plus a small per point phase offset so a lobe never pulses as one block
 //  C  peristaltic wavefronts along the strand (swell with a trailing trough)
 //  D  curl-noise micro-currents, small groups swirl together
 //  E  local events: a ring swelling out from a hashed point, every 4 to 9 s
@@ -40,17 +41,14 @@ layout(std140, binding = 0) uniform buf {
 layout(binding = 1) uniform sampler2D src;
 
 // ---- point texture layout, keep in sync with KnotSwarm.qml ---------------
-// v1 (shaders/knot-points.png): TEXEL_STRIDE 4, TEX_ROWS 9,
+// v2 (K3, shaders/knot-points2.png, 2048 x 11):
 //   t0 = P.xy (16 bit each), t1 = P.z (16 bit) + spare,
-//   t2 = N3 (8 bit per axis), t3 = s, q, cls + spare.
-// v2 (K3, shaders/knot-points2.png, rows 11): TEXEL_STRIDE 5, and the fifth
-//   texel is (u * 255, occl * 255, 0), see knot-points2.meta.json. The swap
-//   is three constants here (TEXEL_STRIDE 5, TEX_ROWS 11, USE_UV2 1) plus
-//   texelStride / texRows and the Image source in KnotSwarm.qml.
-const float TEXEL_STRIDE = 4.0;   // texels per point: 4 on v1, 5 on v2
-const float TEX_ROWS = 9.0;       // texture rows: 9 on v1, 11 on v2
+//   t2 = N3 (8 bit per axis), t3 = u, q, cls + spare,
+//   t4 = (u * 255, occl * 255, 0). u is the true arc length per class and
+//   occl the under strand weight (0 away from the crossings).
+const float TEXEL_STRIDE = 5.0;   // texels per point
+const float TEX_ROWS = 11.0;      // texture rows
 const float TEX_WIDTH = 2048.0;   // texture width
-const float USE_UV2 = 0.0;        // 0 = v1 (s as the loop parameter), 1 = v2
 
 const float PI = 3.141592653589793;
 const float TAU = 6.283185307179586;
@@ -133,6 +131,7 @@ void main() {
     vec4 t1 = texAt(TEXEL_STRIDE * pid + 1.0);
     vec4 t2 = texAt(TEXEL_STRIDE * pid + 2.0);
     vec4 t3 = texAt(TEXEL_STRIDE * pid + 3.0);
+    vec4 t4 = texAt(TEXEL_STRIDE * pid + 4.0);
 
     vec3 P;
     P.x = b255(t0.r) * 256.0 + b255(t0.g);
@@ -141,16 +140,13 @@ void main() {
     P = P / 65535.0 * 1024.0 - 512.0;
 
     vec3 N3 = t2.rgb * 2.0 - 1.0;
-    float sp = t3.r;
     float q = t3.g;
     float cls = t3.b;
 
-    // loop parameter: v1 uses s, v2 uses the true arc length u in texel 4
-    vec4 t4 = vec4(1.0);
-    if (USE_UV2 > 0.5) t4 = texAt(pid * TEXEL_STRIDE + 4.0);
-    float su = USE_UV2 > 0.5 ? t4.r : sp;
-    // v2 under-strand occlusion, 1 = front strand (v1 has no data: neutral)
-    float occl = USE_UV2 > 0.5 ? t4.g : 1.0;
+    // true arc length along its own class (v2 texel 4 red), 0..1
+    float su = t4.r;
+    // under strand weight, 0 away from the crossings, 0.839 at the deepest
+    float occl2 = clamp(t4.g * 1.19, 0.0, 1.0);
 
     vec3 er = normalize(vec3(P.x, P.y, 0.0));
     vec3 dirW = normalize(er * 0.8 + N3 * 0.45);
@@ -167,9 +163,9 @@ void main() {
     float br0 = breathAt(t, 0.0);
     vec3 Q = P * (1.0 + 0.008 * br0);
 
-    // ---- B: three lobes, each on its own clock --------------------------
+    // ---- B: three lobes, each on its own clock (measured tip angles) ----
     float ang = atan(P.y, P.x);
-    float a0 = radians(90.0), a1 = radians(210.0), a2 = radians(330.0);
+    float a0 = radians(34.0), a1 = radians(142.4), a2 = radians(266.4);
     float d0 = angDiff(ang, a0) / 0.55;
     float d1 = angDiff(ang, a1) / 0.55;
     float d2 = angDiff(ang, a2) / 0.55;
@@ -177,12 +173,20 @@ void main() {
     float w1 = exp(-d1 * d1);
     float w2 = exp(-d2 * d2);
     float wsum = max(w0 + w1 + w2, 1e-5);
-    float bl = (w0 * breathAt(t * 5.5 / 5.0, 0.00)
-              + w1 * breathAt(t * 5.5 / 6.1, 0.37)
-              + w2 * breathAt(t * 5.5 / 7.0, 0.71)) / wsum;
+
+    // slow frequency modulation per lobe clock, plus a small deterministic
+    // per point phase offset so a lobe does not pulse as one solid block
+    float fm0 = 0.06 * sin(TAU * t / 31.0) + 0.00;
+    float fm1 = 0.06 * sin(TAU * t / 38.0 + 2.0) + 0.00;
+    float fm2 = 0.06 * sin(TAU * t / 45.0 + 4.0) + 0.00;
+    float pp = 0.035 * (fract(sin(pid * 12.9898) * 43758.5453) - 0.5);
+
+    float bl = (w0 * breathAt(t * 5.5 / 5.0, 0.00 + fm0 + pp)
+              + w1 * breathAt(t * 5.5 / 6.1, 0.37 + fm1 + pp)
+              + w2 * breathAt(t * 5.5 / 7.0, 0.71 + fm2 + pp)) / wsum;
     float lb = 2.0 * bl - 1.0;
 
-    // ---- C: peristaltic fronts along the strand -------------------------
+    // ---- C: peristaltic fronts along the strand (u) ---------------------
     float g;
     if (cls < 0.5) {
         g = frontG(su, 0.10, 1.0, 4.2, t)
@@ -232,6 +236,10 @@ void main() {
     bfac = clamp(bfac, 0.55, 1.90);
     rfac = clamp(rfac, 0.70, 1.80);
 
+    // v2 under strand dimming: the weave reads at the three crossings
+    // (addendum item 3: radius shrinks, alpha dims further down)
+    rfac = clamp(rfac * (1.0 - 0.25 * occl2), 0.60, 1.80);
+
     // ---- project --------------------------------------------------------
     float cyw = cos(yaw), syw = sin(yaw);
     float cpt = cos(pitch), spt = sin(pitch);
@@ -255,7 +263,7 @@ void main() {
     float thr = 0.86 + 0.14 * br0;
     float vis = smoothstep(q - 0.03, q + 0.03, thr);
 
-    // ---- F: five acid sparks gliding along the strands ------------------
+    // ---- F: five acid sparks gliding along the strands (u) --------------
     float spark = 0.0;
     for (int i = 0; i < 5; i++) {
         float ck = i < 3 ? 0.0 : 1.0;
@@ -285,11 +293,11 @@ void main() {
     col *= bfac;
     col = mix(col, cAcid, spark);
 
-    // depth and facing, plus the v2 under-strand occlusion (a shading
-    // matter only: it dims the weave so the crossings read)
-    float oc = mix(0.55, 1.0, occl);
+    // depth and facing
     float alpha = (0.14 + 0.86 * d) * (0.26 + 0.74 * f) * (0.86 + 0.14 * br0)
-                * vis * oc * mix(0.85, 1.15, clamp(bfac - 0.55, 0.0, 0.75));
+                * vis * mix(0.85, 1.15, clamp(bfac - 0.55, 0.0, 0.75));
+    // v2: alpha dims on the strand that passes under a crossing
+    alpha *= 1.0 - 0.65 * occl2;
     alpha = mix(alpha, 1.0, spark * 0.85);
     if (vis < 0.01) alpha = 0.0;
 
