@@ -23,7 +23,7 @@ Two kinds of entry are not ranked:
     the arc, so they carry ``rank: null`` and ``fixed_slot: true``.
   * the automation denylist. Chromium's launch counter is dominated by headless
     agent runs (recon/03-feeds.md: about 6.7k ``app-*.scope`` instances, mostly
-    automation), so its count does not mean Marcel uses it. A denylisted app
+    automation), so its count does not mean the operator uses it. A denylisted app
     keeps its arc slot (the tile is still drawn) but gets ``rank: null`` and an
     ``excluded`` reason. It rejoins the ranking only when the payload says the
     count is user-driven, i.e. ``"user_driven": true`` on the entry.

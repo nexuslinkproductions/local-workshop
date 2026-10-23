@@ -23,7 +23,7 @@ Note: No thermal warning level has been recorded
 Note: No performance warning level has been recorded
 Note: No CPU power status has been recorded
 @@PING
-pong from omarchylink (100.104.64.3) via 192.168.0.112:41641 in 10ms
+pong from omarchylink (100.64.12.3) via 192.0.2.12:41641 in 10ms
 @@KANBAN
 [
   {

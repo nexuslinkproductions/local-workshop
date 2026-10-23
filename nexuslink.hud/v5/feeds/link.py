@@ -25,7 +25,7 @@ Payload ``link`` object, fixture-compatible:
      "pulse_period_s": 2.933,
      "mac": {"load": [3.94, 4.45, 4.81], "load1_frac": 0.33, "cores": 12,
              "batt": 100, "state": "charged", "rem": "0:00", "up_min": 13},
-     "peers": [{"name": "Marcel's MacBook Pro", "on": true}, ...]}
+     "peers": [{"name": "nexus-macbook", "on": true}, ...]}
 
 ``pulse_period_s`` is the breathing period the RTT maps to:
 ``clamp(22 / median_ms, 0.9, 6.0)``. A calm link breathes slowly; a bad one
@@ -158,7 +158,7 @@ def pick_peer(peers, wanted):
 
 
 def parse_ping(text):
-    """`pong from mac (100.x) via 192.168.0.116:41641 in 5ms` -> (ms, route, detail)."""
+    """`pong from mac (100.x) via 192.0.2.16:41641 in 5ms` -> (ms, route, detail)."""
     body = text or ""
     match = re.search(r"in\s+([0-9]+(?:\.[0-9]+)?)\s*ms", body)
     if not match:
@@ -635,14 +635,14 @@ def self_check(args):
 
     # --- parsing, with the exact shapes the real commands emit --------------
     rtt, route, detail = parse_ping(
-        "pong from Marcel's MacBook Pro (100.104.123.2) via 192.168.0.116:41641 in 5ms"
+        "pong from nexus-macbook (100.64.12.2) via 192.0.2.16:41641 in 5ms"
     )
     check("ping-parse-rtt", rtt == 5.0, "rtt=%s" % rtt)
     check("ping-parse-direct", route == "direct", "route=%s" % route)
     check("ping-parse-clean", detail is None, str(detail))
 
     rtt, route, _ = parse_ping(
-        "pong from mac (100.104.123.2) via DERP(ams) in 92.4ms"
+        "pong from mac (100.64.12.2) via DERP(ams) in 92.4ms"
     )
     check("ping-parse-relay", route == "relay" and rtt == 92.4, "%s %s" % (rtt, route))
 
@@ -730,12 +730,12 @@ def self_check(args):
     # --- peer selection ----------------------------------------------------
     peers = [
         {"name": "vm-small-AMS-1", "on": False, "exit_node": False, "dns": None},
-        {"name": "Marcel's MacBook Pro", "on": True, "exit_node": False, "dns": "mmp.example.ts.net."},
+        {"name": "nexus-macbook", "on": True, "exit_node": False, "dns": "nexus-macbook.example.ts.net."},
         {"name": "OmarchyLink", "on": True, "exit_node": True, "dns": "ol.example.ts.net."},
     ]
-    check("peer-auto", pick_peer(peers, None)["name"] == "Marcel's MacBook Pro", "")
-    check("peer-by-name", pick_peer(peers, "Marcel's MacBook Pro")["name"] == "Marcel's MacBook Pro", "")
-    check("peer-by-dns", pick_peer(peers, "mmp.example.ts.net")["name"] == "Marcel's MacBook Pro", "")
+    check("peer-auto", pick_peer(peers, None)["name"] == "nexus-macbook", "")
+    check("peer-by-name", pick_peer(peers, "nexus-macbook")["name"] == "nexus-macbook", "")
+    check("peer-by-dns", pick_peer(peers, "nexus-macbook.example.ts.net")["name"] == "nexus-macbook", "")
     try:
         pick_peer([peers[0]], None)
         missing_peer = False
@@ -978,7 +978,7 @@ def self_check(args):
         "#!/bin/sh\n"
         "case \"$1\" in\n"
         "  status) printf '%%s' '%s' ;;\n"
-        "  ping) echo \"pong from mac (100.64.0.2) via 192.168.1.5:41641 in 7ms\" ;;\n"
+        "  ping) echo \"pong from mac (100.64.0.2) via 192.0.2.15:41641 in 7ms\" ;;\n"
         "esac\n"
         "exit 0\n" % status_json
     )
