@@ -20,6 +20,12 @@ runs, read live off `CrewOrb.transitions[0].animations[0]` (easing type, paramet
 and duration all come from the running object), evaluated analytically. Nothing
 in that path reads a clock.
 
+What that gates is narrower than it looks: the easing **type** directly
+(`easingName == "OutBack"`, else the run fails), the **parameter** only through
+the peak landing inside the 4 to 6 % band, and the **duration** not at all — a
+curve retimed to 400 ms moves the printed vertex time and still passes. The
+duration is carried in the trace and printed; it is not a gate.
+
 The frame-sampled peak and the stretched read stay in the output as **evidence**,
 never as the verdict. The offscreen frame clock on this Mac ticks every 25 to
 100 ms. A 347 ms curve peaks ~10 ms wide, so a frame sample can land 25 to 50 ms
@@ -66,8 +72,8 @@ The other signals, from the same five runs:
 | expand peak | 1.4194972 at 223 ms (closed form, every attempt) | — |
 | stretched read | +4.867 to +4.874 % (83 to 115 samples, 31.0 to 56.0 ms grid = 3.1 to 5.6 ms on the deck's 347 ms timeline) | 4 to 6 % |
 | return | min 1.0000, 0 rises, last 1.0000 in every run | ≥ 1.0, 0 rises |
-| idle drift | max \|d\| 1.890 to 1.891 px in every run; x range 1.65 to 1.79, y range 3.01 to 3.14 (a sampled window of a 13 s and a 21 s sine, so a re-run's range depends on the phase it catches) | > 0 |
-| breath period | 5.786 to 5.809 s in this pass (5.776 to 5.823 s across all recorded runs), 120 to 127 samples at a 103.6 to 110.1 ms grid | 5 to 6 s |
+| idle drift | max \|d\| 1.890 to 1.891 px in every run; the x and y spans cover part of that peak depending on the phase caught (recorded passes: x 1.65 to 1.85, y 3.00 to 3.14, and a re-run prints its own) | > 0 |
+| breath period | 5.78 to 5.83 s in the recorded passes (a re-run prints its own), 119 to 127 samples at a 103.6 to 110.1 ms grid | 5 to 6 s |
 | committed traces | `expand.json` and `deck.json` regenerated from the current probes, re-parsed with `--json`, exit 0 | — |
 | token | `Motion.expandMillis` 347, `Motion.returnMillis` 444, `Motion.expandOvershoot` 5.00 % (spring band), `Motion.curveOvershoot5` 1.15 (read by `FindField`; `CrewOrb` carries the same 1.15 as a local literal), `Motion.driftAmpMax` 2.0, `Motion.breathPeriod` 5.8 | — |
 
@@ -83,18 +89,18 @@ Reading it:
   the frame-sampled settle times of the two legs are clock-bound and are not
   used as evidence of any ordering.
 * **Idle drift** peaks at 1.890 to 1.891 px on `Motion.driftAmpMax` = 2.0 every
-  run, with an x range of 1.65 to 1.79 px and a y range of 3.04 to 3.14 px across
-  all the recorded runs: two sine terms at period and period × phi, so the deck is
-  never fully still and never repeats. The range is the window a run happens to
-  catch, not a property of the curve; the constant is the 2.0 peak. A second
-  `IdleDrift` moves the launcher and find pill on its own phase (`phaseOffset`
-  0.37, `Motion.driftAmpMin`, period × phi), so the chrome and the widget band
-  never move in step. The 96 px clock is the one fixed element: a 2 px wobble on
-  type that large reads as broken typography, not as life.
-* **Breath** measured 5.786 to 5.809 s in the five runs above (5.776 to 5.823 s
-  across every recorded pass) against `Motion.breathPeriod` = 5.8 s, by timing the
-  mid-level crossings across two full cycles. The shell renders it in the swarm
-  shader at a 30 Hz tick, not in a wrapper animation.
+  run. The x and y spans above cover part of that peak depending on which phase
+  the run catches: two sine terms at period and period × phi, so the deck is never
+  fully still and never repeats. The span is a sampled window, not a property of
+  the curve; the constant is the 2.0 peak. A second `IdleDrift` moves the launcher
+  and find pill on its own phase (`phaseOffset` 0.37, `Motion.driftAmpMin`, period
+  × phi), so the chrome and the widget band never move in step. The 96 px clock is
+  the one fixed element: a 2 px wobble on type that large reads as broken
+  typography, not as life.
+* **Breath** measured 5.78 to 5.83 s in the recorded passes against
+  `Motion.breathPeriod` = 5.8 s, by timing the mid-level crossings across two
+  full cycles. The shell renders it in the swarm shader at a 30 Hz tick, not in a
+  wrapper animation.
 
 ## Why the peak is not read off the frame samples
 
@@ -119,9 +125,10 @@ Offsets along this curve, from the closed form (percent of travel lost):
 | 50 ms | 3.130 % |
 
 That table is the whole story of the frame column: frame-only captures of this
-same curve gave 4.48, 3.89, 4.51, 4.68 and 4.79 % in round 1, 3.585 to 4.874 % in
-the five runs above, while the curve itself did not change. A 3.585 % reading is
-one frame landing ~40 ms off the vertex — a correct sample of the wrong instant.
+same curve gave 4.48, 3.89, 4.51, 4.68 and 4.79 % in round 1, and 3.585 to
+4.874 % in the earlier five-run pass, while the curve itself did not change. A
+3.585 % reading is one frame landing ~40 ms off the vertex — a correct sample of
+the wrong instant.
 More samples did not fix it (the 4.48 % run had 48, 53 and 62 samples per attempt
 in round 1) and more samples cannot fix it: at a 50 ms frame clock, every sample
 is 0 to 25 ms off, and the read is whatever that frame happened to catch. That is

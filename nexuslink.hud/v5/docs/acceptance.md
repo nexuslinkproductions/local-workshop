@@ -66,9 +66,10 @@ Every render above is Satoshi, and that is measured, not assumed.
   that is the `63.359` digit advance, 0.660 em.
 * `DeckSurface.qml` carries the deck's four `FontLoader`s, from `Tokens.fontFiles`,
   and `DeckMain.qml` carries none: it instantiates `DeckSurface`, so the shell
-  gets them too. (Other loaders exist in the tree for other owners — `kit/Clock.qml`
-  keeps its own four module-relative ones, the W2/W3 still harnesses and
-  `tests/w7/ClockProof.qml` load what they paint. None of them is the deck's.)
+  gets them too. The other 19 loaders in the tree belong to other owners and are
+  not the deck's: `kit/Clock.qml` keeps its own four module-relative ones,
+  `kit/icons/TileStates.qml` and `kit/icons/ContactSheet.qml` three each, the W2
+  and W3 still harnesses four each, and `tests/w7/ClockProof.qml` one.
   `deck-shot.sh`, `deck-audit.py` and `deck-trace.py` mirror `v5/fonts` to
   `<imports>/NexusHud/fonts`, which is where a kit component's `../fonts/...`
   lands through the module import path.
@@ -78,8 +79,9 @@ What round 2 saw, and what it was: at `cfdee53` each render printed four
 module-relative loaders, not the deck's. The deck itself was already Satoshi.
 Measured, not argued: rendering this still with the fonts mirror and without it
 gives the same image — no pixel differs by more than one channel value, and the
-number that differs is the same order as render-to-render noise. Four renders of
-this still, compared with `sips` + numpy:
+number that differs is the same order as render-to-render noise. One set of four
+renders of this still, compared with `sips` + numpy (a re-run prints its own
+counts; the conclusion is the order, not the digit):
 
 | comparison | pixels differing | max channel delta |
 |---|---|---|
