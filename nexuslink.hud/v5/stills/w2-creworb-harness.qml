@@ -71,87 +71,97 @@ Item {
         }
     ]
 
-    Text {
-        x: 40
-        y: 8
-        text: "W2 CREWORB  REST 118 / EXPANDED 224 / DETAIL 224 (SESSION 0)  1:1"
-        color: Tokens.textDim
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.sizeCaption
-        font.weight: Tokens.weightBold
-        font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
-    }
 
-    Text {
-        x: 40
-        y: 34
-        text: "REST"
-        color: Tokens.textDim
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.sizeCaption
-        font.weight: Tokens.weightMedium
-        font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
-    }
+    // The proof sheet is authored at 1100x680 and scales to whatever frame the
+    // harness is given, so a 2560x1440 render is the same sheet at 2.1x.
+    Item {
+        id: content
+        width: 1100
+        height: 680
+        scale: Math.min(frame.width / 1100, frame.height / 680)
+        transformOrigin: Item.TopLeft
+        Text {
+            x: 40
+            y: 8
+            text: "W2 CREWORB  REST 118 / EXPANDED 224 / DETAIL 224 (SESSION 0)  1:1"
+            color: Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightBold
+            font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
+        }
 
-    CrewOrb {
-        x: 40
-        y: 62
-        size: 118
-        sessions: frame.fixture
-        animate: false
-    }
+        Text {
+            x: 40
+            y: 34
+            text: "REST"
+            color: Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightMedium
+            font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
+        }
 
-    Text {
-        x: 250
-        y: 34
-        text: "EXPANDED"
-        color: Tokens.textDim
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.sizeCaption
-        font.weight: Tokens.weightMedium
-        font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
-    }
+        CrewOrb {
+            x: 40
+            y: 62
+            size: 118
+            sessions: frame.fixture
+            animate: false
+        }
 
-    CrewOrb {
-        x: 250
-        y: 107
-        size: 224
-        sessions: frame.fixture
-        expanded: true
-        animate: false
-    }
+        Text {
+            x: 250
+            y: 34
+            text: "EXPANDED"
+            color: Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightMedium
+            font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
+        }
 
-    Text {
-        x: 730
-        y: 34
-        text: "DETAIL  SESSION 0"
-        color: Tokens.textDim
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.sizeCaption
-        font.weight: Tokens.weightMedium
-        font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
-    }
+        CrewOrb {
+            x: 250
+            y: 107
+            size: 224
+            sessions: frame.fixture
+            expanded: true
+            animate: false
+        }
 
-    CrewOrb {
-        x: 730
-        y: 107
-        size: 224
-        sessions: frame.fixture
-        expanded: true
-        selectedIndex: 0
-        animate: false
-    }
+        Text {
+            x: 730
+            y: 34
+            text: "DETAIL  SESSION 0"
+            color: Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightMedium
+            font.letterSpacing: Tokens.sizeCaption * Tokens.trackLabel
+        }
 
-    Text {
-        x: 40
-        y: 600
-        width: 1020
-        text: "fixture: v5/fixtures/sessions.json (3 rows, idle_s 32/20/17 so state derives live for all three; "
-              + "rows a01748 125k, a1d052 140k, 683c2c 3.6k, and 683c2c is a child of a1d052). "
-              + "shell SwarmSphere animate false phase 0.37; sub-swarm dots are QML; text floor 16 px."
-        color: Tokens.textDim
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.sizeCaption
-        wrapMode: Text.WordWrap
+        CrewOrb {
+            x: 730
+            y: 107
+            size: 224
+            sessions: frame.fixture
+            expanded: true
+            selectedIndex: 0
+            animate: false
+        }
+
+        Text {
+            x: 40
+            y: 600
+            width: 1020
+            text: "fixture: v5/fixtures/sessions.json (3 rows, idle_s 32/20/17 so state derives live for all three; "
+                  + "rows a01748 125k, a1d052 140k, 683c2c 3.6k, and 683c2c is a child of a1d052). "
+                  + "shell SwarmSphere animate false phase 0.37; sub-swarm dots are QML; text floor 16 px."
+            color: Tokens.textDim
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            wrapMode: Text.WordWrap
+        }
     }
 }
