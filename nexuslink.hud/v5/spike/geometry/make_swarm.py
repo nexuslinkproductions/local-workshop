@@ -37,14 +37,19 @@ from PIL import Image
 # ---------------------------------------------------------------- parameters
 PITCH_PX = 3.80           # dot pitch in px at knot height 540 (measured s2: 3.8)
 DOT_R_PX = 2.05           # dot radius in px (measured s2 core: ~2.2 at 216 px unit)
-GRID_COLS = 160           # option B mesh data texture
+GRID_COLS = 160           # option B mesh data texture (knot)
 GRID_ROWS = 120
+ORB_COLS = 96             # orb data texture: one dot per texel, ring layout.
+ORB_ROWS = 60             # The mesh cell has to stay wider than a dot's disc
+                          # (224/95 = 2.36 px against a 2.0 px near disc at 224),
+                          # because the four quads around a dot are what draw it:
+                          # a finer mesh clips discs to squares.
+ORB_POS_SCALE = 127.0     # positions are stored quantised to 1/127 unit
 CELL_PX = 16.0            # option C spatial cell, px at knot height 540
 KMAX = 128                # option C points per cell slot
 SDF_SIZE = 1024
 SDF_RANGE = 0.42          # distance stored: 0 .. 0.42 unit
-ORB_PITCH = 0.0268        # ~3 px at a 112 px radius orb
-ORB_CELL = 0.055
+ORB_CELL = 0.088          # option C cell for the orb, ~1.7 ring steps
 STIPPLE = 0.86            # fraction of lattice sites that carry a dot
 
 
@@ -121,18 +126,76 @@ def knot_cloud(knot, pitch):
     return pts, info
 
 
-def orb_cloud(pitch):
-    """Fibonacci sphere shell of unit radius, quantised to the same lattice."""
-    n = int(round(4 * np.pi / (pitch * pitch) * 0.62))
-    i = np.arange(n) + 0.5
-    phi = np.arccos(1 - 2 * i / n)
-    theta = np.pi * (1 + 5 ** 0.5) * i
-    p = np.stack([np.cos(theta) * np.sin(phi), np.sin(theta) * np.sin(phi),
-                  np.cos(phi)], 1).astype(np.float32)
-    q = np.round(p / pitch).astype(np.int32)
-    _, idx = np.unique(q, axis=0, return_index=True)
-    p = q[np.sort(idx)].astype(np.float32) * pitch
-    return p, {"pitch": pitch, "count": int(len(p))}
+def orb_cloud(cols=ORB_COLS, rows=ORB_ROWS):
+    """Ring layout: row j is a ring of one polar angle, its dots spread evenly
+    around it, so texel neighbours are neighbours on the sphere in BOTH axes.
+
+    A Fibonacci sphere quantised to a cube lattice has no such property. Its walk
+    order puts dots that are far apart in space next to each other in the texture,
+    the quads between them span the sphere, and a dot's disc is then drawn only by
+    whichever ribbons happen to cross it: measured at 224 px that clipped a 3.4 px
+    disc down to a 2 px dash with one straight edge. A ring layout makes every
+    quad a small patch of surface, so the four quads meeting at a dot cover its
+    whole disc.
+
+    Positions are exact unit vectors (no lattice quantisation); the texture stores
+    them quantised to 1/127, which is 0.9 px at a 224 px orb.
+
+    Returns (points, row_lengths, info). Points are stored ring by ring, and the
+    texture must be filled ring by ring too: packing the flat list into a
+    fixed-width grid would wrap each ring into the next and destroy the layout
+    (measured: half-disc dots with straight edges).
+    """
+    out = []
+    lengths = []
+    rng = np.random.default_rng(7)
+    for j in range(rows):
+        phi0 = np.pi * (j + 0.5) / rows
+        rho0 = float(np.sin(phi0))
+        n = max(1, int(round(cols * rho0)))
+        # jitter within 45 percent of a ring step, so the field reads as a point
+        # cloud instead of a visible latitude/longitude grid; the step is small
+        # enough that no two dots land on top of each other
+        th = 2 * np.pi * (np.arange(n) + 0.5) / n
+        th = th + (rng.random(n) - 0.5) * 0.45 * (2 * np.pi / n)
+        phi = phi0 + (rng.random(n) - 0.5) * 0.45 * (np.pi / rows)
+        rho = np.sin(phi)
+        out.append(np.stack([rho * np.cos(th), rho * np.sin(th),
+                             np.cos(phi)], 1))
+        lengths.append(n)
+    p = np.concatenate(out, 0).astype(np.float32)
+    info = {"layout": "ring", "cols": int(cols), "rows": int(rows),
+            "count": int(len(p)), "max_per_ring": int(max(lengths))}
+    return p, lengths, info
+
+
+def encode_orb(pts, lengths, step, offs, cols=ORB_COLS, rows=ORB_ROWS):
+    """Ring layout into RGBA8: dot i of ring j lives at texel (j, i).
+
+    Same integer encoding as encode_grid (A = 255, R = 255 marks padding), but
+    each ring starts at column 0 so a texel row is one ring and texel neighbours
+    are neighbours along the ring or across to the next one.
+    """
+    q = np.round(pts / np.float32(step)).astype(np.int32)
+    for k in range(3):
+        q[:, k] += offs[k]
+    out = np.zeros((rows, cols, 4), np.uint8)
+    out[:, :, 0] = 255
+    out[:, :, 3] = 255
+    base = 0
+    written = 0
+    for j, n in enumerate(lengths):
+        m = min(n, cols)
+        sl = slice(base, base + m)
+        out[j, :m, 0] = np.clip(q[sl, 0], 0, 254).astype(np.uint8)
+        out[j, :m, 1] = np.clip(q[sl, 1], 0, 254).astype(np.uint8)
+        out[j, :m, 2] = np.clip(q[sl, 2], 0, 254).astype(np.uint8)
+        base += n
+        written += m
+    info = {"step": float(step), "index_offset": [int(v) for v in offs],
+            "count": int(written), "cols": int(cols), "rows": int(rows),
+            "capacity": int(cols * rows)}
+    return out, info
 
 
 # ---------------------------------------------------------------- ordering
@@ -301,12 +364,14 @@ def build(knot_path, out_dir):
     Image.fromarray(sdf, "RGBA").save(os.path.join(out_dir, "swarm-knot-sdf.png"))
     print("sdf done (%.1fs)" % (time.time() - t0), flush=True)
 
-    ob, oinfo = orb_cloud(ORB_PITCH)
-    oorder = walk_order(ob, ORB_PITCH * 2.5)
-    ooffs = (64, 64, 64)
-    ogrid, oginfo = encode_grid(ob[oorder], ORB_PITCH, (0.0, 0.0, 0.0), ooffs)
+    ob, olens, oinfo = orb_cloud(ORB_COLS, ORB_ROWS)
+    # The ring layout is already spatially ordered: no walk order, no lattice
+    # quantisation. 1/127 keeps a unit position inside a byte (0 .. 254).
+    ooffs = (127, 127, 127)
+    ostep = 1.0 / ORB_POS_SCALE
+    ogrid, oginfo = encode_orb(ob, olens, ostep, ooffs, ORB_COLS, ORB_ROWS)
     Image.fromarray(ogrid, "RGBA").save(os.path.join(out_dir, "swarm-orb-grid.png"))
-    ocells, ocnt, ocinfo = cell_layout(ob, ORB_CELL, KMAX, ORB_PITCH,
+    ocells, ocnt, ocinfo = cell_layout(ob, ORB_CELL, KMAX, ostep,
                                        (0.0, 0.0, 0.0), ooffs)
     Image.fromarray(ocells, "RGBA").save(os.path.join(out_dir, "swarm-orb-cells.png"))
     Image.fromarray(ocnt).save(os.path.join(out_dir, "swarm-orb-cellcount.png"))

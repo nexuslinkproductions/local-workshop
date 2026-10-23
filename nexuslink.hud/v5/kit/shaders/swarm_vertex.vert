@@ -6,6 +6,13 @@
 // and passes its item-local pixel position plus the mesh uv to the fragment
 // stage. The fragment tests the four dots around each cell, so every dot is
 // drawn by the union of its four surrounding quads and stays round.
+//
+// Index mapping. GridMesh gives vertex i the texcoord i / (n - 1), so rounding
+// the texcoord back to an index is exact, and the fragment's floor() over the
+// same texcoord picks the containing cell. Both stages therefore resolve the
+// SAME texel for the same dot: a dot is kept by all four quads that meet at it
+// or by none. Sampling at (index + 0.5) / n hits the texel centre, so nearest
+// sampling cannot land on a neighbour.
 
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec2 qt_TexCoord0;
@@ -32,6 +39,8 @@ layout(std140, binding = 0) uniform buf {
     vec4 u_cellInfo;        // xy = cell origin, z = cell size
     vec2 u_cellN;
     float u_stipple;        // keep share, hashed per dot (fragment tests it)
+    float u_breathScale;    // dot radius multiplier, 1.0 .. 1 + breathScale
+    float u_breathBright;   // brightness multiplier, 1.0 .. 1 + breathBright
 };
 
 layout(binding = 1) uniform sampler2D u_pts;
@@ -59,13 +68,13 @@ vec3 decode(vec4 t)
 
 void main()
 {
-    vec2 uv = qt_TexCoord0;
-    vec2 texel = (uv * u_texInfo.xy + 0.5) / u_texInfo.xy;
-    vec3 p = decode(texture(u_pts, texel));
+    vec2 lastIdx = u_texInfo.xy - 1.0;
+    vec2 idx = min(floor(qt_TexCoord0 * lastIdx + 0.5), lastIdx);
+    vec3 p = decode(texture(u_pts, (idx + 0.5) / u_texInfo.xy));
     vec3 v = rotMat(u_yaw, u_tilt) * p;
     float s = u_pxPerUnit * u_camDist / max(u_camDist - v.z, 0.05);
     vec2 px = v.xy * s;
     vScreen = vec2(u_size.x * 0.5 + px.x, u_size.y * 0.5 - px.y);
-    vUV = uv;
+    vUV = qt_TexCoord0;
     gl_Position = qt_Matrix * vec4(vScreen, 0.0, 1.0);
 }
