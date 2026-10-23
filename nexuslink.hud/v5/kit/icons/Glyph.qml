@@ -7,13 +7,15 @@ import NexusHud.V5 1.0
 // W4 glyph dispatcher: one key in, one 24 px glyph out. Keys are the ids the
 // launcher and the integrator use: the launcher set from the binding design
 // amendments (hermes, devin, files, terminal, chrome, discord, x, youtube,
-// whatsapp, arc-raiders) plus the seven system glyphs (find, crew, power, wifi,
-// battery, volume, settings). An unknown key draws a calm single node instead
-// of an error, so a feed that renames an app never breaks the deck.
+// whatsapp, arc-raiders), the two apps the same amendment moves into the
+// expanded all-apps view (spotify, obsidian), plus the seven system glyphs
+// (find, crew, power, wifi, battery, volume, settings). An unknown key draws a
+// calm single node instead of an error, so a feed that renames an app never
+// breaks the deck.
 //
 // Each key is a Component that binds the three glyph inputs (color, weight,
 // size) to this item. Nothing is instantiated until a key is set, so a deck of
-// nine tiles pays for nine glyphs, not seventeen.
+// nine tiles pays for nine glyphs, not nineteen.
 Item {
     id: root
 
@@ -35,6 +37,8 @@ Item {
         "youtube": youtubeGlyph,
         "whatsapp": whatsappGlyph,
         "arc-raiders": arcRaidersGlyph,
+        "spotify": spotifyGlyph,
+        "obsidian": obsidianGlyph,
         "find": findGlyph,
         "crew": crewGlyph,
         "power": powerGlyph,
@@ -67,6 +71,8 @@ Item {
     Component { id: youtubeGlyph; Youtube { color: root.color; weight: root.weight; size: root.size } }
     Component { id: whatsappGlyph; Whatsapp { color: root.color; weight: root.weight; size: root.size } }
     Component { id: arcRaidersGlyph; ArcRaiders { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: spotifyGlyph; Spotify { color: root.color; weight: root.weight; size: root.size } }
+    Component { id: obsidianGlyph; Obsidian { color: root.color; weight: root.weight; size: root.size } }
     Component { id: findGlyph; Find { color: root.color; weight: root.weight; size: root.size } }
     Component { id: crewGlyph; Crew { color: root.color; weight: root.weight; size: root.size } }
     Component { id: powerGlyph; Power { color: root.color; weight: root.weight; size: root.size } }

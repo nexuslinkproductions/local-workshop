@@ -18,14 +18,14 @@ Item {
 
     readonly property var keys: [
         "hermes", "devin", "files", "terminal", "chrome", "discord",
-        "x", "youtube", "whatsapp", "arc-raiders",
+        "x", "youtube", "whatsapp", "arc-raiders", "spotify", "obsidian",
         "find", "crew", "power", "wifi", "battery", "volume", "settings"
     ]
     readonly property var rows: [
         { "w": 2.0, "s": 72 }, { "w": 2.0, "s": 48 }, { "w": 2.0, "s": 24 }
     ]
-    readonly property int colX0: 190
-    readonly property int colPitch: 138
+    readonly property int colX0: 100
+    readonly property int colPitch: 128
     readonly property int rowY0: 170
     readonly property int rowPad: 40
     readonly property int tileY: 760
@@ -73,7 +73,7 @@ Item {
     Text {
         x: 60
         y: 96
-        text: "W4 ICONS  ·  17 glyphs  ·  24 px grid  ·  stroke 2.0  ·  round caps"
+        text: "W4 ICONS  ·  19 glyphs  ·  24 px grid  ·  stroke 2.0  ·  round caps"
         color: Tokens.textLabel
         font.pixelSize: 20
         font.family: Tokens.fontFamily
