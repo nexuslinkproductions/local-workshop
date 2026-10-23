@@ -549,7 +549,7 @@ Item {
                 hero: deck.hero
                 expanded: deck.focusId === "launcher"
 
-                onLaunch: deck.launchRequested(slug)
+                onLaunch: function (launcherSlug) { deck.launchRequested(launcherSlug) }
             }
 
             FindField {
@@ -563,14 +563,14 @@ Item {
                 filter: deck.findFilter
                 placeholder: "Find"
 
-                onFilterRequested: deck.findFilter = requested
+                onFilterRequested: function (requestedFilter) { deck.findFilter = requestedFilter }
             }
 
             FindResults {
                 id: findResults
 
                 x: deck.findX + (deck.findBoxW - width) / 2
-                y: deck.findY + deck.findFieldHeight + Tokens.sp3
+                y: deck.findY + Tokens.findFieldHeight + Tokens.sp3
                 results: deck.findResults
                 filter: deck.findFilter
                 query: deck.findQuery
@@ -691,7 +691,7 @@ Item {
                         required property var modelData
                         required property int index
 
-                        width: diskColumn.width
+                        width: parent.width
                         height: Tokens.sp4
 
                         DeckLabel {
