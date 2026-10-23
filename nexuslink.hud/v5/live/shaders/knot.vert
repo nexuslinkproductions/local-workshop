@@ -105,6 +105,13 @@ const float LEG = 10.8;           // one leg, s (2 LEG + HOLD_A = CYC, no hold o
 // lit area (a blob, frozen). The morph now goes triquetra to form 1 only and
 // never holds on it; form 2 stays in the texture for a later, calmer bake.
 const float STAGGER = 0.20;       // per point stagger, share of the leg
+// FIX-KNOT2: blend cap at the apex (partial morph). Value from the apex sweep in
+// knot-continuity.py: apex silhouette IoU 0.45 at cap 0.45, 0.518 at 0.35; 0.30 leaves margin.
+const float MORPH_CAP = 0.30;
+// FIX-KNOT2 hold life: a brightness-only crest travels along each strand, one
+// loop per HOLD_CREST_S wall s (17 s, inside the 14 to 20 s brief window), always on.
+const float HOLD_CREST_S = 17.0;
+const float HOLD_CREST_AMP = 0.30;
 
 // CALM (P4): sway, brightness and breathing
 const float SWAY_DEG = 0.0;       // pitch and roll amplitude, was 1.6 deg (no sway)
@@ -301,7 +308,9 @@ void main() {
     float xm = morphX(tw);
     // stagger: lobe 0 leads, lobe 2 trails, so the morph travels round the knot
     float hstag = (0.0 * w0 + 0.5 * w1 + 1.0 * w2) / wsum;
-    float sm = smootherstep01((xm - STAGGER * hstag) / (1.0 - STAGGER));
+    // FIX-KNOT2: the blend is capped at MORPH_CAP, so the apex is a partial morph
+    // and the silhouette never leaves the triquetra family (IoU >= 0.5 at apex).
+    float sm = MORPH_CAP * smootherstep01((xm - STAGGER * hstag) / (1.0 - STAGGER));
 
     vec3 Pm = mix(P, Pform, sm);
     vec3 Nm = normalize(mix(N3, Nform, sm));
@@ -497,6 +506,10 @@ void main() {
     float alpha = aCore * (0.55 + 0.45 * dd) * (0.95 + 0.05 * br0) * (1.0 - occl2)
                 * vis * GAIN * mix(0.80, 1.55, clamp((bfac - 0.60) / 1.10, 0.0, 1.0));
     alpha *= mix(1.0, crowd, 0.9);
+    // FIX-KNOT2 hold life: brightness only, a crest travelling along the strand
+    // (no position change). Always on, so the hold is never still.
+    float crestF = fract(su - tw / HOLD_CREST_S + 0.5) - 0.5;
+    alpha *= 1.0 + HOLD_CREST_AMP * exp(-(crestF / 0.12) * (crestF / 0.12));
     // cap per dot so overlapping dots cannot add up to a clipped white patch;
     // the ring (cls 1) is a thin sparse circle, kept at 70 percent of the ribbon
     alpha = min(alpha, ALPHA_CAP) * DIM * (cls < 0.5 ? 1.0 : 0.70);
