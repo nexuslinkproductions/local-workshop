@@ -23,8 +23,9 @@ Exported surface (what F8a's ``hudfix.py`` imports)::
 self-check), ``now`` (callable returning epoch seconds), ``dry_run`` (bool),
 ``host`` ("mac" or "linux"), ``state_dir`` / ``cache_dir`` / ``cache_path``,
 ``tailnet_gateway`` (host override), ``target`` (jitter target override),
-``dns_name``, ``cache`` (bool), ``timeout_scale`` (float, multiplies every
-command timeout). Unknown keys are ignored, a missing key takes
+``dns_name``, ``cache`` (bool), ``timeout_scale`` (float, 0.01 to 3600,
+multiplies every command timeout; the CLI refuses anything else with exit 2).
+Unknown keys are ignored, a missing key takes
 the live default. Nothing here imports F8a.
 
 Actions
@@ -73,6 +74,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import math
 import os
 import re
 import socket
@@ -104,6 +106,12 @@ PING_TIMEOUT_S = 25.0
 JITTER_TIMEOUT_S = 40.0
 PROBE_TIMEOUT_S = 10.0
 DNS_TIMEOUT_S = 3.0
+
+# --timeout-scale is a documented multiplier, not an unbounded one: the top of
+# the range is 3600, so 40 s becomes 40 h, still far under the poll timeout
+# that used to overflow at scale 1000000.
+TIMEOUT_SCALE_MIN = 0.01
+TIMEOUT_SCALE_MAX = 3600.0
 
 FIXTURE_MAIN = "network.json"
 FIXTURE_MAIN_DOWN = "network_down.json"
@@ -316,26 +324,88 @@ def fixture_text(fixture, key):
 # command runner
 # --------------------------------------------------------------------------
 
+def validate_timeout_scale(value):
+    """(scale, reason). The one gate for ``--timeout-scale``, called by the CLI.
+
+    The multiplier exists for slow hosts, so its range is stated: 0.01 to 3600.
+    Anything else, NaN and the infinities included, is a bad argument and is
+    refused with exit 2 before a ctx is built. That matters: 1000000 times a
+    10 s base overflows the poll timeout inside ``subprocess.run`` with an
+    ``OverflowError``, and ``inf`` cannot be converted to an integer at all, so
+    the value must never reach the conversion.
+    """
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        return None, ("--timeout-scale must be a number between %g and %g"
+                      % (TIMEOUT_SCALE_MIN, TIMEOUT_SCALE_MAX))
+    if not math.isfinite(scale):
+        return None, ("--timeout-scale must be finite, between %g and %g"
+                      % (TIMEOUT_SCALE_MIN, TIMEOUT_SCALE_MAX))
+    if scale < TIMEOUT_SCALE_MIN or scale > TIMEOUT_SCALE_MAX:
+        return None, ("--timeout-scale must be between %g and %g, got %g"
+                      % (TIMEOUT_SCALE_MIN, TIMEOUT_SCALE_MAX, scale))
+    return scale, None
+
+
 def timeout_for(ctx, base):
     """``base`` seconds times ``ctx["timeout_scale"]``: the one place it is read.
 
     ``--timeout-scale`` exists for slow hosts, so it multiplies every command
-    timeout and nothing else. A missing, non numeric or non positive scale
-    leaves the base alone; the CLI rejects a non positive value before a ctx
-    is ever built.
+    timeout and nothing else. The CLI refuses anything outside the documented
+    range before a ctx is ever built (``validate_timeout_scale``); a ctx built
+    by hand with no scale, a non numeric one or one outside that range leaves
+    the base alone, so no timeout can be infinite or overflow the poll call.
     """
     scale = _ctx_value(ctx, "timeout_scale", 1.0)
     try:
         scale = float(scale)
     except (TypeError, ValueError):
         return base
-    if not scale > 0:
+    if not math.isfinite(scale) or scale < TIMEOUT_SCALE_MIN or scale > TIMEOUT_SCALE_MAX:
         return base
     return round(base * scale, 4)
 
 
+def trace_begin(ctx):
+    """Start a run trace on ``ctx`` and return it.
+
+    ``_run`` appends ``{"argv": [...], "exit": code}`` to this list for every
+    command it issues, and a payload publishes the list itself as ``commands``,
+    so the argv a run reports cannot drift from the argv the runner was called
+    with. It lives on the ctx because latency calls ``_run`` from two probe
+    threads and both must reach the same list; each operation replaces it
+    rather than appending, so a reused ctx never carries a stale trace.
+    """
+    trace = []
+    if isinstance(ctx, dict):
+        ctx["_trace"] = trace
+    else:
+        setattr(ctx, "_trace", trace)
+    return trace
+
+
+def trace_of(ctx):
+    trace = _ctx_value(ctx, "_trace")
+    return trace if isinstance(trace, list) else None
+
+
 def _run(argv, ctx, timeout):
-    """(stdout, stderr, exit code). An injected runner replaces subprocess."""
+    """(stdout, stderr, exit code). An injected runner replaces subprocess.
+
+    The argv is recorded here, once, after the call, so every command a run
+    issues lands in the trace whether it came from subprocess or an injected
+    runner, and whether it succeeded or not.
+    """
+    argv = [str(piece) for piece in argv]
+    out, err, code = _run_once(argv, ctx, timeout)
+    trace = trace_of(ctx)
+    if trace is not None:
+        trace.append({"argv": list(argv), "exit": code})
+    return out, err, code
+
+
+def _run_once(argv, ctx, timeout):
     timeout = timeout_for(ctx, timeout)
     runner = _ctx_value(ctx, "runner")
     if runner is not None:
@@ -847,6 +917,12 @@ def resolve_tailnet_gateway(ctx, fixture=None):
 # --------------------------------------------------------------------------
 
 def envelope(action, ctx, source, **fields):
+    """The one payload constructor. Every success carries ``generated_at``.
+
+    Run, plan and dry-run payloads all come through here, so no emit site can
+    skip the timestamp or the four identity keys: a plan is built by
+    ``_plan_base`` on top of this, and ``_dry_run_payload`` copies the plan.
+    """
     payload = {
         "ok": True,
         "generated_at": utc_now_iso(),
@@ -864,26 +940,23 @@ def _source(ctx):
 
 def _plan_base(action, ctx):
     host = _host(ctx)
-    return {
-        "ok": True,
-        "action": action,
-        "class": ACTIONS[action]["class"],
-        "plan": True,
-        "dry_run": True,
-        "ran": False,
-        "changes_nothing": ACTIONS[action]["class"] == "read",
-        "host": host,
-        "linux_only": ACTIONS[action]["linux_only"],
-        "needs_confirmation": False,
-        "items": [],
-        "bytes": 0,
-        "total_bytes": 0,
-        "commands": [],
-        "effect": "",
-        "interrupts": None,
-        "notes": [],
-        "source": _source(ctx),
-    }
+    return envelope(
+        action, ctx, _source(ctx),
+        plan=True,
+        dry_run=True,
+        ran=False,
+        changes_nothing=ACTIONS[action]["class"] == "read",
+        host=host,
+        linux_only=ACTIONS[action]["linux_only"],
+        needs_confirmation=False,
+        items=[],
+        bytes=0,
+        total_bytes=0,
+        commands=[],
+        effect="",
+        interrupts=None,
+        notes=[],
+    )
 
 
 def _command(argv, why):
@@ -937,6 +1010,7 @@ def plan_latency(ctx=None):
     plan = _plan_base("network.latency", ctx)
     fixture = load_fixture(ctx) if _fixture_path(ctx) is not None else None
 
+    resolution = []
     if fixture is not None:
         gateway = ping_target(fixture_text(fixture, "ping_tailnet_gateway")) \
             or fixture.get("tailnet_gateway")
@@ -944,15 +1018,23 @@ def plan_latency(ctx=None):
         gateway_reason = None if gateway else "fixture has no tailnet ping capture"
         gateway_source = "fixture"
     else:
+        trace = trace_begin(ctx)
         gateway, gateway_reason, gateway_source = resolve_tailnet_gateway(ctx, None)
         public = PUBLIC_HOST
+        # Resolving the peer is a real read, and the run issues it too: the
+        # plan lists it from the trace so the two command lists stay identical.
+        resolution = [{"argv": list(item["argv"]),
+                       "why": "resolve the tailnet gateway (read only)"}
+                      for item in trace]
 
-    commands = []
+    ping_cmd = _ctx_value(ctx, "ping_cmd")
+    ping_commands = []
     if gateway:
-        commands.append(_command(ping_argv(gateway, LATENCY_COUNT),
-                                 "5 pings to the tailnet gateway, mean and mdev"))
-    commands.append(_command(ping_argv(public, LATENCY_COUNT),
-                             "5 pings to the public resolver, mean and mdev"))
+        ping_commands.append(_command(ping_argv(gateway, LATENCY_COUNT, ping_cmd=ping_cmd),
+                                      "5 pings to the tailnet gateway, mean and mdev"))
+    ping_commands.append(_command(ping_argv(public, LATENCY_COUNT, ping_cmd=ping_cmd),
+                                  "5 pings to the public resolver, mean and mdev"))
+    commands = list(resolution) + ping_commands
 
     plan["targets"] = {"tailnet_gateway": gateway, "public": public}
     plan["gateway_source"] = gateway_source
@@ -960,7 +1042,7 @@ def plan_latency(ctx=None):
         plan["notes"].append("tailnet gateway: %s" % gateway_reason)
     plan["commands"] = commands
     plan["items"] = [{"what": "ping capture", "host": item["argv"][-1],
-                      "samples": LATENCY_COUNT, "bytes": 0} for item in commands]
+                      "samples": LATENCY_COUNT, "bytes": 0} for item in ping_commands]
     plan["effect"] = ("takes about %d s (5 pings per target), writes the %d s cache, "
                       "changes nothing on the network" % (LATENCY_COUNT, int(CACHE_TTL_S)))
     plan["cache"] = cache_note(ctx, LATENCY_CACHE_NAME, latency_key(ctx))
@@ -993,18 +1075,17 @@ def _latency_payload(ctx, fixture=None):
             public_entry = net_entry(public, parse_ping(public_text))
         gateway_source = "fixture"
         gateway_reason = None if gateway else "no tailnet gateway in the fixture"
-        commands = []
+        command_entries = []
         source = "fixture"
     else:
+        trace = trace_begin(ctx)
         gateway, gateway_reason, gateway_source = resolve_tailnet_gateway(ctx, None)
         public = PUBLIC_HOST
         entries = {}
-        commands = []
 
         def probe(key, target):
-            entry, argv, _err, _code = measure_ping(target, LATENCY_COUNT, ctx, PING_TIMEOUT_S)
+            entry, _argv, _err, _code = measure_ping(target, LATENCY_COUNT, ctx, PING_TIMEOUT_S)
             entries[key] = entry
-            commands.append(argv)
 
         threads = []
         if gateway:
@@ -1020,6 +1101,7 @@ def _latency_payload(ctx, fixture=None):
         public_entry = entries.get("public") or null_entry(
             public, "public probe did not finish in time")
         source = "live"
+        command_entries = list(trace)
 
     entries = [entry for entry in (gateway_entry, public_entry) if entry.get("rtt_ms") is not None]
     payload = envelope(
@@ -1038,7 +1120,7 @@ def _latency_payload(ctx, fixture=None):
             "worst_rtt_ms": max((entry["rtt_ms"] for entry in entries), default=None),
             "any_loss": any((entry.get("loss") or 0) > 0 for entry in entries) if entries else None,
         },
-        commands=[{"argv": [str(piece) for piece in argv]} for argv in commands],
+        commands=command_entries,
     )
     if gateway_reason:
         payload["degraded"] = True
@@ -1298,7 +1380,7 @@ def run_route(ctx=None, confirm=None):
     if cached is not None:
         return _cache_hit_payload(cached, age)
 
-    commands = []
+    trace = trace_begin(ctx)
     if fixture is not None:
         netstat_text = fixture_text(fixture, "netstat_route")
         ifconfig_text = fixture_text(fixture, "ifconfig")
@@ -1307,13 +1389,10 @@ def run_route(ctx=None, confirm=None):
         host_label = fixture.get("host") if isinstance(fixture.get("host"), str) else host
     else:
         netstat_text, err, code = _run(["netstat", "-rn", "-f", "inet"], ctx, PROBE_TIMEOUT_S)
-        commands.append({"argv": ["netstat", "-rn", "-f", "inet"], "exit": code})
         if not netstat_text and err:
             return _refusal(short("netstat failed: %s" % err, 160), "unavailable")
         ifconfig_text, err, code = _run(["ifconfig"], ctx, PROBE_TIMEOUT_S)
-        commands.append({"argv": ["ifconfig"], "exit": code})
         dns_text, err, code = _run(["scutil", "--dns"], ctx, PROBE_TIMEOUT_S)
-        commands.append({"argv": ["scutil", "--dns"], "exit": code})
         source = "live"
         host_label = host
 
@@ -1354,7 +1433,7 @@ def run_route(ctx=None, confirm=None):
                                                  if any(in_tailnet(entry["address"])
                                                         for entry in iface["inet"]))}),
         missing=missing,
-        commands=commands,
+        commands=list(trace),
     )
     if gateway is None:
         payload["ok"] = False
@@ -1513,13 +1592,21 @@ def plan_connectivity(ctx=None):
     netstat_text, _err, _code = _run(["netstat", "-rn", "-f", "inet"], ctx, PROBE_TIMEOUT_S)
     gateway, _iface = local_route(netstat_text)
 
-    commands = []
+    # The exact argv a live run issues, in the order it issues them: the
+    # netstat and ifconfig reads, the tunnel status, then the two pings. The
+    # run publishes its trace, so plan and run cannot drift; the self-check
+    # compares the two lists.
+    ping_cmd = _ctx_value(ctx, "ping_cmd")
+    commands = [
+        _command(["netstat", "-rn", "-f", "inet"], "default route gateway"),
+        _command(["ifconfig"], "interfaces and the tunnel address"),
+        _command(["tailscale", "status", "--json"], "tunnel up"),
+    ]
     if gateway:
-        commands.append(_command(ping_argv(gateway, CONNECTIVITY_COUNT),
+        commands.append(_command(ping_argv(gateway, CONNECTIVITY_COUNT, ping_cmd=ping_cmd),
                                  "gateway reachable"))
-    commands.append(_command(ping_argv(PUBLIC_HOST, CONNECTIVITY_COUNT),
+    commands.append(_command(ping_argv(PUBLIC_HOST, CONNECTIVITY_COUNT, ping_cmd=ping_cmd),
                              "public reachable"))
-    commands.append(_command(["tailscale", "status", "--json"], "tunnel up"))
     plan["checks"] = ["gateway_reachable", "public_reachable", "dns_resolves", "tunnel_up"]
     plan["commands"] = commands
     plan["items"] = [{"what": "ping", "samples": CONNECTIVITY_COUNT, "bytes": 0},
@@ -1551,7 +1638,7 @@ def run_connectivity(ctx=None, confirm=None):
     if cached is not None:
         return _cache_hit_payload(cached, age)
     source = "fixture" if fixture is not None else "live"
-    commands = []
+    trace = trace_begin(ctx)
 
     if fixture is not None:
         netstat_text = fixture_text(fixture, "netstat_route")
@@ -1572,10 +1659,8 @@ def run_connectivity(ctx=None, confirm=None):
     else:
         netstat_text, netstat_err, netstat_code = _run(
             ["netstat", "-rn", "-f", "inet"], ctx, PROBE_TIMEOUT_S)
-        commands.append({"argv": ["netstat", "-rn", "-f", "inet"], "exit": netstat_code})
         ifconfig_text, ifconfig_err, ifconfig_code = _run(
             ["ifconfig"], ctx, PROBE_TIMEOUT_S)
-        commands.append({"argv": ["ifconfig"], "exit": ifconfig_code})
         gateway_text = public_text = None
         status, status_reason = tailscale_status(ctx, None)
         dns_result = dns_lookup(dns_name, ctx)
@@ -1591,7 +1676,6 @@ def run_connectivity(ctx=None, confirm=None):
     elif gateway:
         entry, argv, _err, _code = measure_ping(gateway, CONNECTIVITY_COUNT, ctx,
                                                 PING_TIMEOUT_S)
-        commands.append({"argv": argv})
         gateway_ping = entry
     else:
         gateway_ping = None
@@ -1616,7 +1700,6 @@ def run_connectivity(ctx=None, confirm=None):
     else:
         entry, argv, _err, _code = measure_ping(PUBLIC_HOST, CONNECTIVITY_COUNT, ctx,
                                                 PING_TIMEOUT_S)
-        commands.append({"argv": argv})
         public_ping = entry
     if public_ping is None:
         public_check = _check(False, "no public ping capture in the fixture",
@@ -1679,7 +1762,7 @@ def run_connectivity(ctx=None, confirm=None):
         failed=failed,
         reason=None if not failed else "; ".join(
             "%s: %s" % (name, checks[name]["reason"]) for name in failed),
-        commands=commands,
+        commands=list(trace),
     )
     written = cache_put(ctx, CONNECTIVITY_CACHE_NAME, key, payload)
     if written:
@@ -1783,8 +1866,10 @@ def build_parser():
     parser.add_argument("--target", metavar="HOST", help="override the jitter target")
     parser.add_argument("--dns-name", metavar="NAME", help="name used by the DNS check")
     parser.add_argument("--host", choices=("mac", "linux"), help="override host detection")
-    parser.add_argument("--timeout-scale", type=float, default=1.0,
-                        help="multiply every command timeout (slow hosts)")
+    parser.add_argument("--timeout-scale", type=float, default=1.0, metavar="FACTOR",
+                        help="multiply every command timeout; a finite float from "
+                             "%g to %g, default 1.0 (slow hosts)"
+                             % (TIMEOUT_SCALE_MIN, TIMEOUT_SCALE_MAX))
     return parser
 
 
@@ -1818,13 +1903,16 @@ def print_json(payload, compact):
 def main(argv=None):
     args = build_parser().parse_args(argv)
 
+    # A bad scale is a bad argument: refuse it here, before any ctx exists or
+    # any timeout is converted, so an absurd value cannot reach subprocess.
+    scale, scale_reason = validate_timeout_scale(args.timeout_scale)
+    if scale_reason is not None:
+        print_json({"ok": False, "reason": scale_reason, "kind": "bad_argument"}, args.json)
+        return 2
+    args.timeout_scale = scale
+
     if args.self_check:
         return self_check(compact=args.json)
-
-    if not args.timeout_scale > 0:
-        print_json({"ok": False, "reason": "--timeout-scale must be greater than 0"},
-                   args.json)
-        return 2
 
     chosen = [flag for flag in (args.list, args.plan, args.run) if flag]
     if len(chosen) != 1:
@@ -2568,6 +2656,153 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                 "leaves the base numbers alone" % scale)
 
     record("timeout_scale", check_timeout_scale)
+
+    # 19. the payload contract: a stated scale range refused before any timeout
+    #     conversion, generated_at on every success including plans and dry
+    #     runs, and commands equal to the trace the runner actually saw
+    def check_payload_contract():
+        stamp_re = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        stamped = []
+
+        def assert_stamp(payload, label):
+            value = payload.get("generated_at")
+            assert_true(isinstance(value, str) and bool(stamp_re.match(value)),
+                        "%s carries no UTC ISO generated_at: %r" % (label, value))
+            stamped.append(label)
+
+        # every success: plan, dry run, run, and --list
+        for name in sorted(ACTIONS):
+            ctx = fixture_ctx(healthy_path)
+            assert_stamp(ACTIONS[name]["plan"](ctx), "%s plan" % name)
+            assert_stamp(ACTIONS[name]["run"](dict(ctx, dry_run=True)),
+                         "%s dry run" % name)
+            if name != "network.flush-dns":
+                # flush-dns refuses in fixture mode by design; its run payload
+                # is stamped below through a silent runner instead
+                assert_stamp(ACTIONS[name]["run"](ctx), "%s fixture run" % name)
+        flush_ctx = default_ctx()
+        flush_ctx.update({"runner": CountingRunner(), "host": "mac",
+                          "state_dir": str(temp_root / "stamp-flush")})
+        flush_payload = run_flush_dns(flush_ctx)
+        assert_true(flush_payload["ok"] is True and flush_payload["ran"] is True,
+                    "the stamped flush-dns run did not run: %r" % flush_payload)
+        assert_stamp(flush_payload, "network.flush-dns run")
+        assert_stamp(list_payload(), "--list")
+
+        # the scale is a stated range, and the CLI refuses outside it (exit 2)
+        for value in (0.01, 0.25, 1.0, 3600.0):
+            scale, reason = validate_timeout_scale(value)
+            assert_true(scale == value and reason is None,
+                        "scale %r was refused: %r" % (value, reason))
+        for value in (0.0, -1.0, 0.009, 3600.5, 1000000.0, float("inf"), float("nan")):
+            scale, reason = validate_timeout_scale(value)
+            assert_true(scale is None and bool(reason),
+                        "scale %r was accepted as %r" % (value, scale))
+        refused_cli = []
+        for text in ("1000000", "inf", "nan", "-1"):
+            out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                                  "--run", "network.route", "--json",
+                                  "--timeout-scale", text,
+                                  "--state-dir", str(temp_root / "scale-cli")],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            body = out.stdout.decode("utf-8")
+            stderr = out.stderr.decode("utf-8")
+            assert_true(out.returncode == 2,
+                        "--timeout-scale %s exited %d, not 2" % (text, out.returncode))
+            assert_true("Traceback" not in stderr,
+                        "--timeout-scale %s raised a traceback: %s" % (text, stderr))
+            assert_true(body.count("\n") == 1,
+                        "--timeout-scale %s printed %d lines" % (text, body.count("\n")))
+            payload = json.loads(body)
+            assert_true(payload.get("ok") is False, "--timeout-scale %s is not ok:false" % text)
+            assert_true(payload.get("kind") == "bad_argument",
+                        "--timeout-scale %s kind %r" % (text, payload.get("kind")))
+            assert_true("0.01" in (payload.get("reason") or ""),
+                        "--timeout-scale %s reason does not state the range: %r"
+                        % (text, payload.get("reason")))
+            refused_cli.append(text)
+
+        # commands is the run trace: latency (3 calls) and connectivity (5)
+        fixture_data = json.loads(healthy_path.read_text(encoding="utf-8"))
+        ping_text = ("PING 100.100.0.1 (100.100.0.1): 56 data bytes\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=0 ttl=64 time=5.100 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=1 ttl=64 time=5.000 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=2 ttl=64 time=5.200 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=3 ttl=64 time=5.050 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=4 ttl=64 time=5.150 ms\n"
+                     "\n--- 100.100.0.1 ping statistics ---\n"
+                     "5 packets transmitted, 5 packets received, 0.0% packet loss\n"
+                     "round-trip min/avg/max/stddev = 5.000/5.100/5.200/0.070 ms\n")
+        answers = {
+            "netstat": (fixture_data["commands"]["netstat_route"], "", 0),
+            "ifconfig": (fixture_data["commands"]["ifconfig"], "", 0),
+            "tailscale": (json.dumps(fixture_data["tailscale"]), "", 0),
+            "ping": (ping_text, "", 0),
+        }
+
+        def live_ctx(label):
+            runner = CountingRunner(answers=answers)
+            ctx = default_ctx()
+            ctx.update({"runner": runner, "host": "mac", "cache": False,
+                        "state_dir": str(temp_root / label)})
+            return ctx, runner
+
+        def key(argv):
+            return tuple(str(piece) for piece in argv)
+
+        parity = []
+        for name, plan_fn, expected in (("network.latency", plan_latency, 3),
+                                        ("network.connectivity", plan_connectivity, 5)):
+            ctx, runner = live_ctx("parity-%s" % name.split(".")[-1])
+            payload = ACTIONS[name]["run"](ctx)
+            assert_true(payload.get("ok") is True,
+                        "%s live-shaped run failed: %r" % (name, payload.get("reason")))
+            trace = [list(call) for call in runner.calls]
+            listed = [item["argv"] for item in payload["commands"]]
+            assert_true(len(trace) == expected,
+                        "%s issued %d commands, expected %d" % (name, len(trace), expected))
+            assert_true(len(listed) == len(trace),
+                        "%s listed %d commands for %d runner calls"
+                        % (name, len(listed), len(trace)))
+            assert_true(sorted(key(argv) for argv in listed) == sorted(key(call) for call in trace),
+                        "%s commands do not match the runner calls: %r vs %r"
+                        % (name, listed, trace))
+            for item in payload["commands"]:
+                assert_true("exit" in item, "%s run command has no exit: %r" % (name, item))
+
+            plan_ctx, _plan_runner = live_ctx("parity-plan-%s" % name.split(".")[-1])
+            plan = plan_fn(plan_ctx)
+            planned = [item["argv"] for item in plan["commands"]]
+            assert_true(sorted(key(argv) for argv in planned) == sorted(key(call) for call in trace),
+                        "%s plan lists %r while the run issues %r" % (name, planned, trace))
+            for item in plan["commands"]:
+                assert_true("why" in item, "%s plan command has no why: %r" % (name, item))
+            parity.append("%s %d/%d" % (name, len(listed), len(trace)))
+
+        # a cache hit inherits the whole list, tailscale status included
+        clock = {"now": 3000.0}
+        ctx = default_ctx()
+        runner = CountingRunner(answers=answers)
+        ctx.update({"runner": runner, "host": "mac", "now": lambda: clock["now"],
+                    "state_dir": str(temp_root / "parity-cache")})
+        first = run_connectivity(ctx)
+        issued = len(runner.calls)
+        second = run_connectivity(ctx)
+        assert_true(first["ok"] is True, "the cached connectivity run failed")
+        assert_true(second.get("cached") is True, "the second connectivity call is not cached")
+        assert_true(len(runner.calls) == issued, "the cache hit issued %d commands"
+                    % (len(runner.calls) - issued))
+        assert_true(len(second["cached_from"]["commands"]) == issued,
+                    "cached_from lists %d of the %d commands the run issued"
+                    % (len(second["cached_from"]["commands"]), issued))
+        assert_true(any(key(item["argv"])[-1] == "--json" for item in
+                        second["cached_from"]["commands"]),
+                    "cached_from lost the tailscale status call")
+        return ("%d payloads stamped, plans and dry runs included; scale range "
+                "0.01 to 3600, %d CLI refusals at exit 2; %s; cached_from %d/%d"
+                % (len(stamped), len(refused_cli), ", ".join(parity), issued, issued))
+
+    record("payload_contract", check_payload_contract)
 
     failed = [check for check in checks if not check["ok"]]
     payload = {

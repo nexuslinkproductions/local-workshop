@@ -24,11 +24,17 @@ asserted in the self-check rather than promised in prose.
 | `network.connectivity` | read | four checks: gateway reachable (the default route gateway, pinged), public reachable, DNS resolves, tunnel up | about 5 s | 10 s |
 
 Every successful payload carries `ok`, `generated_at` (UTC ISO), `source`
-(`live` or `fixture`), `action` and `class`. Error answers are smaller on
-purpose: a refusal or a failed fixture read is `ok: false` with `reason` and
-`kind` and nothing else, and an unknown action is `ok: false` with `reason` and
-`actions`. A read that did run but measured nothing keeps the envelope and adds
-`ok: false` with a `reason`.
+(`live` or `fixture`), `action` and `class`, a plan and a dry run included: all
+three are built by one envelope constructor, so no emit site can skip the
+timestamp. A run payload lists `commands` as `{argv, exit}` entries, a plan
+lists `{argv, why}`, both in run order and both naming the same argv sequence.
+The run's list is the trace `_run` recorded for that operation, so it cannot
+omit a command the run issued, the `tailscale status --json` gateway
+resolution read included.
+Error answers are smaller on purpose: a refusal or a failed fixture read is
+`ok: false` with `reason` and `kind` and nothing else, and an unknown action is
+`ok: false` with `reason` and `actions`. A read that did run but measured
+nothing keeps the envelope and adds `ok: false` with a `reason`.
 
 ### Latency: what "tailnet gateway" means
 
@@ -113,6 +119,21 @@ Fixture mode refuses to run it (`kind: "fixture"`, exit 0) and the self-check
 only ever calls `plan` and `--dry-run` with a runner that raises if touched, so
 no test can flush a real cache.
 
+## Timeouts
+
+`--timeout-scale FACTOR` multiplies every command timeout, for a slow host. The
+accepted range is a finite float from 0.01 to 3600; anything else, NaN and the
+infinities included, is a bad argument:
+
+    {"ok": false, "reason": "--timeout-scale must be between 0.01 and 3600, got 1e+06",
+     "kind": "bad_argument"}
+
+on stdout, exit 2, refused before a context is built and before any timeout is
+computed. The cap is not decoration: 1000000 times a 10 s base overflows the
+poll timeout inside `subprocess.run` (an `OverflowError` traceback, exit 1), and
+`inf` cannot be converted to an integer at all, so both used to escape the
+"exit 2 only for bad arguments" rule.
+
 ## Cache
 
 Four files for the four reads, all atomic (temp file plus `os.replace`):
@@ -128,8 +149,9 @@ for latency, the action and host for route and connectivity), because a key
 that needed a `tailscale status` call to compute would make a cache hit issue a
 command. The resolved peer is inside the cached payload. A hit returns
 `cached: true` with `cache_age_s`, the original numbers, an empty `commands`
-list (the hit ran nothing) and the argv of the run it answers from under
-`cached_from`; a miss returns `cached: false`. `flush-dns` is never cached: it
+list (the hit ran nothing) and every `{argv, exit}` entry of the run it answers
+from under `cached_from`, the gateway resolution read included; a miss returns
+`cached: false`. `flush-dns` is never cached: it
 exists to be repeated. `--state-dir` or `--cache-path` moves the files.
 `--fixture` never reads or writes them, with or without `--cache-path`.
 
@@ -198,10 +220,12 @@ host names and the owner's name before committing.
 
     ACTIONS = {"<name>": {"class", "doc", "plan", "run", "linux_only"}}
 
-`plan(ctx=None)` returns the dry-run object with `items`, `bytes` and
-`total_bytes` (always 0 here, nothing is deleted), `commands` (exact argv),
+`plan(ctx=None)` returns the dry-run object with `generated_at`, `items`,
+`bytes` and `total_bytes` (always 0 here, nothing is deleted), `commands`,
 `effect`, `interrupts`, `needs_confirmation`, `changes_nothing`, and for
-latency and jitter a `cache` block.
+latency and jitter a `cache` block. Its `commands` are `{argv, why}` entries in
+run order, naming exactly the argv the run publishes as `{argv, exit}` from its
+trace; the self-check compares the two lists so they cannot drift.
 
 `run(ctx=None, confirm=None)` performs the action. With `ctx["dry_run"]` true
 it returns the plan with `ran: false`. `confirm` is accepted and ignored: no
@@ -213,13 +237,15 @@ ignored: `fixture`, `runner`, `now`, `dry_run`, `host`, `state_dir`,
 `timeout_scale`, `ping_cmd`. `runner` is `(argv, timeout) -> (stdout, stderr,
 code)` and exists so a test can prove no command ran. `timeout_scale` is the
 `--timeout-scale` factor: every value passed to `runner` and to `subprocess` is
-the base timeout times it, from the one place `_run` reads it.
+the base timeout times it, from the one place `_run` reads it. The CLI accepts
+0.01 to 3600 and refuses anything else with exit 2 (see Timeouts); a ctx built
+by hand with a value outside that range, or with NaN, leaves the base alone.
 
 ## Self-check
 
     python3 nexuslink.hud/v5/feeds/hudfix_network.py --self-check
 
-exit 0 and 18 checks, each named in the JSON: the action table and classes; the
+exit 0 and 19 checks, each named in the JSON: the action table and classes; the
 binary allowlist over fixture plans, live plans and real calls; the CLI
 contract (`--list --json` is one line, unknown action exit 2); a missing named
 fixture is exit 2 while three malformed files are ok false with exit 0; latency
@@ -232,8 +258,12 @@ answering the second call with no commands, the original argv under
 creating no file and ignoring a `--cache-path` it was handed; `flush-dns`
 calling neither the runner nor `subprocess` in a plan or a dry run; the host
 refusals; no absolute home path; five plans leaving the state dir byte
-identical; and `--timeout-scale 0.25` reaching every command timeout while the
-default 1.0 leaves the base numbers alone.
+identical; `--timeout-scale 0.25` reaching every command timeout while the
+default 1.0 leaves the base numbers alone; and the payload contract: a stamp on
+every plan, dry run, run and `--list`, the stated scale range refused at both
+ends by the validator and at the CLI (exit 2, no traceback), and `commands`
+equal to the runner's call count and argv for latency (3) and connectivity (5),
+with `cached_from` carrying all of them.
 
 ## Not offered, and why
 
