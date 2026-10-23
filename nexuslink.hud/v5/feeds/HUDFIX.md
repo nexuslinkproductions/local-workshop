@@ -143,6 +143,10 @@ One JSON line per `plan` and per `run`, refusals included:
 
 `result` is `planned`, `absent`, `refused`, `ran` or `failed`. `list` and
 `status` are not logged - they change nothing. `--log PATH` overrides for a test.
+`confirmed` is true only when `--confirm` matched the action name exactly; a
+missing or mistyped token logs `false` beside `"result": "refused"`, so the
+field never claims that a refusal was confirmed. Fixture-mode calls are never
+logged, refusals included: `--fixture` replays a recording and writes nothing.
 
 ## Host gating
 
@@ -190,6 +194,16 @@ the GitHub CLI only as an exact name: `ghostty` is a terminal emulator and
 `cache-evict` takes the owner from the child's own name, so a deeper path is
 refused even when its last component looks like a known cache.
 
+"Exact" is byte for byte: no whitespace trimming and no case folding. `gh `,
+` gh` and `GH` are three names that are not `gh`, so `cache-top` reports them
+`attributed: false` and `cache-evict` refuses them with nothing moved. The case
+rule is a deliberate trade-off: on APFS `GH` and `gh` normally resolve to the
+same directory, while on a case-sensitive Linux filesystem they are two
+directories. Folding case would make `GH` evictable on Linux; refusing an
+unknown spelling is the safe direction, and the cost is that a directory
+created as `GH` has to be renamed to `gh` (or `ATTRIBUTION` taught its owner)
+before it can be cleared.
+
 `cache-pacman` keeps the newest copy of each package and orders versions with
 pacman's own `vercmp` rule (`hudfix_storage._vercmp`): epochs first, then
 numeric segments by value, then the release. `foo-1.10-1` is newer than
@@ -203,17 +217,17 @@ at a substitute, e.g. `--root npm=/tmp/fake/.npm`), `--path PATH` (an action's
 target), `--param k=v` (an action's option), `--quarantine-root PATH`,
 `--log PATH`, and `--fixture PATH` on `list`/`plan`/`status` to replay a recorded
 object for UI work. Fixture mode replays the file and nothing else: it runs no
-module discovery, lists no directory and reads no host state, so the same file
-prints the same bytes under any `$HOME`. A named file that does not exist is
-exit 2; a file that exists but cannot be read as one JSON object (empty,
-truncated, a list) is exit 0 with `{"ok": false, "reason": "...", "kind":
-"fixture"}` so the UI can show the bad recording instead of a crash. `run`
-refuses `--fixture` with exit 2.
+module discovery, lists no directory, reads no host state and writes no log
+line, so the same file prints the same bytes under any `$HOME`. A named file
+that does not exist is exit 2; a file that exists but cannot be read as one JSON
+object (empty, truncated, a list) is exit 0 with `{"ok": false, "reason": "...",
+"kind": "fixture"}` so the UI can show the bad recording instead of a crash.
+`run` refuses `--fixture` with exit 2.
 
 ## Self-checks
 
-    python3 nexuslink.hud/v5/feeds/hudfix.py --self-check          # 103 checks
-    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 166 checks
+    python3 nexuslink.hud/v5/feeds/hudfix.py --self-check          # 105 checks
+    python3 nexuslink.hud/v5/feeds/hudfix_storage.py --self-check  # 193 checks
 
 Both build their tree under `$TMPDIR`, drive the real CLI as a subprocess, and
 assert the tree digest before and after every plan, the exit code of every

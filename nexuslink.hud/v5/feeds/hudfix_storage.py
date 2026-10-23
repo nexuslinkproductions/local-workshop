@@ -62,8 +62,11 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -123,25 +126,32 @@ EXACT_ONLY = ("gh",)
 
 
 def attribute(name):
-    """Known owner for a cache directory name, else None. Case-insensitive.
+    """Known owner for a cache directory name, else None. Exact; case-sensitive.
 
     A name carries an owner when it equals a pattern or continues that pattern
     after ``-``, ``_`` or ``.``: ``uv`` and ``uv-3`` are uv, while ``ghostty`` is
     not ``gh`` and ``pipenv`` is not ``pip``. The longest matching pattern wins,
     so ``pip-tools`` beats ``pip``.
+
+    The comparison is byte-for-byte: no case folding and no whitespace trimming.
+    ``GH``, ``gh `` and `` gh`` are three names that are not ``gh``, so on a
+    case-sensitive filesystem they stay unattributed and cannot be evicted. On
+    APFS ``GH`` and ``gh`` normally resolve to the same directory, whose stored
+    name is whatever was created first; keeping the rule exact means a spelling
+    the engine does not know is never cleared, which is the safe direction. See
+    HUDFIX.md, "Attribution".
     """
     if not name:
         return None
-    low = name.lower().strip()
     for pattern, owner in ATTRIBUTION:
-        if low == pattern:
+        if name == pattern:
             return owner
     best = None
     for pattern, owner in ATTRIBUTION:
         if pattern in EXACT_ONLY:
             continue
-        following = low[len(pattern):len(pattern) + 1]
-        if low.startswith(pattern) and following in ("-", "_", "."):
+        following = name[len(pattern):len(pattern) + 1]
+        if name.startswith(pattern) and following in ("-", "_", "."):
             if best is None or len(pattern) > len(best[0]):
                 best = (pattern, owner)
     return best[1] if best else None
@@ -1378,13 +1388,13 @@ def _write(path, payload):
 
 def _touch_old(path, age_s, payload="x"):
     _write(path, payload)
-    stamp = __import__("time").time() - age_s
+    stamp = time.time() - age_s
     os.utime(path, (stamp, stamp))
     return path
 
 
 def _age_dir(path, age_s):
-    stamp = __import__("time").time() - age_s
+    stamp = time.time() - age_s
     os.utime(path, (stamp, stamp))
     return path
 
@@ -1422,6 +1432,11 @@ def _build_fake_home(base):
         "home/.cache/mystery-thing/uv-stuff/x": "D" * 300,
         "home/.cache/ghostty/blob": "G" * 500,
         "home/.cache/pipenv/blob": "I" * 200,
+        # Exact-or-separator means exact: a padded name is a different name and
+        # must never be attributed, so these three are never clearable.
+        "home/.cache/gh /payload.bin": "S" * 150,
+        "home/.cache/ gh/payload.bin": "L" * 150,
+        "home/.cache/uv /payload.bin": "W" * 150,
         "home/.cache/yay/pkg/PKGBUILD": "Y" * 128,
         "home/.cargo/registry/cache/pkg.crate": "C" * 512,
         "home/.cargo/registry/src/s/lib.rs": "S" * 256,
@@ -1445,7 +1460,7 @@ def _run_cli(base_args, argv, timeout=180):
 
 
 def self_check():  # noqa: C901 - one linear proof, on purpose
-    base = __import__("tempfile").mkdtemp(prefix="hudfix-storage-selfcheck-")
+    base = tempfile.mkdtemp(prefix="hudfix-storage-selfcheck-")
     checks = hudfix.Checks()
     summary = {"ok": False, "self_check": "hudfix_storage", "version": hudfix.VERSION,
                "generated_at": hudfix.utc_now_iso(), "workdir": hudfix.tilde(base)}
@@ -1587,9 +1602,14 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         # is not pip. Attribution continues a pattern only after - _ or .
         checks.eq("plan.top.ghostty_unattributed", owners.get("ghostty"), (False, None))
         checks.eq("plan.top.pipenv_unattributed", owners.get("pipenv"), (False, None))
+        checks.eq("plan.top.gh_trailing_space_unattributed", owners.get("gh "), (False, None))
+        checks.eq("plan.top.gh_leading_space_unattributed", owners.get(" gh"), (False, None))
+        checks.eq("plan.top.uv_trailing_space_unattributed", owners.get("uv "), (False, None))
         for name, want in (("ghostty", None), ("pipenv", None), ("gh", "github-cli"),
                            ("uv", "uv"), ("uv-3", "uv"), ("pip-tools", "pip-tools"),
-                           ("ms-playwright", "playwright"), ("PLAYWRIGHT", "playwright"),
+                           ("ms-playwright", "playwright"), ("PLAYWRIGHT", None),
+                           ("GH", None), ("Gh-x", None),
+                           ("gh ", None), (" gh", None), ("uv ", None),
                            ("mystery-thing", None), ("", None)):
             checks.eq("attribute.%s" % (name or "empty"), attribute(name), want)
         checks.ok("plan.top.total_bytes", ((top or {}).get("cache_total_bytes") or 0) >= 15488)
@@ -1639,6 +1659,26 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         checks.eq("evict.deep.run_exit", code, hudfix.EXIT_PROGRAMMING)
         checks.ok("evict.deep.still_there",
                   os.path.exists(os.path.join(deep_abs, "x")))
+
+        # ---- a padded name is not the pattern: never attributed, never cleared
+        padded_cases = (("gh_trailing", "gh "), ("gh_leading", " gh"),
+                        ("uv_trailing", "uv "))
+        for label, padded in padded_cases:
+            code, out, _err = cli(["plan", "cache-evict", "--path", padded, "--json"])
+            blocked = hudfix.one_object(out)
+            checks.eq("evict.padded.%s.exit" % label, code, hudfix.EXIT_OK)
+            checks.eq("evict.padded.%s.ok" % label, (blocked or {}).get("ok"), False)
+            checks.eq("evict.padded.%s.bytes" % label, (blocked or {}).get("bytes"), 0)
+            checks.ok("evict.padded.%s.reason" % label,
+                      "cannot attribute" in ((blocked or {}).get("reason") or ""))
+            code, _out, _err = cli(["run", "cache-evict", "--path", padded,
+                                    "--confirm", "cache-evict", "--json"])
+            checks.eq("evict.padded.%s.run_exit" % label, code, hudfix.EXIT_PROGRAMMING)
+            checks.ok("evict.padded.%s.still_there" % label,
+                      os.path.exists(os.path.join(home, ".cache", padded, "payload.bin")))
+        checks.ok("evict.padded.no_quarantine",
+                  not os.path.exists(os.path.join(quarantine, hudfix.local_day(),
+                                                  "cache-evict")))
 
         # ---- hermes scratch: age threshold, structure kept ---------------
         code, out, _err = cli(["plan", "hermes-scratch", "--json"])
@@ -1828,7 +1868,7 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
         summary["reason"] = "%d of %d checks failed; the tree is left at %s" % (
             checks.failed, checks.passed + checks.failed, hudfix.tilde(base))
     else:
-        __import__("shutil").rmtree(base, ignore_errors=True)
+        shutil.rmtree(base, ignore_errors=True)
     hudfix.emit(summary, True)
     return hudfix.EXIT_OK if checks.failed == 0 else hudfix.EXIT_FAILED
 

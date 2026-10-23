@@ -879,12 +879,16 @@ def cmd_run(args, ctx, actions, errors):
     ctx.action, ctx.class_ = entry["name"], entry["class"]
     confirm = args.confirm
     ctx.params["confirm"] = confirm
+    # ``confirmed`` in the log and in the run object means one thing only: the
+    # token matched the action name exactly. A missing token and a typo both
+    # read false, so a refused run never logs confirmed:true.
+    confirmed = confirm is not None and confirm == entry["name"]
     blocked = unavailable(entry, ctx)
 
     def finish(payload, exit_code, items, byte_count, result, **extra):
         log_record(ctx, "run", entry, items, byte_count, result, exit_code,
                    duration_ms=int((time.time() - started) * 1000),
-                   confirmed=confirm is not None, **extra)
+                   confirmed=confirmed, **extra)
         return payload, exit_code
 
     if blocked is not None:
@@ -944,7 +948,7 @@ def cmd_run(args, ctx, actions, errors):
         "class": entry["class"],
         "generated_at": utc_now_iso(),
         "source": "live",
-        "confirmed": bool(confirm),
+        "confirmed": confirmed,
         "plan": plan,
         "result": result,
         "changed": bool(result.get("changed")),
@@ -1616,6 +1620,20 @@ def self_check():  # noqa: C901 - one linear proof, on purpose
                   any(row["bytes"] > 0 for row in lines))
         checks.ok("log.timestamps_utc",
                   all(row["ts"].endswith("Z") for row in lines))
+        # confirmed means the token matched the action exactly: the mismatched
+        # probe-nuke run logged false, and the exact probe-move run logged true.
+        nuke_runs = [row for row in lines
+                     if row["event"] == "run" and row["action"] == "probe-nuke"]
+        move_runs = [row for row in lines
+                     if row["event"] == "run" and row["action"] == "probe-move"]
+        checks.ok("log.confirmed_false_on_mismatch",
+                  any(row.get("result") == "refused" and row.get("confirmed") is False
+                      for row in nuke_runs),
+                  repr([(row.get("result"), row.get("confirmed")) for row in nuke_runs]))
+        checks.ok("log.confirmed_true_on_exact",
+                  any(row.get("confirmed") is True and row.get("result") == "ran"
+                      for row in move_runs),
+                  repr([(row.get("result"), row.get("confirmed")) for row in move_runs]))
 
         # ---- the quarantine never leaks outside the fake root ------------
         checks.ok("quarantine.only_fake_root",
