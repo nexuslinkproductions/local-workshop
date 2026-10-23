@@ -1,39 +1,50 @@
 #!/usr/bin/env python3
-"""knot-iou.py: silhouette agreement between a Knot.qml still and the s2 knot.
+"""knot-iou.py: the s2-fitted knot trace, the SDF bake, and the silhouette meter.
 
-Two metrics, both on luminance masks so they compare across renderers:
+Modes
 
-  silhouette_iou_blur6   the meter the C2 verifier used: threshold both images
-                         at 0.35, box blur radius 6, threshold the blur at
-                         0.02, IoU. Sensitive to dot phase and to dot
-                         brightness, but it is the number already on the board
-                         for option A (0.260), so it stays the headline.
+  trace      Rebuild `kit/assets/swarm-knot-sdf.png` from the s2 reference crop
+             (the card's "re-trace the knot FITTED to s2") and print the numbers
+             that follow from the trace: strand half width, the renderer's
+             px-per-unit, the Swarm size it implies, and the geometry's own
+             predicted silhouette IoU against the reference band. The fit is
+             measured before any QML runs.
 
-  band_iou               dot phase removed: threshold at `--thr`, close with a
-                         square of `--close` px (dilate then erode) so the dots
-                         merge into strand bands, then IoU. This is the meter
-                         that answers "is this the same knot shape".
+  measure    Silhouette agreement between a Knot still and the s2 crop. Two
+             meters on luminance, both after one translation search:
 
-Both are reported after the same translation search (`--search` px, step 2,
-then +-1 refine), because the Knot item is centred in its own 540 px frame
-while the reference crop sits at the s2 layout position.
+               band_iou              threshold at `--thr`, close with a square of
+                                     `--close` px so dots merge into strand bands,
+                                     IoU. Dot-phase independent: this is the
+                                     headline, and the number the card gates on.
+               silhouette_iou_blur6  threshold at 0.35, box blur 6, threshold the
+                                     blur at 0.02, IoU. Kept because it is the
+                                     meter the C2 verifier used (0.260 there).
 
-Usage
-  tools/knot-iou.py measure <render.png|jpg> [--reference PATH] [--crop X,Y,N]
-  tools/knot-iou.py ceiling [--cloud PATH] [--t SECONDS]
+  still      Render a Knot still through `tools/qml-shot.sh` at 2560x1440, crop
+             the 540 knot box, measure it, and write the JPEGs. One command, so
+             every number in docs/knot-iou.md is reproducible without a manual
+             render step.
 
-  `ceiling` projects the s2 reference's own point cloud (knot3d.json) with the
-  s2 engine's camera and brightness model and measures that image, which is the
-  best any renderer derived from that cloud can score against the reference.
+  ceiling    Project the s2 reference's own point cloud (knot3d.json) through the
+             s2 engine's camera and measure that image: the ceiling of any
+             renderer driven by that cloud, and the reason this card re-traced
+             the knot from the still instead (0.766 band, see the doc).
 
-Reference crop: s2-rest.png, 2560x1440, square of N px centred on the layout
-position of the knot (Tokens.centreX 1280, Tokens.goldenY1 550). Every number
-in docs/knot-iou.md comes from this crop and these two meters.
+Reference crop: s2-rest.png, 2560x1440, the 540 px box centred on the layout
+position of the knot (Tokens.centreX 1280, Tokens.goldenY1 550) = x 1010, y 280.
+Every number in docs/knot-iou.md comes from this crop and these meters.
+
+Python + PIL + numpy only.
 """
 import argparse
 import json
 import math
+import os
+import subprocess
 import sys
+import tempfile
+from collections import deque
 
 import numpy as np
 from PIL import Image, ImageFilter
@@ -45,7 +56,19 @@ DEFAULT_CLOUD = ("/Users/marcelspatz/NEXUS_AI_CENTER/04_PROJECTS/HUD/"
 CROP_CENTRE = (1280, 550)
 CROP_SIZE = 540
 
+# Swarm.qml's shader constants, which the bake has to live inside. They are fixed
+# by the C2 renderer; the trace adapts to them, not the other way round.
+R_TUBE_UNITS = 0.05640288     # u_rTube: tube radius, in units
+SDF_RANGE = 0.42              # u_sdfRange: R channel 0..1 maps to 0..0.42 unit
+SDF_LO = -1.45                # u_sdfLo
+SDF_SPAN = 2.9                # u_sdfSpan
+SDF_SIZE = 1024               # kit/assets/swarm-knot-sdf.png
+PX_PER_UNIT_FACTOR = 0.30     # Swarm.qml: u_pxPerUnit = 0.30 * size
+MARCH_BOUND_UNITS = 1.34      # swarm.frag: the ray-march sphere
+MAX_TIP_UNITS = 1.28          # where the trace puts the outermost lobe tip
 
+
+# ------------------------------------------------------------------- meters
 def luminance(path):
     a = np.array(Image.open(path).convert("RGB")).astype(np.float32) / 255.0
     return a @ np.array([0.2126, 0.7152, 0.0722], np.float32)
@@ -116,8 +139,8 @@ def register(render_mask, ref_mask, thr, close, search):
 def measure(render_lum, ref_lum, thr=0.10, close=9, search=12):
     if render_lum.shape != ref_lum.shape:
         raise SystemExit("render is %s, reference crop is %s: render the Knot item "
-                         "at the crop size (540) first"
-                         % (render_lum.shape, ref_lum.shape))
+                         "at the crop size (%d) first"
+                         % (render_lum.shape, ref_lum.shape, CROP_SIZE))
     rm = render_lum > thr
     fm = ref_lum > thr
     dx, dy = register(rm, fm, thr, close, search)
@@ -135,6 +158,210 @@ def measure(render_lum, ref_lum, thr=0.10, close=9, search=12):
         "render_core_coverage": round(float((render_lum > 0.35).mean()), 5),
         "reference_core_coverage": round(float((ref_lum > 0.35).mean()), 5),
     }
+
+
+# --------------------------------------------------------------- distances
+def edt1d(f):
+    """Felzenszwalb 1D squared distance transform of f (f = squared cost)."""
+    n = len(f)
+    d = np.empty(n, np.float64)
+    v = np.zeros(n, np.int64)
+    z = np.empty(n + 1, np.float64)
+    k = 0
+    v[0] = 0
+    z[0] = -np.inf
+    z[1] = np.inf
+    for q in range(1, n):
+        s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2.0 * q - 2.0 * v[k])
+        while s <= z[k]:
+            k -= 1
+            s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2.0 * q - 2.0 * v[k])
+        k += 1
+        v[k] = q
+        z[k] = s
+        z[k + 1] = np.inf
+    k = 0
+    for q in range(n):
+        while z[k + 1] < q:
+            k += 1
+        d[q] = (q - v[k]) ** 2 + f[v[k]]
+    return d
+
+
+def edt(mask):
+    """Euclidean distance (px) from every pixel to the nearest True pixel."""
+    h, w = mask.shape
+    f = np.where(mask, 0.0, 1e12)
+    out = np.empty((h, w), np.float64)
+    for y in range(h):
+        out[y] = edt1d(f[y])
+    for x in range(w):
+        out[:, x] = edt1d(out[:, x])
+    return np.sqrt(out)
+
+
+def blob_filter(mask, min_area):
+    """Keep only 4-connected components of at least `min_area` pixels."""
+    h, w = mask.shape
+    seen = np.zeros((h, w), bool)
+    keep = np.zeros((h, w), bool)
+    ys, xs = np.nonzero(mask)
+    for y0, x0 in zip(ys, xs):
+        if seen[y0, x0]:
+            continue
+        q = deque([(y0, x0)])
+        seen[y0, x0] = True
+        px = [(y0, x0)]
+        while q:
+            y, x = q.popleft()
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < h and 0 <= xx < w and mask[yy, xx] and not seen[yy, xx]:
+                    seen[yy, xx] = True
+                    q.append((yy, xx))
+                    px.append((yy, xx))
+        if len(px) >= min_area:
+            for y, x in px:
+                keep[y, x] = True
+    return keep
+
+
+# ------------------------------------------------------------------ the trace
+def opening(mask, size):
+    """Morphological opening: removes anything narrower than `size` px."""
+    im = Image.fromarray((mask.astype(np.uint8) * 255))
+    im = im.filter(ImageFilter.MinFilter(size)).filter(ImageFilter.MaxFilter(size))
+    return np.array(im) > 127
+
+
+def trace_mask(lum, thr=0.10, close=9, open_px=5, r_max=276.0, min_area=800):
+    """The knot's strand band from the s2 crop, without s2's outer dot ring.
+
+    s2's knot carries a faint decorative ring of dots outside the lobes (class
+    `ring` in its own cloud; its lower-left arc is bright enough to pass the
+    meter's 0.10 threshold, and closing merges parts of it into the knot). This
+    card says the Knot has no ring, so the trace runs
+
+        threshold -> closing (dots to strands) -> opening (drop the thin ring
+        arcs the closing attached, and any specks) -> r_max cut -> blob filter
+
+    The strands are about 24 px wide, the ring arcs under 7 px, so an opening of
+    `open_px` removes the ring and keeps the knot.
+    """
+    size = lum.shape[0]
+    base = lum > thr
+    yy, xx = np.mgrid[0:size, 0:size]
+    r = np.hypot(xx - (size - 1) / 2.0, yy - (size - 1) / 2.0)
+    base &= r <= r_max
+    m = closing(base, close)
+    m = opening(m, open_px)
+    m &= r <= r_max
+    m = blob_filter(m, min_area)
+    return m, r
+
+
+def signed_inside(mask, pad=80):
+    """Signed distance to the mask boundary, positive inside, on a padded canvas."""
+    h, w = mask.shape
+    p = np.zeros((h + 2 * pad, w + 2 * pad), bool)
+    p[pad:pad + h, pad:pad + w] = mask
+    d_in = edt(~p)      # distance to the nearest background pixel
+    d_out = edt(p)      # distance to the nearest mask pixel
+    s = d_in - d_out    # > 0 inside
+    return s[pad:pad + h, pad:pad + w]
+
+
+def trace_stats(mask):
+    area = int(mask.sum())
+    p = np.zeros_like(mask)
+    p[1:, :] |= mask[1:, :] & ~mask[:-1, :]
+    p[:-1, :] |= mask[:-1, :] & ~mask[1:, :]
+    p[:, 1:] |= mask[:, 1:] & ~mask[:, :-1]
+    p[:, :-1] |= mask[:, :-1] & ~mask[:, 1:]
+    perim = int(p.sum())
+    s = signed_inside(mask)
+    ridge = np.zeros_like(s)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx or dy:
+                ridge = np.maximum(ridge, np.roll(np.roll(s, dy, 0), dx, 1))
+    is_ridge = (s > 0) & (s >= ridge - 1e-9) & (s > 1.0)
+    yy, xx = np.nonzero(mask)
+    size = mask.shape[0]
+    r = np.hypot(xx - (size - 1) / 2.0, yy - (size - 1) / 2.0)
+    return {
+        "area_px": area,
+        "perimeter_px": perim,
+        "half_width_2ap_px": round(2.0 * area / max(perim, 1), 3),
+        "half_width_ridge_px": round(float(np.median(s[is_ridge])), 3),
+        "tip_px": round(float(r.max()), 1),
+        "bbox": [int(xx.min()), int(yy.min()), int(xx.max()), int(yy.max())],
+    }
+
+
+def bake_sdf(lum, tube_px, offset_px, out_path=None, size=SDF_SIZE,
+             thr=0.10, close=9, open_px=5, r_max=276.0, min_area=800):
+    """Bake the centre-line distance texture Swarm marches.
+
+    R = (tube_px - offset_px - s_in) / px_per_unit, clipped to 0..SDF_RANGE
+    G = 1.0: the ring channel is switched off (the card excludes the ring, and
+        u_rRing 0.0127 unit can never be reached from a 0.42 unit distance)
+    A = 255: Qt premultiplies image textures; a non-opaque alpha scales the
+        bytes toward zero (C2 hit this).
+
+    `offset_px` dilates the silhouette. The shader puts dots at cell centres on
+    the surface, so the rendered band is inset by a fraction of a dot pitch; the
+    offset is the measured compensation for that inset (see docs/knot-iou.md).
+    """
+    mask, _ = trace_mask(lum, thr=thr, close=close, open_px=open_px,
+                         r_max=r_max, min_area=min_area)
+    stats = trace_stats(mask)
+    px_per_unit = max(tube_px / R_TUBE_UNITS, stats["tip_px"] / MAX_TIP_UNITS)
+    s = signed_inside(mask, pad=80)
+
+    h, w = lum.shape
+    u = (np.arange(size) + 0.5) / size * SDF_SPAN + SDF_LO   # units per texel
+    UX, UY = np.meshgrid(u, u, indexing="xy")
+    # Object space is y-up (the shader's uv.y = (p.y + 1.45) / 2.9) while the
+    # crop image is y-down, so the row index runs the other way. Getting this
+    # wrong renders the knot upside down; it did, on the first bake.
+    ix = np.rint((w - 1) / 2.0 + UX * px_per_unit).astype(np.int64)
+    iy = np.rint((h - 1) / 2.0 - UY * px_per_unit).astype(np.int64)
+    valid = (ix >= 0) & (ix < w) & (iy >= 0) & (iy < h)
+    s_at = np.full((size, size), -1e3, np.float32)
+    s_at[valid] = s[iy[valid], ix[valid]]
+
+    d_px = (tube_px - offset_px) - s_at
+    d_units = np.clip(d_px / px_per_unit, 0.0, SDF_RANGE)
+    r = (d_units / SDF_RANGE * 255.0).astype(np.uint8)
+
+    tex = np.empty((size, size, 4), np.uint8)
+    tex[:, :, 0] = r
+    tex[:, :, 1] = 255
+    tex[:, :, 2] = 0
+    tex[:, :, 3] = 255
+    if out_path:
+        Image.fromarray(tex, "RGBA").save(out_path)
+
+    # The silhouette a render driven by this texture must have: the tube surface
+    # is {d <= u_rTube}, i.e. {s_in >= tube_px - offset - rTubePx}. Scored on the
+    # crop grid, not on the 1024 texture grid.
+    pred = s >= (tube_px - offset_px) - R_TUBE_UNITS * px_per_unit
+    info = {
+        "px_per_unit": round(px_per_unit, 2),
+        "swarm_size_540": round(px_per_unit / PX_PER_UNIT_FACTOR, 1),
+        "tube_px": round(tube_px, 3),
+        "offset_px": offset_px,
+        "tip_units": round(stats["tip_px"] / px_per_unit + R_TUBE_UNITS, 3),
+        "march_bound_units": MARCH_BOUND_UNITS,
+        "sdf_size": size,
+        "sdf_lo": SDF_LO,
+        "sdf_span": SDF_SPAN,
+        "sdf_range": SDF_RANGE,
+        "ring_channel": "off (G = 1.0 -> 0.42 unit, u_rRing 0.0127 never hit)",
+        "trace": stats,
+    }
+    return tex, info, pred, mask
 
 
 # --------------------------------------------------------------- s2 replica
@@ -261,10 +488,86 @@ def render_s2_cloud(cloud_path, size, t, gain=1.15, cam=2.7):
     return img
 
 
+# -------------------------------------------------------------------- stills
+STILL_QML = """import QtQuick
+import NexusHud.V5 1.0
+
+// Generated by tools/knot-iou.py still: the deck frame with one Knot on it, so
+// the still is the same 540 px box the deck composes at (Tokens.centreX 1280,
+// Tokens.goldenY1 550) and the 540 crop of it is a like-for-like reference crop.
+Item {
+    width: %(w)d
+    height: %(h)d
+
+    Rectangle { anchors.fill: parent; color: "#0a0f1c" }
+
+    Loader {
+        source: "file://%(knot)s"
+        onLoaded: {
+            item.animate = false
+            item.assembling = %(assembling)s
+            item.assembleProgress = %(progress)s
+        }
+    }
+}
+"""
+
+
+def repo_root():
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(here)
+
+
+def still(progress, out_prefix, width=2560, height=1440, assembling=True):
+    root = repo_root()
+    kit = os.path.join(root, "nexuslink.hud", "v5", "kit")
+    knot = os.path.join(kit, "Knot.qml")
+    if not os.path.isfile(knot):
+        raise SystemExit("still: no Knot.qml at %s" % knot)
+    tmp = tempfile.mkdtemp(prefix="knot-still-")
+    imports = os.path.join(tmp, "imports")
+    os.makedirs(os.path.join(imports, "NexusHud"))
+    os.symlink(kit, os.path.join(imports, "NexusHud", "V5"))
+    wrap = os.path.join(tmp, "still.qml")
+    with open(wrap, "w") as f:
+        f.write(STILL_QML % {"w": width, "h": height, "knot": knot,
+                             "assembling": "true" if assembling else "false",
+                             "progress": repr(float(progress))})
+    png = os.path.join(tmp, "still.png")
+    env = dict(os.environ)
+    env["QML2_IMPORT_PATH"] = imports
+    env["QML_IMPORT_PATH"] = imports
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QML_SHOT_DELAY"] = env.get("QML_SHOT_DELAY", "900")
+    cmd = [os.path.join(root, "tools", "qml-shot.sh"), wrap, png,
+           str(width), str(height)]
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    if r.returncode != 0:
+        sys.stderr.write(r.stderr[-4000:])
+        raise SystemExit("still: qml-shot failed (exit %d)" % r.returncode)
+
+    deck = Image.open(png).convert("RGB")
+    x0 = int(round(CROP_CENTRE[0] - CROP_SIZE / 2.0))
+    y0 = int(round(CROP_CENTRE[1] - CROP_SIZE / 2.0))
+    crop = deck.crop((x0, y0, x0 + CROP_SIZE, y0 + CROP_SIZE))
+    os.makedirs(os.path.dirname(os.path.abspath(out_prefix)), exist_ok=True)
+    deck_path = out_prefix + "-deck.jpg"
+    crop_path = out_prefix + "-540.jpg"
+    crop_png = out_prefix + "-540.png"
+    deck.save(deck_path, quality=86, optimize=True)
+    crop.save(crop_path, quality=90)
+    crop.save(crop_png)
+    print("deck  %s  %dx%d" % (deck_path, width, height))
+    print("crop  %s  (x %d y %d %dx%d)" % (crop_path, x0, y0, CROP_SIZE, CROP_SIZE))
+    return crop_png
+
+
+# ---------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=("measure", "ceiling"))
+    ap.add_argument("mode", choices=("trace", "measure", "ceiling", "still"))
     ap.add_argument("render", nargs="?", help="still to measure (measure mode)")
     ap.add_argument("--reference", default=DEFAULT_REF)
     ap.add_argument("--cloud", default=DEFAULT_CLOUD)
@@ -279,11 +582,83 @@ def main():
     ap.add_argument("--json", help="write the numbers to this json file")
     ap.add_argument("--min-band", type=float, default=0.90,
                     help="band IoU that counts as a pass")
+    # trace
+    ap.add_argument("--out", help="trace: SDF png to write (default: print only)")
+    ap.add_argument("--tube-px", type=float, default=None,
+                    help="trace: strand half width in px (default: ridge median)")
+    ap.add_argument("--offset-px", type=float, default=0.0,
+                    help="trace: dilate the silhouette by this many px")
+    ap.add_argument("--trace-thr", type=float, default=0.10)
+    ap.add_argument("--trace-close", type=int, default=9)
+    ap.add_argument("--open-px", type=int, default=5,
+                    help="trace: opening kernel, removes the thin ring arcs")
+    ap.add_argument("--r-max", type=float, default=276.0)
+    ap.add_argument("--mask-out", help="trace: write the traced band mask (png)")
+    # still
+    ap.add_argument("--progress", type=float, default=1.0,
+                    help="still: assembleProgress 0..1")
+    ap.add_argument("--rest", action="store_true",
+                    help="still: assembling false (the rest state)")
+    ap.add_argument("--width", type=int, default=2560)
+    ap.add_argument("--height", type=int, default=1440)
     args = ap.parse_args()
 
     cx, cy, size = [int(v) for v in args.crop.split(",")]
     ref, crop = crop_reference(args.reference, (cx, cy), size)
-    print("reference %s crop x=%d y=%d %dx%d" % (args.reference, crop[0], crop[1], crop[2], crop[2]))
+    print("reference %s crop x=%d y=%d %dx%d"
+          % (args.reference, crop[0], crop[1], crop[2], crop[2]))
+
+    if args.mode == "trace":
+        if args.tube_px is None:
+            mask, _ = trace_mask(ref, thr=args.trace_thr, close=args.trace_close,
+                                 open_px=args.open_px, r_max=args.r_max)
+            args.tube_px = trace_stats(mask)["half_width_ridge_px"]
+        tex, info, pred, mask = bake_sdf(
+            ref, args.tube_px, args.offset_px, args.out,
+            thr=args.trace_thr, close=args.trace_close, open_px=args.open_px,
+            r_max=args.r_max)
+        stats = info["trace"]
+        print("trace  band %d px, half width %.2f px (ridge) / %.2f px (2A/P), "
+              "tip %.1f px, bbox %s"
+              % (stats["area_px"], stats["half_width_ridge_px"],
+                 stats["half_width_2ap_px"], stats["tip_px"], stats["bbox"]))
+        print("       px_per_unit %.2f -> Swarm size %.1f at a 540 Knot; tip at "
+              "%.2f units (march bound %.2f)"
+              % (info["px_per_unit"], info["swarm_size_540"], info["tip_units"],
+                 info["march_bound_units"]))
+        ref_band = closing(ref > args.thr, args.close)
+        print("       predicted silhouette vs reference band: IoU %.4f "
+              "(coverage %.4f vs %.4f, offset %.1f px, ring excluded from trace)"
+              % (iou(closing(pred, args.close), ref_band), float(pred.mean()),
+                 float(ref_band.mean()), args.offset_px))
+        if args.out:
+            print("       wrote %s" % args.out)
+        if args.mask_out:
+            Image.fromarray(mask.astype(np.uint8) * 255).save(args.mask_out)
+            print("       mask %s" % args.mask_out)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(info, f, indent=2)
+        return 0
+
+    if args.mode == "still":
+        prefix = args.out or os.path.join(tempfile.gettempdir(), "knot-still")
+        png = still(args.progress, prefix, args.width, args.height,
+                    assembling=not args.rest)
+        img = luminance(png)
+        res = measure(img, ref, args.thr, args.close, args.search)
+        res["mode"] = "still"
+        res["source"] = png
+        res["progress"] = 1.0 if args.rest else args.progress
+        res["assembling"] = not args.rest
+        for k in ("band_iou", "silhouette_iou_blur6", "shift_px",
+                  "render_coverage", "reference_coverage",
+                  "render_core_coverage", "reference_core_coverage"):
+            print("  %-24s %s" % (k, res[k]))
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(res, f, indent=2)
+        return 0
 
     if args.mode == "measure":
         if not args.render:

@@ -38,6 +38,7 @@ layout(std140, binding = 0) uniform buf {
     float u_focus;
     float u_activity;
     float u_stipple;
+    float u_assemble;       // 1 = rest shape, 0 = fully scattered
 };
 
 layout(binding = 1) uniform sampler2D u_sdf;
@@ -146,6 +147,26 @@ void main()
         return;
     }
     vec2 dc = project(centre, R) - px;
+    // Assembly (W1 KNOT): dots stream in, and a decaying jitter lets each one
+    // settle into its cell. u_assemble = 1 is the rest frame and the branch is
+    // skipped entirely, so the untransitioned still is bit-identical.
+    //
+    // Why the reveal and not a spatial scatter: this is a raymarched implicit
+    // surface, so a fragment exists only where the ray hits the tube. A dot
+    // displaced further than its own radius has no fragment left to draw it, and
+    // the first version (a 0.34 unit = 38 px scatter) rendered a black frame at
+    // assembleProgress 0.3. Displacing the *field* per cell instead would break
+    // the sphere tracing (the warped field stops being Lipschitz). A hashed rank
+    // per cell gives scattered points at every progress and an exact rest shape
+    // at 1, at the cost of the points streaming in rather than sliding in.
+    if (u_assemble < 0.999) {
+        if (hash13(cell + 137.0) > u_assemble) {
+            fragColor = vec4(0.0);
+            return;
+        }
+        vec2 j = vec2(hash13(cell + 53.0), hash13(cell + 71.0)) * 2.0 - 1.0;
+        dc -= j * (1.0 - u_assemble) * 0.5 * u_pitch * u_pxPerUnit;
+    }
     float jr = hash13(cell + 17.0);
     float radius = u_dotR * mix(0.88, 1.12, jr) * u_pxPerUnit * u_camDist / max(u_camDist - vg.z, 0.05);
     // A ~0.8 px transition: the disc stays solid out to most of its radius and

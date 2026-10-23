@@ -13,7 +13,8 @@ import QtQuick
 // shader runs once per tick, so the tick costs one uniform update.
 //
 // Properties Wave 1 drives (none of them touch a shader):
-//   size        item side in px; the ring lands at 0.30 * size (s2 framing)
+//   size        item side in px; one unit is 0.30 * size, so a knot traced at
+//               1.0 unit lobe radius lands at 0.30 * size from the centre
 //   accent      dot colour; brightness and the white core derive from it
 //   focusLevel  0..1 dim for focus mode (1 = dimmed to the design floor)
 //   activity    0..1 brightness lift, e.g. a crew session becoming active
@@ -21,6 +22,14 @@ import QtQuick
 //   phase       0..1 cycle position, advanced by the tick. Set it to desync two
 //               swarms, or pin it with animate: false for a deterministic still.
 //   animate     false freezes the tick (stills, tests)
+//
+// Two additions from W1 KNOT (additive, defaults keep every existing caller and
+// its rest frame bit-identical):
+//   sdfSource   the centre-line distance texture to march. Default is the C2
+//               spike trace; Knot passes the s2-fitted trace instead.
+//   assemble    0..1: 1 is the rest shape, 0 is fully scattered (startup
+//               sequence). The scatter is one hashed offset per dot cell, and at
+//               1 the shader skips it entirely, so nothing moves at rest.
 Item {
     id: root
 
@@ -31,6 +40,13 @@ Item {
     property real speed: 1.0
     property real phase: 0.0
     property bool animate: true
+    property url sdfSource: "assets/swarm-knot-sdf.png"
+    property real assemble: 1.0
+    // Dot brightness multiplier. 1.28 is C2's shipped value; the s2-fitted trace
+    // needs more because the trace puts the dot pitch at 4.4 px (s2's is 5.5) and
+    // the shader's AA ramp eats the dot radius, so at 1.28 the strand edges fall
+    // under the meter's threshold. See docs/knot-iou.md.
+    property real gain: 1.28
 
     // 33 ms is 30.3 Hz: inside the 24 to 30 Hz band the build plan asks for.
     readonly property int tickMs: 33
@@ -77,7 +93,7 @@ Item {
 
     Image {
         id: sdf
-        source: "assets/swarm-knot-sdf.png"
+        source: root.sdfSource
         visible: false
         smooth: true
     }
@@ -105,9 +121,10 @@ Item {
         property real u_sdfSpan: 2.9
         property real u_sdfRange: 0.42
         property real u_shape: 0.0
-        property real u_gain: 1.28
+        property real u_gain: root.gain
         property real u_focus: root.focusLevel
         property real u_activity: root.activity
         property real u_stipple: 0.94
+        property real u_assemble: root.assemble
     }
 }
