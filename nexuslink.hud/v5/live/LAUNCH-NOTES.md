@@ -86,10 +86,11 @@ Notes on the launcher. All v4 files under nexuslink.hud/v4/. Line numbers from t
    OBS Studio is the pick; Spotify stays out. Added as a normal tile, size
    tile, launch mode desktop, id com.obsproject.Studio.desktop, launches 1,
    running false. obsidian.desktop is installed but has 0 launches.
-   glyph is "" on purpose: IconTile now draws a neutral 18 px ink dot at 30
-   percent when the glyph is empty or its svg does not load (IconTile.qml,
-   fallback Rectangle bound to !glyphImage.visible). The real icon is s5's job;
-   nothing throws (the test renders all 11 tiles with no QWARN).
+   glyph is "obs": round 3 step C2 adds assets/icons/obs.svg (see section 10),
+   built by build_icons.py, so the tile draws a real mark like the other ten.
+   The icon is s5's to replace; the neutral 18 px dot is only IconTile's
+   fallback for an empty glyph name or an svg that fails to load (IconTile.qml,
+   Rectangle bound to !glyphImage.visible), and no tile uses it today.
 
 8. Round 3: why the deck reads about 35 px off centre
    A2/A-DESIGN numbers, restated: the v4 slab is not the window. Persisted
@@ -117,12 +118,13 @@ Notes on the launcher. All v4 files under nexuslink.hud/v4/. Line numbers from t
    test does catch it.
 
 10. Round 3: the OBS tile mark
-   OBS Studio shipped with an empty glyph, so IconTile drew its neutral dot at
-   the end of the row and the row read as if an icon were missing. Round 3 adds
-   assets/icons/obs.svg, built by build_icons.py from the simple-icons obsstudio
-   path (CC0, same builder and ink as chrome, x, discord, youtube, whatsapp) at
-   scale 0.95 with stroke fattening 1.0, because the bare mark is a thin ring and
-   the s3 value of 0.5 left it the lightest glyph in the band. That is a stopgap
-   against the dot only; icon art for the final set is s5 work and s5 may replace
-   it.
+   apps.json gives OBS Studio glyph "obs" and assets/icons/obs.svg exists
+   (round 3 step C2), so the OBS tile draws the same kind of ink mark as the
+   other ten; it is not an empty glyph and not a dot. The svg is built by
+   build_icons.py from the simple-icons obsstudio path (CC0, same builder and
+   ink as chrome, x, discord, youtube, whatsapp) at scale 0.95 with stroke
+   fattening 1.0, because the bare mark is a thin ring and the s3 value of 0.5
+   left it the lightest glyph in the band. Icon art for the final set is s5
+   work and s5 may replace it. IconTile's neutral dot stays as the safety net
+   for a missing or unloadable asset only.
 

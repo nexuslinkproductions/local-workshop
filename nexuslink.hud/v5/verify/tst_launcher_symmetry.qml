@@ -23,6 +23,12 @@ TestCase {
 
     readonly property Item band: deck.launcherBand
     readonly property real tol: 1.0
+    // The arc y drift is exactly mirrored (|i - centreIndex| in driftY), so the
+    // two tiles of a pair sit at the same y to the last float. 0.2 px leaves
+    // room for float noise and still fails a drift that is asymmetric by a
+    // few tenths of a pixel on one side (a 1.0 px tolerance could never fail:
+    // the drift amplitude is 0.5 px either way).
+    readonly property real yTol: 0.2
 
     // Property holder so the deck binding can be declared before initTestCase.
     QtObject {
@@ -95,6 +101,10 @@ TestCase {
 
     function test_rest_geometry() {
         tryCompare(band, "count", 11)
+        // Do not rely on running before the hover cases: the hero tile scale is
+        // animated (200 ms) from whatever state the previous case left. Wait
+        // longer than the scale animation and the hover release, then read.
+        wait(1000)
         compare(band.heroIndexInList, 5, "hero is the centre slot")
         compare(band.centreIndex, 5, "centre index")
         compare(band.dropped, null, "even count, nothing dropped")
@@ -111,7 +121,7 @@ TestCase {
             var m = centreOf(band, n - 1 - i, deck)
             verify(Math.abs((c.x + m.x) - 2560) <= tol,
                    "tile " + i + " + mirror " + (n - 1 - i) + " = " + (c.x + m.x))
-            verify(Math.abs(c.y - m.y) <= tol,
+            verify(Math.abs(c.y - m.y) <= yTol,
                    "tile " + i + " y " + c.y + " vs mirror " + m.y)
             if (i > 0) {
                 var p = centreOf(band, i - 1, deck)
@@ -181,7 +191,7 @@ TestCase {
             var m = centreOf(oddArc, n - 1 - i, oddHost)
             verify(Math.abs((c.x + m.x) - 2560) <= tol,
                    "odd: tile " + i + " + mirror = " + (c.x + m.x))
-            verify(Math.abs(c.y - m.y) <= tol, "odd: tile " + i + " y mirror")
+            verify(Math.abs(c.y - m.y) <= yTol, "odd: tile " + i + " y mirror")
             if (i > 0) {
                 var p = centreOf(oddArc, i - 1, oddHost)
                 verify(Math.abs((c.x - p.x) - 116) <= 0.5,

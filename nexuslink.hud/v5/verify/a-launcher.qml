@@ -4,8 +4,9 @@ import "../live"
 
 // a-launcher.qml - offscreen check scene for the launcher arc.
 // Top: rest. Bottom: forced hover on tile 4 (the Chromium slot).
-// Apps are inlined here only so the scene renders without file IO; the real
-// list is assets/apps.json (checked separately).
+// Apps mirror the 11 entries of assets/apps.json in the same order (5 + hero +
+// 5, OBS Studio last left of the hero), inlined here because this scene renders
+// without file IO. tst_launcher_symmetry.qml reads the real file.
 Item {
     id: scene
     width: 1400
@@ -26,6 +27,7 @@ Item {
         { id: "x", name: "X", glyph: "x", launches: 0, running: false },
         { id: "youtube", name: "YouTube", glyph: "youtube", launches: 0, running: false },
         { id: "whatsapp", name: "WhatsApp", glyph: "whatsapp", launches: 0, running: false },
+        { id: "obs", name: "OBS Studio", glyph: "obs", launches: 1, running: false },
         { id: "arc-raiders", name: "ARC Raiders", glyph: "arc-raiders", launches: 0, running: false }
     ]
 

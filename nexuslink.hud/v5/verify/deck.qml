@@ -5,6 +5,12 @@ import "../live"
 // Full deck still at 2560 x 1440 from fixtures. Render with the GPU harness so the
 // knot shader draws. Two markers are rewritten by the render script per state:
 // VIEWSTATE (view) and FINDSTATE (find open).
+//
+// apps mirrors the 11 entries of live/assets/apps.json in the shipped order
+// (5 + hero + 5, OBS Studio before the hero), so the GPU scene shows the real
+// band. It is inlined because the v5-shot harness does not enable file XHR
+// (QML_XHR_ALLOW_FILE_READ); tst_launcher_symmetry.qml reads the real file and
+// is the check that the two lists agree in count and order.
 Item {
     id: root
     width: 2560
@@ -56,7 +62,8 @@ Item {
             { id: "x", name: "X", glyph: "x", launches: 0, running: false, size: "tile" },
             { id: "youtube", name: "YouTube", glyph: "youtube", launches: 0, running: false, size: "tile" },
             { id: "whatsapp", name: "WhatsApp", glyph: "whatsapp", launches: 0, running: false, size: "tile" },
-            { id: "arc-raiders", name: "Arc Raiders", glyph: "arc-raiders", launches: 0, running: true, size: "feature" }
+            { id: "obs", name: "OBS Studio", glyph: "obs", launches: 1, running: false, size: "tile" },
+            { id: "arc-raiders", name: "ARC Raiders", glyph: "arc-raiders", launches: 0, running: true, size: "feature" }
         ]
     }
 }
