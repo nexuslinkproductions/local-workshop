@@ -23,7 +23,7 @@ Item {
 
     property real level: 0
     property color accent: Tokens.acid
-    property real size: 216
+    property real size: referenceSize
     property real focusLevel: 0
     property bool showValue: false
     property string label: ""

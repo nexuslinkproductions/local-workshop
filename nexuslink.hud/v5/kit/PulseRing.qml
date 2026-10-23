@@ -30,7 +30,7 @@ Item {
     property real value: 0
     property bool breath: true
     property color accent: Tokens.acid
-    property real size: 156
+    property real size: referenceSize
     property real focusLevel: 0
     property bool showValue: false
     property string label: ""
@@ -47,9 +47,20 @@ Item {
     readonly property int warnMillis: 100
     readonly property color dotColor: value >= warnMillis ? Tokens.amber : accent
 
+    // s2 build.py:27, the RTT period mapping max(0.6, 3.4 - log2(rtt / 5) * 0.8):
+    // the period floor and the period at the 5 ms floor, in seconds, then the
+    // slope per octave of RTT.
+    readonly property real periodFloorS: 0.6
+    readonly property real periodBaseS: 3.4
+    readonly property real periodSlopeOctave: 0.8
+    // The formula's own RTT floor: a reading under 5 ms counts as 5 ms, so the
+    // same property feeds both max() calls.
+    readonly property real rttFloorMs: 5
     // s2 build.py:27. Recomputed when value changes, never per frame.
     readonly property real pulsePeriod: hasReading
-        ? Math.max(0.6, 3.4 - Math.log(Math.max(value, 5) / 5) / Math.LN2 * 0.8)
+        ? Math.max(periodFloorS,
+                   periodBaseS - Math.log(Math.max(value, rttFloorMs) / rttFloorMs)
+                                / Math.LN2 * periodSlopeOctave)
         : 0
     readonly property int pulseMillis: Math.round(pulsePeriod * 1000)
 

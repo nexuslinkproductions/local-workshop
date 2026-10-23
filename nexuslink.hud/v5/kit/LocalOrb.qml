@@ -34,7 +34,7 @@ Item {
     property real sizeGb: 0
     property real activity: 0
     property color accent: Tokens.acid
-    property real size: 144
+    property real size: referenceSize
     property real focusLevel: 0
     property bool showValue: false
     property string label: ""
@@ -44,16 +44,29 @@ Item {
 
     // s2 study scale, not a measured cap (see v5/fixtures/metrics.json).
     readonly property real budgetGb: 4.0
+    // s2 build.py:109-113 draws the LOCAL sphere at radius 72; 68 keeps the
+    // outermost depth dot inside the 144 px box (2 * 72).
     readonly property real referenceSize: 144
     readonly property real referenceRadius: 68
+    // W3 brief radius mapping: the 0.45 floor keeps a small model readable at
+    // deck distance, and the remaining 0.55 carries the size.
+    readonly property real radiusFloor: 0.45
+    readonly property real radiusSpan: 0.55
 
     readonly property real fraction: Math.max(0, Math.min(1, sizeGb / budgetGb))
-    readonly property real radiusFraction: 0.45 + 0.55 * Math.cbrt(fraction)
+    readonly property real radiusFraction: radiusFloor + radiusSpan * Math.cbrt(fraction)
     readonly property real scaleToWidget: artDiameter / referenceSize
     readonly property real orbRadius: referenceRadius * radiusFraction * scaleToWidget
 
-    readonly property int dotCount: Math.max(56, Math.round(360 * radiusFraction * radiusFraction))
-    readonly property var points: root.fibonacci(dotCount, 0.5)
+    // Dot count from the s2 fib sphere (build.py:66-73), scaled by radius
+    // squared; 56 dots is the floor that keeps a small orb a sphere, not a bead.
+    readonly property int dotDensity: 360
+    readonly property int minDotCount: 56
+    // s2 build.py:66 tilts the fib sphere 0.5 rad on the y axis.
+    readonly property real fibonacciTilt: 0.5
+    readonly property int dotCount: Math.max(minDotCount,
+                                             Math.round(dotDensity * radiusFraction * radiusFraction))
+    readonly property var points: root.fibonacci(dotCount, fibonacciTilt)
 
     readonly property real textBlock: !showValue
         ? 0
@@ -89,6 +102,12 @@ Item {
     readonly property var breathCurve: [Motion.curveInOut[0], Motion.curveInOut[1],
                                         Motion.curveInOut[2], Motion.curveInOut[3], 1.0, 1.0]
 
+    // s2 build.py:73: dot radius 1.0 + 2.5 per unit of depth, alpha 0.28 + 0.72.
+    readonly property real dotRadiusBase: 1.0
+    readonly property real dotRadiusDepthGain: 2.5
+    readonly property real dotAlphaBase: 0.28
+    readonly property real dotAlphaDepthGain: 0.72
+
     // Unit sphere points with the s2 depth cues folded in. Positions are on the
     // unit sphere; the delegate multiplies by orbRadius.
     function fibonacci(count, tilt) {
@@ -106,8 +125,8 @@ Item {
             out.push({
                          "x": x,
                          "y": y2,
-                         "radius": (1.0 + 2.5 * depth) * scaleToWidget,
-                         "alpha": 0.28 + 0.72 * depth
+                         "radius": (dotRadiusBase + dotRadiusDepthGain * depth) * scaleToWidget,
+                         "alpha": dotAlphaBase + dotAlphaDepthGain * depth
                      })
         }
         return out

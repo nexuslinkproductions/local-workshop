@@ -24,18 +24,28 @@ Item {
     id: root
 
     property real level: 0
-    property int segments: 12
+    property int segments: referenceSegments
     property color accent: Tokens.acid
-    property real size: 132
+    property real size: referenceSize
     property real focusLevel: 0
     property bool showValue: false
     property string label: ""
 
+    // s2 build.py:103-104: 12 dots on an 11 px pitch, 132 px across.
+    readonly property int referenceSegments: 12
+    readonly property real referenceSize: 132
     readonly property int pitchCount: Math.max(1, segments)
     readonly property real pitch: size / pitchCount
-    readonly property real litDiameter: pitch * 0.53
-    readonly property real dimDiameter: pitch * 0.40
-    readonly property real barHeight: litDiameter * 1.1
+    // s2 build.py:105 draws radii 2.9 and 2.2 on the 11 px pitch, so the dot
+    // diameters are 0.53 and 0.40 of the pitch.
+    readonly property real litDiameterShare: 0.53
+    readonly property real dimDiameterShare: 0.40
+    // The bar box runs 10 percent taller than the lit dot: headroom over the
+    // row, so the dots sit inside a box and not on a line.
+    readonly property real barHeightHeadroom: 1.1
+    readonly property real litDiameter: pitch * litDiameterShare
+    readonly property real dimDiameter: pitch * dimDiameterShare
+    readonly property real barHeight: litDiameter * barHeightHeadroom
 
     // ---- design values ---------------------------------------------------
     // Local to this component until the integrator promotes them; each one is
