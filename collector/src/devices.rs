@@ -2,8 +2,8 @@
 //
 // A key is emitted only when its source read succeeds: absent hardware means
 // an absent key, never 0. Everything runs off /sys + /proc reads on the 1 Hz
-// batch cadence; audio sinks and bluetooth counts come from the slow lane
-// (pactl, bluetoothctl at multi-second cadence, cached — never per frame).
+// batch cadence; audio sinks/sources and bluetooth counts come from the slow
+// lane (pactl, bluetoothctl at multi-second cadence, cached, never per frame).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -550,6 +550,65 @@ fn flush_sink(m: &mut BTreeMap<String, String>, i: usize, sink: &str, desc: &str
     i + 1
 }
 
+// Sources mirror sinks, in their own index sequence (dev_src0 = first source).
+// A monitor source is a sink's own output fed back as an input; it is not a
+// capturable device, so it is skipped and does not consume an index.
+fn flush_source(m: &mut BTreeMap<String, String>, i: usize, src: &str, desc: &str, vol: Option<u64>) -> usize {
+    if src.is_empty() || src.ends_with(".monitor") {
+        return i;
+    }
+    if !desc.is_empty() {
+        m.insert(format!("dev_src{}_name", i), desc.to_string());
+    }
+    m.insert(format!("dev_src{}_src", i), src.to_string());
+    if let Some(v) = vol {
+        m.insert(format!("dev_src{}_vol", i), v.to_string());
+    }
+    i + 1
+}
+
+// Walk one `pactl list <kind>` dump, flushing per object block. Sinks and
+// sources share the Name/Description/Volume shape; only the block header and
+// the flush differ.
+fn walk_pactl(
+    m: &mut BTreeMap<String, String>,
+    text: &str,
+    header: &str,
+    flush: fn(&mut BTreeMap<String, String>, usize, &str, &str, Option<u64>) -> usize,
+) {
+    let mut i = 0usize;
+    let mut name = String::new();
+    let mut desc = String::new();
+    let mut vol: Option<u64> = None;
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.starts_with(header) {
+            i = flush(m, i, &name, &desc, vol);
+            name.clear();
+            desc.clear();
+            vol = None;
+        } else if let Some(v) = t.strip_prefix("Name: ") {
+            name = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("Description: ") {
+            desc = v.trim().to_string();
+        } else if let Some(v) = t.strip_prefix("Volume: ") {
+            vol = avg_pct(v);
+        }
+    }
+    flush(m, i, &name, &desc, vol);
+}
+
+fn pactl_list(kind: &str) -> Option<String> {
+    let o = std::process::Command::new("pactl")
+        .args(["list", kind])
+        .output()
+        .ok()?;
+    if !o.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&o.stdout).to_string())
+}
+
 // "Volume: front-left: 39321 /  60% / -13.31 dB, ..." -> mean channel %
 fn avg_pct(s: &str) -> Option<u64> {
     let vals: Vec<f64> = s
@@ -563,41 +622,21 @@ fn avg_pct(s: &str) -> Option<u64> {
     Some((vals.iter().sum::<f64>() / vals.len() as f64).round() as u64)
 }
 
-// Background refresh for the slow-lane map: pactl sinks (~3s) and, when a
-// bluetooth controller exists, paired/connected counts via bluetoothctl.
+// Background refresh for the slow-lane map: pactl sinks + sources (~3s, or
+// immediately on a PipeWire event) and, when a bluetooth controller exists,
+// paired/connected counts via bluetoothctl.
 pub fn audio_bt_poll(map: &SlowMap) {
     {
         let mut m = map.lock().unwrap();
-        m.retain(|k, _| !k.starts_with("dev_audio"));
+        m.retain(|k, _| !k.starts_with("dev_audio") && !k.starts_with("dev_src"));
     }
-    if let Ok(o) = std::process::Command::new("pactl")
-        .args(["list", "sinks"])
-        .output()
-    {
-        if o.status.success() {
-            let text = String::from_utf8_lossy(&o.stdout).to_string();
-            let mut m = map.lock().unwrap();
-            let mut i = 0usize;
-            let mut sink = String::new();
-            let mut desc = String::new();
-            let mut vol: Option<u64> = None;
-            for line in text.lines() {
-                let t = line.trim_start();
-                if t.starts_with("Sink #") {
-                    i = flush_sink(&mut m, i, &sink, &desc, vol);
-                    sink.clear();
-                    desc.clear();
-                    vol = None;
-                } else if let Some(v) = t.strip_prefix("Name: ") {
-                    sink = v.trim().to_string();
-                } else if let Some(v) = t.strip_prefix("Description: ") {
-                    desc = v.trim().to_string();
-                } else if let Some(v) = t.strip_prefix("Volume: ") {
-                    vol = avg_pct(v);
-                }
-            }
-            flush_sink(&mut m, i, &sink, &desc, vol);
-        }
+    if let Some(text) = pactl_list("sinks") {
+        let mut m = map.lock().unwrap();
+        walk_pactl(&mut m, &text, "Sink #", flush_sink);
+    }
+    if let Some(text) = pactl_list("sources") {
+        let mut m = map.lock().unwrap();
+        walk_pactl(&mut m, &text, "Source #", flush_source);
     }
     if Path::new("/sys/class/bluetooth/hci0").exists() {
         let count = |arg: &str| -> Option<u64> {
