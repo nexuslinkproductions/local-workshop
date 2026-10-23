@@ -100,8 +100,10 @@ const float RAD_P = 3.0;        // radius falloff exponent (spec 3.0; K3c 4.5 dr
 // 109 s wall, HOLD_A 33 (55 percent), LEG 12, HOLD_B 3.
 const float CYC = 48.0;           // full alternation cycle, wall s (brief 36 to 60)
 const float HOLD_A = 26.4;        // hold on the triquetra, s (55 percent of CYC)
-const float LEG = 8.0;            // one leg, s
-const float HOLD_B = 5.6;         // hold on the form, s (2 LEG + HOLD_B + HOLD_A = CYC)
+const float LEG = 10.8;           // one leg, s (2 LEG + HOLD_A = CYC, no hold on the form)
+// FIX-KNOT: form 2 was held for 5.6 s and bloomed to 1.8 to 2.3x the triquetra
+// lit area (a blob, frozen). The morph now goes triquetra to form 1 only and
+// never holds on it; form 2 stays in the texture for a later, calmer bake.
 const float STAGGER = 0.20;       // per point stagger, share of the leg
 
 // CALM (P4): sway, brightness and breathing
@@ -142,8 +144,7 @@ float morphX(float tt) {
     float tau = fract(tt / CYC) * CYC;
     if (tau < HOLD_A) return 0.0;
     if (tau < HOLD_A + LEG) return (tau - HOLD_A) / LEG;
-    if (tau < HOLD_A + LEG + HOLD_B) return 1.0;
-    return 1.0 - (tau - HOLD_A - LEG - HOLD_B) / LEG;
+    return max(1.0 - (tau - HOLD_A - LEG) / LEG, 0.0);
 }
 
 // shortest signed difference between two angles, in radians
@@ -283,9 +284,7 @@ void main() {
     float wsum = max(w0 + w1 + w2, 1e-5);
 
     // ---- G: morph, form of this cycle, then the per point weight ---------
-    // cycle k is form 1 when k is even, form 2 when k is odd
-    float kcyc = floor(tw / CYC);
-    float fsel = mod(kcyc, 2.0);
+    float fsel = 0.0;   // FIX-KNOT: form 1 only, see the note at the morph constants
     vec4 t5 = texAt(base + 5.0);
     vec4 t6 = texAt(base + 6.0);
     vec4 t7 = texAt(base + 7.0);
@@ -401,10 +400,14 @@ void main() {
     // B: lobe scale about the centre plus lobe THICKNESS (dots along Nm)
     // C/E: bulge = tube swell along Nm + push along dirW
     float ringK = cls < 0.5 ? 1.0 : 0.5;
+    // FIX-KNOT drift floor: an always-on slow swell per dot (23 s wall, own
+    // phase per dot), so no hold is ever still. Not gated by env or morph.
+    float drift = sin(TAU * tw / 23.0 + TAU * fract(sin(pid * 127.1 + 0.3) * 43758.5453));
     vec3 dloc = vec3(Pm.x, Pm.y, 0.0) * (0.010 * lb)
               + Nm * (rr * 0.32 * lb)
               + Nm * (R * 0.028 * g * ringK + R * 0.016 * ev * evK)
               + dirW * (R * 0.014 * g + R * 0.012 * ev * evK)
+              + Nm * (R * 0.012 * drift)
               + dD;
     float lim = R * 0.04;
     float dl = length(dloc);
