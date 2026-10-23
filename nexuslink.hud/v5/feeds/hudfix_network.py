@@ -23,7 +23,8 @@ Exported surface (what F8a's ``hudfix.py`` imports)::
 self-check), ``now`` (callable returning epoch seconds), ``dry_run`` (bool),
 ``host`` ("mac" or "linux"), ``state_dir`` / ``cache_dir`` / ``cache_path``,
 ``tailnet_gateway`` (host override), ``target`` (jitter target override),
-``dns_name``, ``cache`` (bool). Unknown keys are ignored, a missing key takes
+``dns_name``, ``cache`` (bool), ``timeout_scale`` (float, multiplies every
+command timeout). Unknown keys are ignored, a missing key takes
 the live default. Nothing here imports F8a.
 
 Actions
@@ -315,8 +316,27 @@ def fixture_text(fixture, key):
 # command runner
 # --------------------------------------------------------------------------
 
+def timeout_for(ctx, base):
+    """``base`` seconds times ``ctx["timeout_scale"]``: the one place it is read.
+
+    ``--timeout-scale`` exists for slow hosts, so it multiplies every command
+    timeout and nothing else. A missing, non numeric or non positive scale
+    leaves the base alone; the CLI rejects a non positive value before a ctx
+    is ever built.
+    """
+    scale = _ctx_value(ctx, "timeout_scale", 1.0)
+    try:
+        scale = float(scale)
+    except (TypeError, ValueError):
+        return base
+    if not scale > 0:
+        return base
+    return round(base * scale, 4)
+
+
 def _run(argv, ctx, timeout):
     """(stdout, stderr, exit code). An injected runner replaces subprocess."""
+    timeout = timeout_for(ctx, timeout)
     runner = _ctx_value(ctx, "runner")
     if runner is not None:
         try:
@@ -887,10 +907,17 @@ def _cache_hit_payload(data, age):
 
     The stored payload carries the argv the original run issued. Returning it
     unchanged made a hit list pings it never ran. The original moves to
-    ``cached_from`` and ``commands`` is empty.
+    ``cached_from`` and ``commands`` is empty. A cache file written before
+    jitter published ``commands`` carried the argv under ``command`` instead;
+    that key is moved out as well, in the same shape, so no hit ever carries a
+    bare argv of its own.
     """
     payload = dict(data)
     original = data.get("commands")
+    single = payload.pop("command", None)
+    if (not isinstance(original, list) or not original) \
+            and isinstance(single, dict) and isinstance(single.get("argv"), list):
+        original = [single]
     payload["cached"] = True
     payload["cache_age_s"] = age
     payload["commands"] = []
@@ -987,7 +1014,7 @@ def _latency_payload(ctx, fixture=None):
             thread.daemon = True
             thread.start()
         for thread in threads:
-            thread.join(PING_TIMEOUT_S + 5)
+            thread.join(timeout_for(ctx, PING_TIMEOUT_S) + 5)
         gateway_entry = entries.get("gateway") or null_entry(
             gateway, gateway_reason or "tailnet gateway did not answer in time")
         public_entry = entries.get("public") or null_entry(
@@ -1170,10 +1197,11 @@ def run_jitter(ctx=None, confirm=None):
     if data is not None:
         return _cache_hit_payload(data, age)
 
+    argv = None
+    code = None
     if fixture is not None:
         text = fixture_text(fixture, "ping_jitter")
         source = "fixture"
-        argv = None
         if text is None:
             payload = envelope("network.jitter", ctx, source, cached=False,
                                target=target, verdict=None,
@@ -1208,7 +1236,8 @@ def run_jitter(ctx=None, confirm=None):
         verdict=verdict,
         verdict_reason=reason,
         thresholds=jitter_thresholds(),
-        command=({"argv": [str(piece) for piece in argv]} if argv else None),
+        commands=([{"argv": [str(piece) for piece in argv], "exit": code}]
+                  if argv is not None else []),
     )
     if stats.get("mean_abs_diff_ms") is None:
         payload["ok"] = False
@@ -1774,7 +1803,7 @@ def ctx_from_args(args):
         ctx["dns_name"] = args.dns_name
     if args.host:
         ctx["host"] = args.host
-    if args.timeout_scale and args.timeout_scale != 1.0:
+    if args.timeout_scale != 1.0:
         ctx["timeout_scale"] = args.timeout_scale
     return ctx
 
@@ -1791,6 +1820,11 @@ def main(argv=None):
 
     if args.self_check:
         return self_check(compact=args.json)
+
+    if not args.timeout_scale > 0:
+        print_json({"ok": False, "reason": "--timeout-scale must be greater than 0"},
+                   args.json)
+        return 2
 
     chosen = [flag for flag in (args.list, args.plan, args.run) if flag]
     if len(chosen) != 1:
@@ -2293,12 +2327,16 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             "tailscale": (json.dumps(fixture_data["tailscale"]), "", 0),
             "ping": ("PING 1.1.1.1 (1.1.1.1): 56 data bytes\n"
                      "64 bytes from 1.1.1.1: icmp_seq=0 ttl=53 time=20.000 ms\n"
+                     "64 bytes from 1.1.1.1: icmp_seq=1 ttl=53 time=20.400 ms\n"
+                     "64 bytes from 1.1.1.1: icmp_seq=2 ttl=53 time=20.100 ms\n"
+                     "64 bytes from 1.1.1.1: icmp_seq=3 ttl=53 time=20.300 ms\n"
+                     "64 bytes from 1.1.1.1: icmp_seq=4 ttl=53 time=20.200 ms\n"
                      "\n--- 1.1.1.1 ping statistics ---\n"
-                     "3 packets transmitted, 3 packets received, 0.0% packet loss\n"
+                     "5 packets transmitted, 5 packets received, 0.0% packet loss\n"
                      "round-trip min/avg/max/stddev = 19.800/20.000/20.300/0.100 ms\n", "", 0),
         }
         cached_names = []
-        for name in ("network.route", "network.connectivity"):
+        for name in ("network.jitter", "network.route", "network.connectivity"):
             clock2 = {"now": 5000.0}
             runner2 = CountingRunner(answers=answers)
             ctx2 = default_ctx()
@@ -2307,6 +2345,8 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             first_call = ACTIONS[name]["run"](ctx2)
             assert_true(first_call["cached"] is False, "%s first call claims cached" % name)
             assert_true(len(runner2.calls) > 0, "%s ran no command at all" % name)
+            assert_true(bool(first_call["commands"]),
+                        "%s first call recorded no argv to replay" % name)
             seen = len(runner2.calls)
             second_call = ACTIONS[name]["run"](ctx2)
             assert_true(second_call["cached"] is True, "%s second call is not cached" % name)
@@ -2314,9 +2354,13 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
                         % (name, len(runner2.calls) - seen))
             assert_true(second_call["commands"] == [],
                         "%s cache hit lists commands it did not run" % name)
+            assert_true(second_call["cached_from"]["commands"] == first_call["commands"],
+                        "%s cached_from does not carry the argv of the run it answers from: %r"
+                        % (name, second_call["cached_from"]["commands"]))
             cached_names.append(name)
         return ("3 commands, then 0 inside the 10 s window, then 3 after expiry; "
-                "route and connectivity cached too")
+                "jitter, route and connectivity cached too, cached_from carrying "
+                "the original argv")
 
     record("cache_second_call_free", check_cache)
 
@@ -2456,6 +2500,74 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         return "5 plans, state dir and sentinel untouched"
 
     record("plans_change_nothing", check_plans_change_nothing)
+
+    # 16. --timeout-scale multiplies every command timeout, read in one place
+    def check_timeout_scale():
+        fixture_data = json.loads(healthy_path.read_text(encoding="utf-8"))
+        ping_text = ("PING 100.100.0.1 (100.100.0.1): 56 data bytes\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=0 ttl=64 time=5.100 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=1 ttl=64 time=5.000 ms\n"
+                     "64 bytes from 100.100.0.1: icmp_seq=2 ttl=64 time=5.200 ms\n"
+                     "\n--- 100.100.0.1 ping statistics ---\n"
+                     "3 packets transmitted, 3 packets received, 0.0% packet loss\n"
+                     "round-trip min/avg/max/stddev = 5.000/5.100/5.200/0.070 ms\n")
+        answers = {
+            "netstat": (fixture_data["commands"]["netstat_route"], "", 0),
+            "ifconfig": (fixture_data["commands"]["ifconfig"], "", 0),
+            "scutil": (fixture_data["commands"]["scutil_dns"], "", 0),
+            "tailscale": (json.dumps(fixture_data["tailscale"]), "", 0),
+            "ping": (ping_text, "", 0),
+        }
+        base = {"netstat": PROBE_TIMEOUT_S, "ifconfig": PROBE_TIMEOUT_S,
+                "scutil": PROBE_TIMEOUT_S, "tailscale": PROBE_TIMEOUT_S,
+                "ping": PING_TIMEOUT_S}
+
+        def recording_ctx(scale):
+            seen = []
+
+            def runner(argv, timeout):
+                seen.append((list(argv), timeout))
+                return answers.get(os.path.basename(argv[0]), ("", "", 0))
+
+            ctx = default_ctx()
+            ctx.update({"runner": runner, "host": "mac", "cache": False,
+                        "state_dir": str(temp_root / "scale")})
+            if scale is not None:
+                ctx["timeout_scale"] = scale
+            return ctx, seen
+
+        scale = 0.25
+        ctx, seen = recording_ctx(scale)
+        run_route(ctx)
+        assert_true(len(seen) == 3, "route ran %d commands, expected 3" % len(seen))
+        for argv, timeout in seen:
+            wanted = base[os.path.basename(argv[0])] * scale
+            assert_true(abs(timeout - wanted) < 1e-9,
+                        "route %s got %ss, not %ss" % (argv[0], timeout, wanted))
+
+        ctx, seen = recording_ctx(scale)
+        run_jitter(ctx)
+        assert_true(len(seen) == 1, "jitter ran %d commands, expected 1" % len(seen))
+        assert_true(abs(seen[0][1] - JITTER_TIMEOUT_S * scale) < 1e-9,
+                    "jitter got %ss, not %ss" % (seen[0][1], JITTER_TIMEOUT_S * scale))
+
+        ctx, seen = recording_ctx(scale)
+        run_latency(ctx)
+        assert_true(any(os.path.basename(argv[0]) == "ping" for argv, _timeout in seen),
+                    "latency ran no ping")
+        for argv, timeout in seen:
+            wanted = base[os.path.basename(argv[0])] * scale
+            assert_true(abs(timeout - wanted) < 1e-9,
+                        "latency %s got %ss, not %ss" % (argv[0], timeout, wanted))
+
+        ctx, seen = recording_ctx(None)
+        run_route(ctx)
+        assert_true([timeout for _argv, timeout in seen] == [PROBE_TIMEOUT_S] * 3,
+                    "without a scale the route timeouts moved: %r" % seen)
+        return ("route, jitter and latency pass %s of their timeouts; no scale "
+                "leaves the base numbers alone" % scale)
+
+    record("timeout_scale", check_timeout_scale)
 
     failed = [check for check in checks if not check["ok"]]
     payload = {

@@ -23,8 +23,12 @@ asserted in the self-check rather than promised in prose.
 | `network.flush-dns` | safe | macOS `dscacheutil -flushcache` then `killall -HUP mDNSResponder`; Linux `resolvectl flush-caches` | under 1 s | none |
 | `network.connectivity` | read | four checks: gateway reachable (the default route gateway, pinged), public reachable, DNS resolves, tunnel up | about 5 s | 10 s |
 
-Every payload carries `ok`, `generated_at` (UTC ISO), `source` (`live` or
-`fixture`), `action` and `class`.
+Every successful payload carries `ok`, `generated_at` (UTC ISO), `source`
+(`live` or `fixture`), `action` and `class`. Error answers are smaller on
+purpose: a refusal or a failed fixture read is `ok: false` with `reason` and
+`kind` and nothing else, and an unknown action is `ok: false` with `reason` and
+`actions`. A read that did run but measured nothing keeps the envelope and adds
+`ok: false` with a `reason`.
 
 ### Latency: what "tailnet gateway" means
 
@@ -151,8 +155,9 @@ from another target.
 A fixture the caller names has to exist: a missing file, or a directory without
 `network.json`, is a usage error and exit 2. A file that is there but
 unreadable, not JSON, or not an object at the top level is an answer like any
-other: `{"ok": false, "kind": "malformed"}` (or `"unreadable"`) on stdout with
-exit 0, and no fall back to live.
+other: `{"ok": false, "reason": "fixture is not JSON: ...", "kind":
+"malformed"}` (or `"unreadable"`) on stdout with exit 0, and no fall back to
+live. The error shape is `ok`, `reason` and `kind`.
 
 Connectivity booleans are computed from those inputs, never read as booleans:
 the self-check flips one input at a time (empty DNS answer, stopped backend,
@@ -205,26 +210,30 @@ action here is reversible or destructive.
 `ctx` may be a dict or an object; these keys are read, everything else is
 ignored: `fixture`, `runner`, `now`, `dry_run`, `host`, `state_dir`,
 `cache_dir`, `cache_path`, `tailnet_gateway`, `target`, `dns_name`, `cache`,
-`ping_cmd`. `runner` is `(argv, timeout) -> (stdout, stderr, code)` and exists
-so a test can prove no command ran.
+`timeout_scale`, `ping_cmd`. `runner` is `(argv, timeout) -> (stdout, stderr,
+code)` and exists so a test can prove no command ran. `timeout_scale` is the
+`--timeout-scale` factor: every value passed to `runner` and to `subprocess` is
+the base timeout times it, from the one place `_run` reads it.
 
 ## Self-check
 
     python3 nexuslink.hud/v5/feeds/hudfix_network.py --self-check
 
-exit 0 and 17 checks, each named in the JSON: the action table and classes; the
+exit 0 and 18 checks, each named in the JSON: the action table and classes; the
 binary allowlist over fixture plans, live plans and real calls; the CLI
-contract (`--list` is one line, unknown action exit 2); a missing named fixture
-is exit 2 while three malformed files are ok false with exit 0; latency and
-jitter numbers identical twice from the fixture, and honest absence (no
+contract (`--list --json` is one line, unknown action exit 2); a missing named
+fixture is exit 2 while three malformed files are ok false with exit 0; latency
+and jitter numbers identical twice from the fixture, and honest absence (no
 captures, no jitter capture) reported as ok false; the three verdict thresholds
 plus 2 percent and 100 percent loss; the route parse; connectivity all true, all
 false, and one flipped input at a time (DNS, tunnel, gateway, public); the cache
-answering the second call with no commands and expiring after 10 s; fixture mode
+answering the second call with no commands, the original argv under
+`cached_from`, and expiring after 10 s, for all four reads; fixture mode
 creating no file and ignoring a `--cache-path` it was handed; `flush-dns`
 calling neither the runner nor `subprocess` in a plan or a dry run; the host
-refusals; no absolute home path; and five plans leaving the state dir byte
-identical.
+refusals; no absolute home path; five plans leaving the state dir byte
+identical; and `--timeout-scale 0.25` reaching every command timeout while the
+default 1.0 leaves the base numbers alone.
 
 ## Not offered, and why
 
