@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import NexusHud.V5 1.0
+import "icons" as Icons
 
 // LauncherArc.qml - v5 launcher: the s2 launcher arc, amended by Marcel 2026-10-23.
 //
@@ -27,12 +28,12 @@ import NexusHud.V5 1.0
 // Chromium ranking, adds X / Discord / YouTube / WhatsApp and moves Obsidian and
 // Spotify into the expanded list.
 //
-// Icons: each tile loads kit/icons/<slug>.qml by URL and resizes it to the glyph
-// box. W4 owns that artwork. A missing glyph is not an error: the tile falls back
-// to the slug's first letter drawn as a dot cluster in the same round-point
-// language as the swarm, so the arc always renders. Arc Raiders falls back to a
-// dotted arch. Interface request for W4 is in the PR body: a bare Item with
-// implicitWidth/Height (24 px grid), no required properties.
+// Icons: each tile instantiates the W4 glyph dispatcher, Icons.Glyph, with the
+// app slug as the key (the kit's icons directory). W4 owns that artwork and the
+// set's one stroke weight. A key the set does not know is not an error: the
+// dispatcher draws its calm single node, so an unknown or renamed app degrades
+// to a node and the arc never falls back to the 5x7 dot letterforms the binding
+// amendment replaced.
 //
 // Motion: Motion.qml states the intent as a continuous zeta/omega pair (5.00
 // percent overshoot and 347 ms for expand, no overshoot and 444 ms for return).
@@ -66,6 +67,7 @@ Item {
     readonly property int tilePitch: 122           // s2: pitch
     readonly property int tileRadius: 47           // s2: rr = 47 * scale
     readonly property int glyphBox: 52             // s2: gpx = 52 * scale
+    readonly property real glyphWeight: 2.0        // W4: the set's one weight on the 24 px grid
     readonly property real heroScale: 1.3          // s2: ARC tile 1.3x
     readonly property int arcRise: 80              // s2: ends 80 px above the centre
     readonly property int heroGap: 40              // s2: ARC tile sits a little apart
@@ -378,7 +380,10 @@ Item {
                 y: tile.height / 2 + tile.ringRadius + 7
             }
 
-            // glyph: W4 artwork when it lands, dot cluster otherwise
+            // glyph: the W4 dispatcher owns the artwork. The slug is the key and
+            // Glyph draws every brand mark at the set's one weight; a key the set
+            // does not know draws the dispatcher's calm single node, so a renamed
+            // feed app degrades to a node and never to a dot letterform.
             Item {
                 id: glyphBoxItem
 
@@ -387,33 +392,13 @@ Item {
                 anchors.centerIn: parent
                 opacity: tile.active ? 1.0 : root.restGlyphOpacity
 
-                Loader {
-                    id: glyphLoader
-
-                    anchors.fill: parent
-                    visible: status === Loader.Ready
-                    source: "icons/" + tile.modelData.slug + ".qml"
+                Icons.Glyph {
+                    anchors.centerIn: parent
+                    glyph: tile.modelData.slug
+                    size: root.glyphBox * tile.baseScale
+                    weight: root.glyphWeight
+                    color: tile.ink
                 }
-
-                Repeater {
-                    model: glyphLoader.status === Loader.Ready ? [] : tile.glyphDots()
-
-                    Rectangle {
-                        required property var modelData
-
-                        width: modelData.d
-                        height: width
-                        radius: width / 2
-                        color: tile.ink
-                        x: modelData.x - width / 2
-                        y: modelData.y - width / 2
-                    }
-                }
-            }
-
-            function glyphDots() {
-                var box = root.glyphBox * tile.baseScale
-                return tile.heroTile ? root.archDots(box) : root.letterDots(tile.modelData.slug.charAt(0), box)
             }
 
             // label under the active tile only (s2 shows it on the hovered tile)
@@ -468,83 +453,5 @@ Item {
                 }
             }
         }
-    }
-
-    // ---- dot fallback artwork --------------------------------------------
-    // 5x7 round-dot letterforms. W4 replaces these with real glyphs; until then
-    // the arc draws the app's initial so the tile is never empty.
-    readonly property var letterforms: ({
-        "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
-        "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
-        "C": ["01110", "10001", "10000", "10000", "10000", "10001", "01110"],
-        "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
-        "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
-        "F": ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
-        "G": ["01110", "10001", "10000", "10111", "10001", "10001", "01110"],
-        "H": ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
-        "I": ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
-        "J": ["00111", "00010", "00010", "00010", "00010", "10010", "01100"],
-        "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
-        "L": ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
-        "M": ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
-        "N": ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
-        "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
-        "P": ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
-        "Q": ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
-        "R": ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
-        "S": ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
-        "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
-        "U": ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
-        "V": ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
-        "W": ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
-        "X": ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
-        "Y": ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
-        "Z": ["11111", "00001", "00010", "00100", "01000", "10000", "11111"]
-    })
-
-    function letterDots(ch, box) {
-        var rows = root.letterforms[String(ch).toUpperCase()] || root.letterforms["A"]
-        var cell = box / 7
-        var d = cell * 0.62
-        var ox = (box - 5 * cell) / 2
-        var oy = (box - 7 * cell) / 2
-        var out = []
-        var seed = String(ch).toUpperCase().charCodeAt(0)
-        for (var r = 0; r < 7; ++r) {
-            for (var c = 0; c < 5; ++c) {
-                if (rows[r].charAt(c) !== "1")
-                    continue
-                var jx = (((r * 5 + c + seed) % 5) - 2) * cell * 0.035
-                var jy = (((r * 3 + c + seed) % 4) - 1.5) * cell * 0.035
-                out.push({ x: ox + (c + 0.5) * cell + jx, y: oy + (r + 0.5) * cell + jy, d: d })
-            }
-        }
-        return out
-    }
-
-    // Arc Raiders fallback: the s2 arch, drawn as dots on the rim plus two legs.
-    // The glyph's own bounds are centred in the box (0.20 to 0.82 of its height)
-    // so it sits optically level with the letter tiles.
-    function archDots(box) {
-        var cell = box / 7
-        var d = cell * 0.62
-        var cx = box / 2
-        var cy = box * 0.52
-        var radius = box * 0.32
-        var out = []
-        // even sample along the rim and both legs so the glyph's bounds are exact
-        var domeCount = Math.max(6, Math.round(Math.PI * radius / (1.15 * cell)))
-        for (var i = 0; i <= domeCount; ++i) {
-            var a = Math.PI + Math.PI * i / domeCount
-            out.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius, d: d })
-        }
-        var legBottom = box * 0.82
-        var legCount = Math.max(1, Math.round((legBottom - cy) / (1.15 * cell)))
-        for (var k = 0; k <= legCount; ++k) {
-            var yy = cy + (legBottom - cy) * k / legCount
-            out.push({ x: cx - radius, y: yy, d: d })
-            out.push({ x: cx + radius, y: yy, d: d })
-        }
-        return out
     }
 }
