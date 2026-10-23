@@ -181,6 +181,9 @@ Item {
     property bool findBusy: false
     property string findNote: ""
     property int findSeq: 0
+    // Find watchdog: idle, live, ok, error (reason timeout after 5 s alive).
+    property string findState: "idle"
+    property string findReason: ""
     readonly property string homeDir: String(Quickshell.env("HOME") || "")
 
     // Every query edit restarts the reader: the previous process is stopped
@@ -212,7 +215,11 @@ Item {
         slot.command = ["python3", hud.feedsDir + "/find.py", "--query", q,
                         "--filter", surface.findFilter, "--json"]
         hud.findBusy = true
+        hud.findState = "live"
+        hud.findReason = ""
         slot.running = true
+        if (slot === findProc) findWatchA.restart()
+        else findWatchB.restart()
     }
 
     // SIGTERM to a superseded reader (find.py kills yuri's group on TERM).
@@ -225,10 +232,28 @@ Item {
         findKillProc.running = true
     }
 
+    // Watchdog expiry (5 s): the find process is still alive. SIGTERM makes
+    // find.py kill yuri's group. The run's output is dropped (runSeq -1), so
+    // the list is never a frozen result; the note carries the STALE mark.
+    function findTimeout(p) {
+        if (p === null || !p.running)
+            return
+        p.runSeq = -1
+        hud.findBusy = false
+        hud.findState = "error"
+        hud.findReason = "timeout"
+        hud.findNote = "STALE: search timed out"
+        hud.findResults = []
+        findKillProc.running = false
+        findKillProc.command = ["kill", "-TERM", String(p.processId)]
+        findKillProc.running = true
+    }
+
     function findDone(seq, out) {
         if (seq !== hud.findSeq)
             return
         hud.findBusy = false
+        hud.findState = "ok"
         var v = hud.readJson(out, null)
         if (v === null || v.ok === false) {
             hud.findNote = v === null ? "" : String(v.reason || "search failed")
@@ -243,6 +268,7 @@ Item {
         id: findProc
         property int runSeq: 0
         running: false
+        onRunningChanged: if (!running) findWatchA.stop()
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: hud.findDone(findProc.runSeq, text)
@@ -253,6 +279,7 @@ Item {
         id: findProcB
         property int runSeq: 0
         running: false
+        onRunningChanged: if (!running) findWatchB.stop()
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: hud.findDone(findProcB.runSeq, text)
@@ -263,6 +290,23 @@ Item {
     Process {
         id: findKillProc
         running: false
+    }
+
+    // One-shot watchdog per find slot (5 s). Armed when its find process
+    // starts, stopped when that process ends (onRunningChanged above).
+    Timer {
+        id: findWatchA
+        interval: 5000
+        repeat: false
+        running: false
+        onTriggered: hud.findTimeout(findProc)
+    }
+    Timer {
+        id: findWatchB
+        interval: 5000
+        repeat: false
+        running: false
+        onTriggered: hud.findTimeout(findProcB)
     }
 
     // Enter on a hit: xdg-open on the expanded path (the deck clears its focus).
@@ -472,6 +516,37 @@ Item {
         }
     }
 
+    // usage: the Claude 5 h gauge snapshot from feeds/usage.py. Freshness is
+    // judged by the generic rule (generated_at, source_as_of) in freshnessTick,
+    // never by the snapshot's own state field alone.
+    Process {
+        id: usageProc
+        command: hud.feedCmd.usage
+        running: false
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                if (hud.feedRuns.usage.killed)
+                    return
+                var v = hud.readJson(text, null)
+                if (v === null || typeof v !== "object") {
+                    hud.feedFail("usage", "no json")
+                    return
+                }
+                var c = (v.gauges !== undefined && v.gauges !== null && v.gauges.claude !== undefined)
+                        ? v.gauges.claude : null
+                if (v.state !== "fresh" && v.state !== "stale") {
+                    hud.feedFail("usage", (c !== null && c.error) ? String(c.error) : String(v.state))
+                    return
+                }
+                hud.feedLive("usage", v)
+                var w = (c !== null && c.windows !== null && c.windows !== undefined && c.windows.length > 0)
+                        ? c.windows[0] : null
+                hud.usageSnap = (w === null) ? ({}) : { percent: Math.round(Number(w.value)), reset: hud.hhmm(w.resetsAt) }
+            }
+        }
+    }
+
     // The feed timers. Fleet pulse asks for "cache 10 s, never faster"; the same
     // cadence is honest for the rest, and the disk list can be a minute old.
     Timer {
@@ -488,6 +563,14 @@ Item {
         repeat: true
         triggeredOnStart: true
         onTriggered: { hud.armFeed("apps", appsProc); hud.armFeed("disks", disksProc) }
+    }
+
+    Timer {
+        interval: 30000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: hud.armFeed("usage", usageProc)
     }
 
     // ---- freshness (OWNER S2; SHARED3 FRESHNESS CONTRACT) ---------------
@@ -508,12 +591,14 @@ Item {
         "link":     { "cadence": 10, "ttl": 30, "sourceTtl": 30, "timeout": 8 },
         "metrics":  { "cadence": 10, "ttl": 30, "sourceTtl": 30, "timeout": 8 },
         "apps":     { "cadence": 60, "ttl": 180, "sourceTtl": 180, "timeout": 20 },
-        "disks":    { "cadence": 60, "ttl": 180, "sourceTtl": 180, "timeout": 20 }
+        "disks":    { "cadence": 60, "ttl": 180, "sourceTtl": 180, "timeout": 20 },
+        "usage":    { "cadence": 30, "ttl": 300, "sourceTtl": 300, "timeout": 5 }
     })
 
     // Reader commands. Replaceable: the test scenario points a feed at a stub.
     property var feedCmd: ({
         "sessions": ["python3", hud.feedsDir + "/sessions.py"],
+        "usage": ["python3", hud.feedsDir + "/usage.py"],
         "link": ["python3", hud.feedsDir + "/link.py"],
         "metrics": ["python3", hud.feedsDir + "/metrics.py"],
         "apps": ["python3", hud.feedsDir + "/apps.py"],
@@ -526,7 +611,7 @@ Item {
     // attempt was good. killed: the watchdog ended the current run.
     property var feedRuns: makeRuns()
     function makeRuns() {
-        var ids = ["sessions", "link", "metrics", "apps", "disks"]
+        var ids = ["sessions", "link", "metrics", "apps", "disks", "usage"]
         var runs = {}
         for (var i = 0; i < ids.length; ++i)
             runs[ids[i]] = { seq: 0, startSec: 0, killed: false, origin: "none",
@@ -539,6 +624,31 @@ Item {
     property var feedAgeMap: ({})
     property var staleIds: []
     property var feedState: ({})
+    property var usageView: ({ mode: "none" })
+    property string usageSig: ""
+    property var usageSnap: ({})
+
+    // hh:mm of an ISO UTC time in this shell's local time; "" if unparsable.
+    function hhmm(iso) {
+        var t = Date.parse(String(iso))
+        if (isNaN(t)) return ""
+        var d = new Date(t)
+        var h = d.getHours() < 10 ? "0" + d.getHours() : "" + d.getHours()
+        var m = d.getMinutes() < 10 ? "0" + d.getMinutes() : "" + d.getMinutes()
+        return h + ":" + m
+    }
+
+    // The one usage readout. A reader error wins (no number, the reason). Then
+    // stale by the generic judge (no number, the age). Then fresh (the number).
+    function usageViewFor(st) {
+        if (hud.feedRuns.usage.lastOk === false)
+            return { mode: "error", reason: String(hud.feedRuns.usage.reason) }
+        if (st.state === "stale")
+            return { mode: "stale", age: hud.ageText(st.ageSec) }
+        if (st.state === "live" && hud.usageSnap.percent !== undefined)
+            return { mode: "fresh", percent: hud.usageSnap.percent, reset: hud.usageSnap.reset }
+        return { mode: "none" }
+    }
     property string feedSig: ""
 
     function feedStale(id) { return hud.feedStaleMap[id] === true }
@@ -551,6 +661,7 @@ Item {
         case "metrics": return metricsProc
         case "apps": return appsProc
         case "disks": return disksProc
+        case "usage": return usageProc
         }
         return null
     }
@@ -664,6 +775,12 @@ Item {
                 stale.push(id)
         }
         hud.feedState = states
+        var uv = hud.usageViewFor(states.usage)
+        var uvs = JSON.stringify(uv)
+        if (uvs !== hud.usageSig) {
+            hud.usageSig = uvs
+            hud.usageView = uv
+        }
         var sig = JSON.stringify(hidden) + JSON.stringify(ages)
         if (sig !== hud.feedSig) {
             hud.feedSig = sig
@@ -801,6 +918,7 @@ Item {
             disks: hud.disks
             feedStale: hud.feedStaleMap
             feedAge: hud.feedAgeMap
+            usage: hud.usageView
             focusRequest: hud.focusId
             assembling: hud.assembling
             assembleProgress: hud.assembleProgress

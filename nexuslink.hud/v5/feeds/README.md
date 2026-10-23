@@ -192,6 +192,29 @@ one non-finite element nulls the whole triple (and `load1_frac` with it), so a
 5 or 15 minute value can never be reported as the 1 minute ratio. A finite
 partial list still works.
 
+### usage
+
+`usage.py` reads the four gauge files the usage collector writes to
+`$XDG_RUNTIME_DIR/gauges/` (`claude`, `devin`, `opencode-go`, `vram`) and
+answers one snapshot. `--gauge-dir DIR` points it at a fixture folder; `--self-check`
+runs five named cases (fresh, stale-by-age, error, missing, unparsable) through the CLI.
+
+Top level: `generated_at` (now), `source_as_of` (the Claude gauge `fetchedAt`,
+UTC Z, or null), `ttl_s` (its `ttl`), `state` (its judged state), `mode`
+(`live` or `fixture`), and `gauges{}` with one entry per gauge: `state`
+(`fresh`, `stale`, `error`, `missing`), `age_s` (now minus `fetchedAt`, or null),
+`ttl_s`, `source_as_of`, `file_state` (the file's own state, for reference),
+`windows` (the file's windows when fresh, else null), `error` (text, or null).
+
+Freshness is judged by age, not by the file's `state`: an age past `ttl` is
+`stale` with `windows: null` even when the file says `fresh`. A file that says
+`error` or `missing`, or that cannot be parsed, is answered as `error` or
+`missing` with the error text and no numbers. The reader exits 0 on all of
+these. It is optional in `supervisor.py` (`--enable usage`, interval 30 s).
+
+    python3 nexuslink.hud/v5/feeds/usage.py --gauge-dir <fixture-dir> --json
+    python3 nexuslink.hud/v5/feeds/usage.py --self-check
+
 ## What is not here
 
 `fleet.py`, `chief.py`, `gamemode.py` and `yuri.py` belong to other cards; the

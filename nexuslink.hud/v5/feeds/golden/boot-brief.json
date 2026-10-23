@@ -4,6 +4,10 @@
   "source": "fixture",
   "since": "2026-10-22T22:43:20Z",
   "since_source": "boot",
+  "state": "fixture",
+  "source_as_of": null,
+  "stale_age_s": null,
+  "ttl_s": null,
   "fleet": {
     "finished": 3,
     "blocked": 2,

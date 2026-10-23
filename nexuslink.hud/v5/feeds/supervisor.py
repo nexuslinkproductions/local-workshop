@@ -65,6 +65,7 @@ JOBS = {
     "link": dict(script="link.py", argv=["--json"], interval=10, timeout=8),
     "metrics": dict(script="metrics.py", argv=["--json"], interval=10, timeout=5),
     "apps": dict(script="apps.py", argv=["--json"], interval=60, timeout=5),
+    "usage": dict(script="usage.py", argv=["--json"], interval=30, timeout=5),
     # Optional. Off by default so the default cost is the four readers the deck binds.
     "callcap": dict(script="callcap.py", argv=["--status", "--json"], interval=30, timeout=8),
     "chief": dict(script="chief.py", argv=["--status", "--json"], interval=30, timeout=8),

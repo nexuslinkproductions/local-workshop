@@ -97,6 +97,16 @@ Item {
     // "45s" while the feed is stale, and "" otherwise.
     property var feedStale: ({})
     property var feedAge: ({})
+
+    // Claude 5 h usage readout (DeckMain usageViewFor): mode fresh|stale|error|none.
+    property var usage: ({ mode: "none" })
+    function usageLine() {
+        var u = deck.usage
+        if (u.mode === "fresh") return "Claude 5h " + u.percent + "%  resets " + (u.reset !== "" ? u.reset : "--")
+        if (u.mode === "stale") return "Claude 5h --  STALE " + u.age
+        if (u.mode === "error") return "ERROR " + u.reason
+        return "Claude 5h --"
+    }
     function isStale(id) { return feedStale[id] === true }
     function staleText(id) { return String(feedAge[id] || "") }
 
@@ -106,6 +116,7 @@ Item {
         "sessions": { "text": crewValue.text, "opacity": crewGroup.opacity, "label": staleText("sessions") !== "" ? "STALE " + staleText("sessions") : "" },
         "metrics": { "text": localValue.text, "opacity": localGroup.opacity, "label": staleText("metrics") !== "" ? "STALE " + staleText("metrics") : "" },
         "link": { "text": macValue.text, "opacity": macGroup.opacity, "label": staleText("link") !== "" ? "STALE " + staleText("link") : "" },
+        "usage": { "text": usageReadout.text, "opacity": usageReadout.opacity, "label": deck.usage.mode === "stale" ? "STALE " + deck.usage.age : "" },
         "disks": { "text": storageValue.text, "opacity": storageGroup.opacity, "label": staleText("disks") !== "" ? "STALE " + staleText("disks") : "" }
     })
     property bool assembling: false
@@ -703,6 +714,19 @@ Item {
 
                 onToggleRequested: deck.mediaToggleRequested()
             }
+        }
+
+        // usage: one text-only readout, top left (DeckMain usage feed).
+        Text {
+            id: usageReadout
+            x: Tokens.safeMargin
+            y: Tokens.safeMargin
+            text: deck.usageLine()
+            opacity: deck.usage.mode === "stale" ? 0.45 : 1
+            color: deck.usage.mode === "error" ? Tokens.ice : Tokens.ink
+            font.family: Tokens.fontFamily
+            font.weight: Tokens.weightRegular
+            font.pixelSize: Tokens.sizeLabel
         }
 
         // ---------------------------------------------------------------- clock

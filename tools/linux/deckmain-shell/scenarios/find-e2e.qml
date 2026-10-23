@@ -36,7 +36,7 @@ Item {
 
     property var steps: [s_boot, s_open, s_type, s_results, s_down, s_right, s_left,
                          s_up, s_down2, s_enter, s_esc, s_reopen, s_clear, s_slow1,
-                         s_slow2, s_stale, s_close]
+                         s_slow2, s_stale, s_hang, s_close]
 
     function check(name, ok, detail) {
         if (!ok)
@@ -270,6 +270,37 @@ Item {
         var s = hud.findResults.length
         check("slow2: results for slowqx shown", s >= 1 && hud.findBusy === false,
               "count=" + s + " busy=" + hud.findBusy + " top=[" + (s > 0 ? hud.findResults[0].title : "") + "]")
+        return true
+    }
+
+    // Watchdog case, only with DECKMAIN_STUB_SLOW_ESCAPE set (stub hangs past 5 s).
+    function s_hang() {
+        var escape = String(Quickshell.env("DECKMAIN_STUB_SLOW_ESCAPE") || "") !== ""
+        if (!escape) {
+            if (ticks === 0)
+                log("SKIP hang: DECKMAIN_STUB_SLOW_ESCAPE unset")
+            return true
+        }
+        if (ticks === 0) {
+            var n = field.text.length
+            for (var i = 0; i < n; ++i)
+                ev.keyClick(Qt.Key_Backspace, Qt.NoModifier, 0)
+            ev.keyClick(Qt.Key_S, Qt.NoModifier, 0)
+            ev.keyClick(Qt.Key_L, Qt.NoModifier, 0)
+            ev.keyClick(Qt.Key_O, Qt.NoModifier, 0)
+            ev.keyClick(Qt.Key_W, Qt.NoModifier, 0)
+            ev.keyClick(Qt.Key_Q, Qt.NoModifier, 0)
+        }
+        if (ticks < 2)
+            return false
+        if (hud.findState !== "error" && ticks < 80)
+            return false
+        check("hang: watchdog state error reason timeout", hud.findState === "error" && hud.findReason === "timeout",
+              "state=[" + hud.findState + "] reason=[" + hud.findReason + "] ticks=" + ticks)
+        check("hang: STALE note, no result list", String(hud.findNote).indexOf("STALE") === 0 && hud.findResults.length === 0,
+              "note=[" + hud.findNote + "] count=" + hud.findResults.length)
+        var c = stubLines("yuri\tsearch\tslowq\t").length
+        check("hang: slowq hang query ran once more", c === 2, "calls=" + c)
         return true
     }
 

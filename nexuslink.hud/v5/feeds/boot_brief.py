@@ -674,6 +674,44 @@ def board_from_db(path=None):
     return cards, None
 
 
+# Freshness of live counts: the board file is the evidence, and its mtime is the
+# as-of time. A WAL-mode write does not touch kanban.db until a checkpoint, so
+# the newer of the file and its -wal sidecar is taken (the sidecar only when it holds
+# data: an empty one is touched by every open). 6 hours: a board that has
+# not been written for longer than this is shown as stale, counts null.
+SOURCE_TTL_S = 6 * 60 * 60
+
+
+def board_source_as_of(path=None):
+    """``(epoch, iso)`` of the board's last write, or ``(None, None)`` if absent."""
+    db_path = path or os.environ.get("HERMES_KANBAN_DB") or DEFAULT_BOARD_DB
+    db_path = os.path.abspath(os.path.expanduser(db_path))
+    stamps = []
+    for candidate in (db_path, db_path + "-wal"):
+        try:
+            # An empty -wal is touched by every open, so it is not evidence of a write.
+            if candidate.endswith("-wal") and os.path.getsize(candidate) == 0:
+                continue
+            stamps.append(os.path.getmtime(candidate))
+        except OSError:
+            pass
+    if not stamps:
+        return None, None
+    epoch = int(max(stamps))
+    return epoch, iso(epoch)
+
+
+def freshness(now_epoch, path=None):
+    """``{state, source_as_of, age_s, ttl_s}``: state is fresh, stale or unknown."""
+    epoch, stamp = board_source_as_of(path)
+    if epoch is None:
+        return {"state": "unknown", "source_as_of": None, "age_s": None,
+                "ttl_s": SOURCE_TTL_S}
+    age = int(now_epoch) - epoch
+    return {"state": "stale" if age > SOURCE_TTL_S else "fresh",
+            "source_as_of": stamp, "age_s": max(age, 0), "ttl_s": SOURCE_TTL_S}
+
+
 def board_from_fixture(path):
     """``(cards, anchor, problem)``: a fixture board and its own anchor field.
 
@@ -845,6 +883,18 @@ def render_lines(payload):
     """Five short plain lines: the same numbers as brief.json, nothing new."""
     if payload.get("ok") is False:
         return render_unreadable_lines(payload)
+    if payload.get("state") in ("stale", "unknown"):
+        # Counts are null: say why, never print an old number as current.
+        age = payload.get("stale_age_s")
+        age_text = (" (last write %s, %d h old)" % (payload.get("source_as_of"), age // 3600)
+                    if age is not None else "")
+        return [
+            "Mac fleet: counts not shown, board is %s%s."
+            % (payload.get("state"), age_text),
+            "Needs you: not shown while the board is %s." % payload.get("state"),
+            digest_line(payload["digest"]),
+            slack_line(payload["slack"]),
+        ]
     fleet = payload["fleet"]
     if fleet.get("finished") is None:
         # A window with no start has no finished count. Say that, never 0.
@@ -1063,6 +1113,14 @@ def generate(args):
         }
 
     finished, blocked, failed, running, needs_me = bucket(cards, since_epoch)
+    # Freshness: a board read from the CLI or the db file is only as current as
+    # that file. Stale or undated: the window stays, the counts go null.
+    board_fresh = None
+    if not fixtures_only and board_source in ("cli", "db"):
+        board_fresh = freshness(now)
+    counts_shown = board_fresh is None or board_fresh["state"] == "fresh"
+    if not counts_shown:
+        needs_me = []
     for entry in digest_needs_me:
         if not any(existing["id"] == entry["id"] for existing in needs_me):
             needs_me.append(entry)
@@ -1082,24 +1140,30 @@ def generate(args):
     if finished is not None:
         finished = [card for card in finished if pair_key(card) not in reported_set]
 
-    finished_count = None if finished is None else len(finished)
+    finished_count = None if (finished is None or not counts_shown) else len(finished)
     payload = {
         "ok": True,
         "generated_at": iso(now),
         "source": source,
         "since": iso(since_epoch),
         "since_source": since_source,
+        "state": board_fresh["state"] if board_fresh else "fixture",
+        "source_as_of": board_fresh["source_as_of"] if board_fresh else None,
+        "stale_age_s": board_fresh["age_s"] if (board_fresh and not counts_shown) else None,
+        "ttl_s": SOURCE_TTL_S if board_fresh else None,
     }
     if finished_count is None:
-        payload["finished_reason"] = since_reason or "window start unknown"
+        payload["finished_reason"] = since_reason or (
+            "board counts not shown: %s" % board_fresh["state"] if not counts_shown
+            else "window start unknown")
     payload.update({
         "fleet": {
             "finished": finished_count,
-            "blocked": len(blocked),
-            "failed": len(failed),
-            "still_running": len(running),
+            "blocked": len(blocked) if counts_shown else None,
+            "failed": len(failed) if counts_shown else None,
+            "still_running": len(running) if counts_shown else None,
         },
-        "highlights": build_highlights(finished or []),
+        "highlights": build_highlights(finished or []) if counts_shown else [],
         "needs_me": [{"id": card["id"], "title": card["title"], "status": "blocked"}
                      for card in needs_me],
         "slack": slack,
@@ -1115,7 +1179,8 @@ def generate(args):
     # it just reported. A readable board with an unknown window still advances
     # the anchor -- nothing was counted, but the next run then has a start.
     brief = Brief(payload)
-    if not fixtures_only:
+    # A stale or undated board is not counted, so it does not advance the anchor.
+    if not fixtures_only and counts_shown:
         fresh = [(card["completed_at"], pair_key(card)) for card in (finished or [])]
         brief.anchor_record = {
             "path": stored_path,
@@ -1188,6 +1253,11 @@ def first_diff(expected, actual, label):
 def self_check():
     report = []
     scratch = tempfile.mkdtemp(prefix="bb-check-")
+    # The live path dates the board by its db file. Pin a fresh one for this run,
+    # so the live cases test the anchor logic and not the host's board age.
+    pinned_db = os.path.join(scratch, "pinned-kanban.db")
+    open(pinned_db, "w", encoding="utf-8").close()
+    os.environ["HERMES_KANBAN_DB"] = pinned_db
 
     # Boot time on Linux: /proc/stat btime, then /proc/uptime, else None.
     if sys.platform.startswith("linux"):
@@ -1785,6 +1855,76 @@ def self_check():
           and all(value is None for value in noncard["fleet"].values())
           and "none is a card" in (noncard.get("reason") or ""),
           repr((noncard["board"], noncard.get("reason"))), report)
+
+    # 25. Freshness of the live board (FE2K): the db file's mtime is the as-of
+    #     time; a board older than SOURCE_TTL_S (6 h) shows counts as null, the
+    #     state "stale" and the age. A missing db is "unknown", counts null.
+    fresh_db = os.path.join(scratch, "fresh-kanban.db")
+    old_db = os.path.join(scratch, "old-kanban.db")
+    missing_db = os.path.join(scratch, "no-such-kanban.db")
+    write_atomic(fresh_db, "")
+    write_atomic(old_db, "")
+    os.utime(fresh_db, (GOLDEN_NOW - 60, GOLDEN_NOW - 60))
+    os.utime(old_db, (GOLDEN_NOW - 7 * 3600, GOLDEN_NOW - 7 * 3600))
+    fresh_state = freshness(GOLDEN_NOW, fresh_db)
+    old_state = freshness(GOLDEN_NOW, old_db)
+    missing_state = freshness(GOLDEN_NOW, missing_db)
+    check("fresh db: state fresh, age 60 s, as-of is the mtime",
+          fresh_state["state"] == "fresh" and fresh_state["age_s"] == 60
+          and fresh_state["source_as_of"] == iso(GOLDEN_NOW - 60)
+          and fresh_state["ttl_s"] == 6 * 3600,
+          repr(fresh_state), report)
+    check("old db (7 h): state stale with the age",
+          old_state["state"] == "stale" and old_state["age_s"] == 7 * 3600
+          and old_state["source_as_of"] == iso(GOLDEN_NOW - 7 * 3600),
+          repr(old_state), report)
+    check("missing db: state unknown, no as-of",
+          missing_state["state"] == "unknown" and missing_state["source_as_of"] is None,
+          repr(missing_state), report)
+
+    def live_board(db_path, cards):
+        """generate() on a CLI-sourced board whose db is db_path."""
+        saved_env = os.environ.get("HERMES_KANBAN_DB")
+        saved_board = globals()["board_from_cli"]
+        os.environ["HERMES_KANBAN_DB"] = db_path
+        globals()["board_from_cli"] = lambda: (cards, None)
+        try:
+            return generate(argparse.Namespace(
+                fixture=None, board_fixture=None, digest_fixture=None,
+                slack_fixture=None, digest=None, now=str(GOLDEN_NOW),
+                boot=str(GOLDEN_BOOT), since=None,
+                out=os.path.join(scratch, "fresh-live-out-%d" % len(report)),
+                no_slack=True, slack_env=DEFAULT_SLACK_ENV))
+        finally:
+            globals()["board_from_cli"] = saved_board
+            if saved_env is None:
+                os.environ.pop("HERMES_KANBAN_DB", None)
+            else:
+                os.environ["HERMES_KANBAN_DB"] = saved_env
+
+    live_cards = [
+        {"id": "t_live1", "title": "Live card", "status": "blocked", "assignee": None,
+         "completed_at": None, "created_at": GOLDEN_BOOT + 60,
+         "last_failure_error": None}]
+    fresh_brief = live_board(fresh_db, live_cards)
+    check("fresh live board shows its counts",
+          fresh_brief["state"] == "fresh" and fresh_brief["fleet"]["blocked"] == 1
+          and fresh_brief["source_as_of"] == iso(GOLDEN_NOW - 60),
+          repr((fresh_brief["state"], fresh_brief["fleet"])), report)
+    old_brief = live_board(old_db, live_cards)
+    old_text = "\n".join(render_lines(old_brief))
+    check("old live board: stale, counts null, age shown, no old number printed",
+          old_brief["state"] == "stale" and old_brief["stale_age_s"] == 7 * 3600
+          and all(value is None for value in old_brief["fleet"].values())
+          and old_brief["needs_me"] == [] and getattr(old_brief, "anchor_record", None) is None
+          and "counts not shown" in old_text
+          and "blocked" not in old_text,
+          repr((old_brief["state"], old_brief["fleet"], old_text)), report)
+    missing_brief = live_board(missing_db, live_cards)
+    check("missing live db: state unknown, counts null",
+          missing_brief["state"] == "unknown"
+          and all(value is None for value in missing_brief["fleet"].values()),
+          repr((missing_brief["state"], missing_brief["fleet"])), report)
 
     # 24. Fixture writes are opt-in, and the live cache and anchor trust only a
     #     live ok brief (defect 1).

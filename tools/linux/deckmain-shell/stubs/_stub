@@ -25,6 +25,13 @@ case $name in
                 # (DECKMAIN_STUB_SLOW_SECS, default 2) with a STALE row, to prove a
                 # superseded search never shows.
                 if [ -n "${DECKMAIN_STUB_SLOW_QUERY:-}" ] && [ "${2:-}" = "$DECKMAIN_STUB_SLOW_QUERY" ]; then
+                    if [ -n "${DECKMAIN_STUB_SLOW_ESCAPE:-}" ]; then
+                        # e2e hook (find watchdog): the wait runs in its own session, outside
+                        # yuri's group, and keeps stdout open. find.py blocks on that pipe past
+                        # its own timeout. The child logs its pid for the census.
+                        setsid sh -c 'printf "yuri-escape\tpid=%s\n" "$$" >> "$1"; exec sleep "$2"' sh "${DECKMAIN_STUB_LOG:-/dev/null}" "${DECKMAIN_STUB_SLOW_SECS:-2}" &
+                        exit 0
+                    fi
                     sleep "${DECKMAIN_STUB_SLOW_SECS:-2}"
                     printf '%s\n' '[{"title":"STALE slow result","path":"/tmp/stale-slow.txt","kind":"file","score":0.1}]'
                     exit 0

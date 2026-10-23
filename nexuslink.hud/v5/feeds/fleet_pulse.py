@@ -86,6 +86,10 @@ EXIT_PROGRAMMING = 2
 
 HOME = os.path.expanduser("~")
 DEFAULT_CACHE = os.path.join(HOME, ".local", "state", "nexuslink", "fleet_pulse.json")
+# Freshness of live counts (FE2K): the board db file is the evidence; its mtime
+# is the as-of time (the newer of kanban.db and its -wal). 6 hours.
+DEFAULT_BOARD_DB = os.path.join(HOME, ".hermes", "kanban.db")
+SOURCE_TTL_S = 6 * 60 * 60
 CACHE_TTL_S = 10
 NEEDS_ME_STATUSES = ("blocked", "failed")
 NEEDS_ME_CAP = 8
@@ -538,6 +542,48 @@ def _needs_card(raw, status_key, now_epoch):
     }
 
 
+def board_source_as_of(path=None):
+    """``(epoch, iso)`` of the board's last write, or ``(None, None)`` if absent."""
+    db_path = path or os.environ.get("HERMES_KANBAN_DB") or DEFAULT_BOARD_DB
+    db_path = os.path.abspath(os.path.expanduser(str(db_path)))
+    stamps = []
+    for candidate in (db_path, db_path + "-wal"):
+        try:
+            # An empty -wal is touched by every open, so it is not evidence of a write.
+            if candidate.endswith("-wal") and os.path.getsize(candidate) == 0:
+                continue
+            stamps.append(os.path.getmtime(candidate))
+        except OSError:
+            pass
+    if not stamps:
+        return None, None
+    epoch = int(max(stamps))
+    return epoch, iso(epoch)
+
+
+def apply_freshness(payload, now_epoch, path=None):
+    """Mark a live or board payload fresh, stale or unknown; null the counts unless fresh.
+
+    fresh: the board was written within SOURCE_TTL_S. stale: older than that, with the
+    age in stale_age_s. unknown: no board file to date (counts null too).
+    """
+    epoch, stamp = board_source_as_of(path)
+    age = None
+    if epoch is None:
+        state = "unknown"
+    else:
+        age = max(int(now_epoch) - epoch, 0)
+        state = "stale" if int(now_epoch) - epoch > SOURCE_TTL_S else "fresh"
+    payload["state"] = state
+    payload["source_as_of"] = stamp
+    payload["stale_age_s"] = age if state == "stale" else None
+    payload["ttl_s"] = SOURCE_TTL_S
+    if state != "fresh":
+        payload["counts"] = None
+        payload["needs_me"] = {"count": None, "cards": []}
+    return payload
+
+
 def summarize(tasks, boot_epoch, boot_reason, now_epoch, source, source_ref,
               clock_reason=None):
     counts = {key: 0 for key in DOT_STATUSES}
@@ -766,6 +812,14 @@ def pulse(mode="live", ref=None, cache_path=None, use_cache=True, boot_override=
         # full cache window, otherwise the next 10 s tick refetches immediately.
         # A fixture stamps its own recorded_at (or null), never the wall clock.
         payload["generated_at"] = stamp()
+        if mode == "fixture":
+            payload["state"] = "fixture"
+            payload["source_as_of"] = None
+            payload["stale_age_s"] = None
+            payload["ttl_s"] = None
+        else:
+            # The CLI and the board file read the same board: date the counts by the file.
+            apply_freshness(payload, now, ref if mode == "board" else None)
     except DataProblem as problem:
         reason = tilde_text(problem.reason)
         if mode == "fixture" and now is None:
@@ -1071,7 +1125,15 @@ class _Checker(object):
 def self_check():  # noqa: C901 - one linear script is the point
     checker = _Checker()
     root = tempfile.mkdtemp(prefix="fleet-pulse-selfcheck-")
-    old_env = {key: os.environ.get(key) for key in ("PATH",)}
+    old_env = {key: os.environ.get(key) for key in ("PATH", "HERMES_KANBAN_DB")}
+    # The live path reads the board file's mtime; pin it to a fresh db for this run.
+    fresh_live_db = os.path.join(root, "live-env-kanban.db")
+    _conn = sqlite3.connect(fresh_live_db)
+    _conn.execute("CREATE TABLE tasks (id TEXT, title TEXT, assignee TEXT, status TEXT, "
+                  "created_at INTEGER, started_at INTEGER, completed_at INTEGER)")
+    _conn.commit()
+    _conn.close()
+    os.environ["HERMES_KANBAN_DB"] = fresh_live_db
     try:
         stub = os.path.join(root, "stubs")
         os.makedirs(stub)
@@ -1638,6 +1700,41 @@ def self_check():  # noqa: C901 - one linear script is the point
         checker.check("fixture_missing_reason_names_clock",
                       "generated_at" in (miss_payload.get("reason") or ""),
                       repr(miss_payload.get("reason")))
+
+        # ---- freshness of the board file (FE2K) -------------------------------
+        fresh_now = int(time.time())
+        fresh_board = os.path.join(root, "fresh-board.db")
+        old_board = os.path.join(root, "old-board.db")
+        missing_board = os.path.join(root, "no-board.db")
+        for board_file in (fresh_board, old_board):
+            conn = sqlite3.connect(board_file)
+            conn.execute("CREATE TABLE tasks (id TEXT, title TEXT, assignee TEXT, status TEXT, "
+                         "created_at INTEGER, started_at INTEGER, completed_at INTEGER)")
+            conn.execute("INSERT INTO tasks VALUES ('t1', 'Blocked card', NULL, 'blocked', ?, NULL, NULL)",
+                         (fresh_now - 600,))
+            conn.commit()
+            conn.close()
+        os.utime(old_board, (fresh_now - 7 * 3600, fresh_now - 7 * 3600))
+        fresh_payload, _ = pulse(mode="board", ref=fresh_board, use_cache=False, now_epoch=fresh_now)
+        old_payload, _ = pulse(mode="board", ref=old_board, use_cache=False, now_epoch=fresh_now)
+        missing_payload = apply_freshness({"counts": {"blocked": 3}, "needs_me": {"count": 1, "cards": []}},
+                                          fresh_now, missing_board)
+        checker.check("fresh db: ok, state fresh, counts kept",
+                      fresh_payload.get("ok") is True and fresh_payload.get("state") == "fresh"
+                      and isinstance(fresh_payload.get("counts"), dict)
+                      and fresh_payload["counts"].get("blocked") == 1,
+                      repr((fresh_payload.get("state"), fresh_payload.get("counts"))))
+        checker.check("old db (7 h): state stale, age 25200 s, counts null",
+                      old_payload.get("state") == "stale" and old_payload.get("stale_age_s") == 7 * 3600
+                      and old_payload.get("counts") is None
+                      and old_payload.get("source_as_of") == iso(fresh_now - 7 * 3600),
+                      repr((old_payload.get("state"), old_payload.get("stale_age_s"),
+                            old_payload.get("counts"))))
+        checker.check("missing db: state unknown, counts and needs_me null",
+                      missing_payload.get("state") == "unknown" and missing_payload.get("counts") is None
+                      and missing_payload.get("needs_me", {}).get("count") is None,
+                      repr(missing_payload))
+        checker.equal("ttl is 6 hours", fresh_payload.get("ttl_s"), 6 * 3600)
 
     except Exception as exc:  # self-check must fail loudly, never traceback silently
         checker.failed.append(("exception", "%s: %s" % (exc.__class__.__name__, exc)))
