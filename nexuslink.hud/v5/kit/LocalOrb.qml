@@ -74,11 +74,61 @@ Item {
     readonly property real artDiameter: size
     readonly property string valueText: sizeGb.toFixed(2) + " GB"
 
-    readonly property real springStiffness: Motion.expandOmega * Motion.expandOmega
-    readonly property real springDamping: 2 * Motion.expandZeta * Motion.expandOmega
     readonly property real focusAmount: Math.max(0, Math.min(1, focusLevel))
     // Activity clamped once, the way focusAmount clamps focusLevel.
     readonly property real activityAmount: Math.max(0, Math.min(1, activity))
+
+    // ---- motion ------------------------------------------------------------
+    // Expand in on the wave's measured curve, return out on the slower one:
+    // OutBack at peak 1.04871 (4.87 percent, inside Motion.expandOvershoot's 4
+    // to 6 band) over Motion.expandMillis, OutCubic over Motion.returnMillis
+    // with no overshoot.
+    //
+    // Not a SpringAnimation, and that is the repair: on Qt 6.12 the integrator
+    // clamps damping to 1 and applies the spring term without a dt factor, so
+    // the analytic pair the four gauges used to hand it (spring = expandOmega^2
+    // = 278.89, damping = 2 * expandZeta * omega = 23.05) is not the 5.00
+    // percent / 347 ms Motion states. Measured with this component at 200 px:
+    // 1.0 -> 4.40 in 60 ms and 1.9e+38 within 1.4 s on the first change of
+    // either input, no late frame required; a 150 ms stalled frame is no worse.
+    // Numbers, trace and the stalled-frame note: v5/docs/w3-localorb-spring.md,
+    // probe: v5/tests/w3 (tools/w3-localorb-trace.py).
+    readonly property real expandOvershoot: 1.15   // OutBack parameter, peak 1.04871
+    readonly property real targetScale: (1 + root.activityLift * root.activityAmount)
+                                        * (1 + root.focusLift * root.focusAmount)
+    // The one number the sphere field is drawn at. Component.onCompleted snaps
+    // it to the target so a still is deterministic; after that the two
+    // animations own it, because a spring on a Behavior here would have to pick
+    // one curve for both directions.
+    property real fieldScale: 1.0
+
+    Component.onCompleted: root.fieldScale = root.targetScale
+
+    onTargetScaleChanged: {
+        var up = root.targetScale > root.fieldScale
+        grow.stop()
+        settle.stop()
+        var anim = up ? grow : settle
+        anim.to = root.targetScale
+        anim.restart()
+    }
+
+    NumberAnimation {
+        id: grow
+        target: root
+        property: "fieldScale"
+        duration: Motion.expandMillis
+        easing.type: Easing.OutBack
+        easing.overshoot: root.expandOvershoot
+    }
+
+    NumberAnimation {
+        id: settle
+        target: root
+        property: "fieldScale"
+        duration: Motion.returnMillis
+        easing.type: Easing.OutCubic
+    }
 
     // ---- design values ---------------------------------------------------
     // Hoisted to Tokens by I1 (Wave 2): every number below now reads its token,
@@ -175,17 +225,10 @@ Item {
                 anchors.centerIn: parent
                 width: 0
                 height: 0
-                scale: (1 + root.activityLift * root.activityAmount)
-                       * (1 + root.focusLift * root.focusAmount)
+                // One animated number (see the motion section): expand on the
+                // wave's OutBack curve, return on Motion.returnMillis.
+                scale: root.fieldScale
                 opacity: root.activityAlphaBase + root.activityAlphaGain * root.activityAmount
-
-                Behavior on scale {
-                    SpringAnimation {
-                        spring: root.springStiffness
-                        damping: root.springDamping
-                        mass: 1.0
-                    }
-                }
 
                 Repeater {
                     model: root.points
