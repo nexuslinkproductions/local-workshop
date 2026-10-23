@@ -23,13 +23,18 @@ import QtQuick
 //               swarms, or pin it with animate: false for a deterministic still.
 //   animate     false freezes the tick (stills, tests)
 //
-// Two additions from W1 KNOT (additive, defaults keep every existing caller and
-// its rest frame bit-identical):
+// Additions from W1 KNOT. Each one is a new property whose default reproduces
+// today's frame exactly, so no existing caller and no default render changes:
 //   sdfSource   the centre-line distance texture to march. Default is the C2
-//               spike trace; Knot passes the s2-fitted trace instead.
-//   assemble    0..1: 1 is the rest shape, 0 is fully scattered (startup
-//               sequence). The scatter is one hashed offset per dot cell, and at
-//               1 the shader skips it entirely, so nothing moves at rest.
+//               spike trace, untouched on disk; Knot passes its own file
+//               (assets/swarm-knot-sdf-s2.png) instead of re-baking the default.
+//   assemble    0..1: 1 is the rest shape. Below 1 the shader blends the traced
+//               tube with the scattered cloud baked into the texture's B
+//               channel, so the knot assembles from scattered points. At 1 the
+//               branch is skipped and the rest frame is untouched.
+//   gain        dot brightness multiplier, default C2's 1.28.
+//   breathSkew  where in the cycle the ambient motion turns around: 0.5 is the
+//               symmetric sine C2 shipped, 0.4 is 40% out / 60% back.
 Item {
     id: root
 
@@ -42,11 +47,8 @@ Item {
     property bool animate: true
     property url sdfSource: "assets/swarm-knot-sdf.png"
     property real assemble: 1.0
-    // Dot brightness multiplier. 1.28 is C2's shipped value; the s2-fitted trace
-    // needs more because the trace puts the dot pitch at 4.4 px (s2's is 5.5) and
-    // the shader's AA ramp eats the dot radius, so at 1.28 the strand edges fall
-    // under the meter's threshold. See docs/knot-iou.md.
     property real gain: 1.28
+    property real breathSkew: 0.5
 
     // 33 ms is 30.3 Hz: inside the 24 to 30 Hz band the build plan asks for.
     readonly property int tickMs: 33
@@ -61,8 +63,20 @@ Item {
     // The slow rotational wander: 0.10 rad yaw, 0.045 rad tilt, one cycle each,
     // tilt a quarter turn behind. At phase 0 the pose is yaw 0 / tilt 0.0401,
     // which is the pose the s2 knot frame is scored at (spike still a_knot).
-    readonly property real yaw: 0.10 * Math.sin(6.2831853 * phase)
-    readonly property real tilt: 0.045 * Math.sin(6.2831853 * phase + 1.1)
+    //
+    // breathSkew warps *time*, not the wave: the cycle runs out in the first
+    // `breathSkew` of it and back over the rest, so 0.4 is a 40/60 breath (2.2 s
+    // out, 3.3 s back on the 5.5 s cycle) with the shipped sine shape. 0.5 is
+    // the untouched symmetric sine: the expression returns phase itself, not a
+    // re-derivation, so the default pose is bit-identical.
+    readonly property real breathPhase: {
+        var k = Math.min(Math.max(breathSkew, 0.05), 0.95);
+        if (k === 0.5)
+            return phase;
+        return phase < k ? 0.5 * phase / k : 0.5 + 0.5 * (phase - k) / (1.0 - k);
+    }
+    readonly property real yaw: 0.10 * Math.sin(6.2831853 * breathPhase)
+    readonly property real tilt: 0.045 * Math.sin(6.2831853 * breathPhase + 1.1)
 
     // Wall clock at the previous tick. The tick advances the phase by the time
     // that actually passed, not by tickMs: a timer that is late (a coarse timer,

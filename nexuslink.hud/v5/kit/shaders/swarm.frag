@@ -5,10 +5,11 @@
 // brightness. One draw, no vertex geometry, no per-frame JS.
 //
 // The tube SDF is baked as a 2D centre-line distance texture (R: thick tube,
-// G: ring) because an analytic distance to the 233 traced segments costs too
-// much per pixel. The march evaluates sqrt(d2^2 + z^2) - r, which is the exact
-// distance to a circular tube around a planar curve. The orb uses the analytic
-// sphere length(p) - 1, selected by u_shape.
+// G: ring, B: distance to the scattered cloud the assembly starts from) because
+// an analytic distance to the 233 traced segments costs too much per pixel. The
+// march evaluates sqrt(d2^2 + z^2) - r, which is the exact distance to a
+// circular tube around a planar curve. The orb uses the analytic sphere
+// length(p) - 1, selected by u_shape.
 //
 // The SDF texture is RGB8 with alpha 255 (Qt premultiplies image textures, so a
 // byte survives only when alpha is opaque). Screen space is y-down, object space
@@ -43,6 +44,11 @@ layout(std140, binding = 0) uniform buf {
 
 layout(binding = 1) uniform sampler2D u_sdf;
 
+// Radius of one scattered dot at assembleProgress 0, in units: 0.010 * 231.16 =
+// 2.3 px at a 540 Knot, the same size as a settled dot (u_dotR 0.0086 * 231.16
+// = 2.0 px), so the cloud reads as the same points, just scattered.
+const float R_SCATTER = 0.010;
+
 mat3 rotMat(float yaw, float tilt)
 {
     float cy = cos(yaw), sy = sin(yaw);
@@ -75,11 +81,25 @@ float centreDist(vec3 p)
     if (u_shape > 0.5)
         return length(p) - 1.0;
     vec2 uv = (p.xy - u_sdfLo) / u_sdfSpan;
-    vec2 d = texture(u_sdf, uv).rg * u_sdfRange;
+    vec4 t = texture(u_sdf, uv);
+    vec2 d = t.rg * u_sdfRange;
     float z = p.z;
     float a = sqrt(d.x * d.x + z * z) - u_rTube;
     float b = sqrt(d.y * d.y + z * z) - u_rRing;
-    return min(a, b);
+    float dist = min(a, b);
+    // Assembly (W1 KNOT): B holds the distance to the nearest dot of the
+    // scattered cloud. Below 1 the two distance fields are blended, so the
+    // surface starts as that cloud of small spheres and walks into the tube as
+    // progress rises. A blend of two 1-Lipschitz fields is 1-Lipschitz, so the
+    // sphere trace stays valid; displacing dots per fragment cannot work,
+    // because a displaced fragment has no surface left to draw it. At 1 the
+    // branch is skipped, so the rest frame is byte-identical.
+    if (u_assemble < 0.999) {
+        float ds = t.b * u_sdfRange;
+        float scat = sqrt(ds * ds + z * z) - R_SCATTER;
+        dist = mix(scat, dist, u_assemble);
+    }
+    return dist;
 }
 
 void main()
@@ -147,26 +167,6 @@ void main()
         return;
     }
     vec2 dc = project(centre, R) - px;
-    // Assembly (W1 KNOT): dots stream in, and a decaying jitter lets each one
-    // settle into its cell. u_assemble = 1 is the rest frame and the branch is
-    // skipped entirely, so the untransitioned still is bit-identical.
-    //
-    // Why the reveal and not a spatial scatter: this is a raymarched implicit
-    // surface, so a fragment exists only where the ray hits the tube. A dot
-    // displaced further than its own radius has no fragment left to draw it, and
-    // the first version (a 0.34 unit = 38 px scatter) rendered a black frame at
-    // assembleProgress 0.3. Displacing the *field* per cell instead would break
-    // the sphere tracing (the warped field stops being Lipschitz). A hashed rank
-    // per cell gives scattered points at every progress and an exact rest shape
-    // at 1, at the cost of the points streaming in rather than sliding in.
-    if (u_assemble < 0.999) {
-        if (hash13(cell + 137.0) > u_assemble) {
-            fragColor = vec4(0.0);
-            return;
-        }
-        vec2 j = vec2(hash13(cell + 53.0), hash13(cell + 71.0)) * 2.0 - 1.0;
-        dc -= j * (1.0 - u_assemble) * 0.5 * u_pitch * u_pxPerUnit;
-    }
     float jr = hash13(cell + 17.0);
     float radius = u_dotR * mix(0.88, 1.12, jr) * u_pxPerUnit * u_camDist / max(u_camDist - vg.z, 0.05);
     // A ~0.8 px transition: the disc stays solid out to most of its radius and
