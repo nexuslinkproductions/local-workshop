@@ -88,7 +88,15 @@ Item {
     property bool animate: true
     // Shell hook: the panel is 2560x1440 on the DP-2 and 1:1; anything else is
     // drawn at its own size, which is a still, not the deck.
+    //
+    // Two properties, because both sides write focus: `focusRequest` is what the
+    // shell binds (IPC, keybinding, session activation) and `focusId` is the
+    // deck's own state, set by a click or a key. Binding one property and also
+    // assigning it locally would drop the shell's binding on the first click, so
+    // the shell writes the request and listens to `focusChanged` for the rest.
+    property string focusRequest: ""
     property string focusId: ""
+    signal focusChanged(string id)
 
     // Bench hook for nexuslink.hud/v5/spike/timing/swarm-bench.cpp, which cycles
     // this property every frame so the frame time is not measured on a cached
@@ -192,8 +200,26 @@ Item {
         return Qt.rect(0, 0, 0, 0)
     }
 
-    function toggleFocus(id) {
-        focusId = (focusId === id) ? "" : id
+    function toggleFocus(target) {
+        focusId = (focusId === target) ? "" : target
+        focusChanged(focusId)
+    }
+
+    function clearFocus() {
+        if (focusId === "")
+            return
+        focusId = ""
+        focusChanged("")
+    }
+
+    onFocusRequestChanged: {
+        if (focusRequest !== focusId)
+            focusId = focusRequest
+    }
+
+    Component.onCompleted: {
+        if (focusRequest !== "" && focusRequest !== focusId)
+            focusId = focusRequest
     }
 
     // Fonts: the four Satoshi faces, from Tokens.fontFiles. DeckSurface is at
@@ -760,7 +786,7 @@ Item {
 
         anchors.fill: parent
         z: -1
-        onClicked: deck.focusId = ""
+        onClicked: deck.clearFocus()
     }
 
     Item {
@@ -774,7 +800,7 @@ Item {
 
         Keys.onPressed: function (event) {
             if (event.key === Qt.Key_Escape) {
-                deck.focusId = ""
+                deck.clearFocus()
                 event.accepted = true
             } else if (event.key === Qt.Key_C) {
                 deck.toggleFocus("crew")

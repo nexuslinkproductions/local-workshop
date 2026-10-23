@@ -30,7 +30,7 @@ Item {
         animate: false
         benchPhase: 0
         stillFocusProgress: 1
-        focusId: "crew"
+        focusRequest: "crew"
 
         clockText: fx.clockText
         dayText: fx.dayText

@@ -376,13 +376,16 @@ Item {
             modelGb: hud.modelGb
             modelActivity: hud.modelActivity
             disks: hud.disks
-            focusId: hud.focusId
+            focusRequest: hud.focusId
             assembling: hud.assembling
             assembleProgress: hud.assembleProgress
             animate: true
 
+            // The deck owns focus while a pointer or the keyboard is driving it;
+            // the shell keeps its own copy so IPC stays in step.
+            onFocusChanged: function (id) { hud.focusId = id }
             onLaunchRequested: function (slug) { hud.launch(slug) }
-            onSessionActivated: function (id) { hud.focusId = "" }
+            onSessionActivated: function (sessionId) { hud.focusId = "" }
         }
     }
 

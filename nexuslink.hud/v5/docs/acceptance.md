@@ -125,7 +125,7 @@ nexuslink.hud/v5/tools/deck-audit.py nexuslink.hud/v5/tests/i1/audit-rest.qml
   the clock 96 px, the Find placeholder 26 px (`Tokens.sizeBody`).
 * **Zero overlaps** across all 16 text boxes (pairwise intersection area > 0 is a
   failure, exit 1).
-* The crew focus state is audited too (`tests/i1/audit-crew-focus.qml`): 29 words
+* The crew focus state is audited too (`tests/i1/audit-crew-focus.qml`): 27 words
   with the three session titles, min 16 px, still zero overlaps.
 
 ## 4. qmllint before and after
