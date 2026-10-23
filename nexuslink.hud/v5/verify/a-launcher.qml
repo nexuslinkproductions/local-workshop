@@ -2,7 +2,7 @@ import QtQuick
 import "../kit"
 import "../live"
 
-// a-launcher.qml - offscreen check scene for owner A (launcher arc).
+// a-launcher.qml - offscreen check scene for the launcher arc.
 // Top: rest. Bottom: forced hover on tile 4 (the Chromium slot).
 // Apps are inlined here only so the scene renders without file IO; the real
 // list is assets/apps.json (checked separately).

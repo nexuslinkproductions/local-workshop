@@ -40,11 +40,11 @@ Item {
             { label: "DATA", fs: "ntfs3", mount: "/run/media/nexuslink/DATA", usedPct: 0.4, sizeBytes: 1.0e12, usedBytes: 4.0e9, freeBytes: 9.96e11 }
         ]
         crew: [
-            { id: "a01748", parent: null, model: "sonnet-5-5", tools: 33, tokens: 125381, idle_s: 32, title: "Draft vari8-beta issues for Marcel", activity: "starting new turn" },
-            { id: "a1d052", parent: null, model: "sonnet-5-5", tools: 158, tokens: 139559, idle_s: 20, title: "Enable marcel-mode", activity: "delegate_task: subagent receiving stream response" },
-            { id: "683c2c", parent: "a1d052", model: "sonnet-5-5", tools: 9, tokens: 3645, idle_s: 17, title: "Composition study s1", activity: "receiving stream response" },
-            { id: "b2c3d4", parent: null, model: "opus-5-5", tools: 12, tokens: 48210, idle_s: 3600, title: "Review HUD perf PR", activity: "" },
-            { id: "c4d5e6", parent: null, model: "ds-v4.1-flash", tools: 4, tokens: 9120, idle_s: 7200, title: "Mac fleet digest", activity: "" }
+            { id: "a01748", parent: null, model: "model-a", tools: 33, tokens: 125381, idle_s: 32, title: "Draft beta issues", activity: "starting new turn" },
+            { id: "a1d052", parent: null, model: "model-a", tools: 158, tokens: 139559, idle_s: 20, title: "Enable the new mode", activity: "receiving stream response" },
+            { id: "683c2c", parent: "a1d052", model: "model-a", tools: 9, tokens: 3645, idle_s: 17, title: "Composition study s1", activity: "receiving stream response" },
+            { id: "b2c3d4", parent: null, model: "model-c", tools: 12, tokens: 48210, idle_s: 3600, title: "Review HUD perf PR", activity: "" },
+            { id: "c4d5e6", parent: null, model: "model-b", tools: 4, tokens: 9120, idle_s: 7200, title: "Mac fleet digest", activity: "" }
         ]
         apps: [
             { id: "hermes", name: "Hermes", glyph: "hermes", launches: 3, running: true, size: "tile" },

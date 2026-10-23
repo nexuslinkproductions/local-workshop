@@ -1,5 +1,5 @@
 LAUNCH-NOTES.md - which call launches what (v4, read only) and the v5 adapter
-Owner A. All v4 files under nexuslink.hud/v4/. Line numbers from this worktree.
+Notes on the launcher. All v4 files under nexuslink.hud/v4/. Line numbers from this worktree.
 
 1. Desktop entry (gtk-launch)
    v4/command/AppModel.qml:212-217

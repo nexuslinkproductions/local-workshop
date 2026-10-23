@@ -98,7 +98,7 @@ fi
 
 timeout_s=${V5_TIMEOUT:-120}
 
-# Callers (and the contract's own recipe) wrap this script in
+# Callers (and common recipes) wrap this script in
 # `flock /tmp/hudlive-render.lock ...`, so taking the lock again here would
 # deadlock against the parent: flock is per open file description, the parent
 # never releases while it waits for us. Skip our lock when an ancestor already

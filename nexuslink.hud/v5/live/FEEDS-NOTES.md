@@ -1,7 +1,7 @@
-# v5 data feeds (owner F)
+# v5 data feeds
 
 All four feeds are hidden Items with `property bool active`; they poll only while the deck
-sets active true. Outputs are read-only properties shaped per CONTRACT section 5.
+sets active true. Outputs are read-only properties shaped as listed below.
 
 ## LinkFeed.link + feeds/maclink.sh
 - Source: `tailscale status` picks the macOS peer (`marcels-macbook-pro`), then
@@ -44,7 +44,7 @@ sets active true. Outputs are read-only properties shaped per CONTRACT section 5
 - Stale runs: monotonic `_seq` compared in `onStreamFinished`, plus `proc.running = false`
   before a new start. `busy` true from spawn to finish.
 - Parsed shape: yuri returns `{title, path, kind, score, line, snippet}`; kind is recomputed
-  from the extension (md, code, doc, pdf, image, else file) per contract.
+  from the extension (md, code, doc, pdf, image, else file).
 - Empty query: results [], no process. filter "downloads": results [], note
   "Downloads is not indexed yet", debounce stopped.
 - Cost: one yuri process per typing pause, ~40 ms; nothing while idle.
