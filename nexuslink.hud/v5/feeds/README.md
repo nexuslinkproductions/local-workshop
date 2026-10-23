@@ -36,7 +36,11 @@ end, the Linux box does the live check.
 - No secrets, no tokens, no absolute home paths in the payload (`~` stands in).
 - Reads are cached for 10 s at `~/.local/state/nexuslink/<name>.json`, written
   atomically (temp file plus `os.replace`), with `cached` and `cache_age_s` in the
-  answer. `--no-cache` bypasses it; `--cache PATH` moves it.
+  answer. `--no-cache` bypasses it; `--cache PATH` moves it. A cached `chief.py`
+  answer is still honest about the reading's age: the cache stores the metrics
+  file's mtime and every answer recomputes `metrics_age_s` and `stale` from it, so
+  a cached answer goes stale on the same clock as a fresh one. A metrics file that
+  changed under the cache is re-read, not served from the cache.
 - `--self-check` runs the whole shape, the refusals, the rate limit and the
   fixture parity, and exits non-zero on a single failure. It needs no Linux host.
 
@@ -67,9 +71,14 @@ step; `elapsed_source` says which route was used.
 `chief.py` (from `recon/05-local-ai.md`, `LOCAL-AI-LAB/chief`):
 
     /run/user/1000/chief/metrics.json        written by chief-state-watch at <=1 Hz, atomic
-    chief/bin/chief-on                       loads the profile's model on :18080
-    chief/bin/chief-off                      unloads it, polls for llama-server to exit
-    chief/bin/selftest.sh                    the tool's own check
+    chief-on                                 loads the profile's model on :18080
+    chief-off                                unloads it, polls for llama-server to exit
+
+`chief-on` and `chief-off` are the only chief commands this wrapper runs. Each is
+resolved in this order: `--bin-dir`, then `PATH`, then `~/.local/bin`, then
+`~/NEXUS_AI_CENTER/04_PROJECTS/LOCAL-AI-LAB/chief/bin` (the `LAB_BIN` constant).
+`chief/bin/selftest.sh` is the tool's own check and is **not wrapped**: no code
+path here runs it.
 
 `model`, `tokens_per_s`, `queue`, `vram_used_mib` and `vram_total_mib` are read
 straight out of that file. VRAM is the per-pid `fdinfo` sum the poller already
@@ -87,6 +96,13 @@ number as live.
 `parec` is preferred; `pw-record` is the fallback. One block per sample
 (`48000 / rate` frames), peak and RMS computed here in `array` arithmetic, no
 `audioop` (removed in Python 3.13) and no numpy.
+
+`--rate` pacing sits on a fixed grid, `t0 + k * (1 / rate)`. A late wake-up
+delivers its sample late and the next one returns to the grid; slots that already
+passed are skipped, never replayed, and no two lines are closer than half a
+period, so one slow wake-up cannot burst the stream. The wait for a slot is
+sliced into 5 ms sleeps: a single long `sleep` oversleeps by tens of milliseconds
+on a loaded host, and that oversleep is what turns 10 Hz into 6 Hz.
 
 ## Reading it from the deck
 

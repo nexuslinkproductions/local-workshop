@@ -44,7 +44,9 @@ from __future__ import annotations
 
 import argparse
 import array
+import contextlib
 import datetime
+import io
 import json
 import math
 import os
@@ -67,6 +69,7 @@ SAMPLE_RATE = 48000
 BYTES_PER_SAMPLE = 2  # s16
 FRAME_BYTES = CHANNELS * BYTES_PER_SAMPLE
 MAX_RATE_HZ = 10.0
+SLEEP_SLICE_S = 0.005  # longest single sleep on the way to a scheduled slot
 FLOOR_DB = -91.0
 CLIP_SAMPLE = 32767
 
@@ -445,13 +448,72 @@ def sample_payload(sample, source, at=None, index=None):
     return payload
 
 
-def live_sample(args, monitor):
+def live_sample(args, monitor, clock=None):
     block = monitor.read(args.timeout)
     result = analyse(block)
-    return sample_payload(result, "live")
+    return sample_payload(result, "live", at=clock.time() if clock is not None else None)
 
 
 # -------------------------------------------------------------------------- driver
+
+
+class Clock(object):
+    """The host clock behind an object, so the self-check can substitute time.
+
+    Every call goes through the ``time`` module at call time: patching
+    ``time.monotonic``/``time.time``/``time.sleep`` swaps the whole clock.
+    """
+
+    def monotonic(self):
+        return time.monotonic()
+
+    def time(self):
+        return time.time()
+
+    def sleep_until(self, deadline):
+        """Wait for a deadline in short slices.
+
+        One long ``time.sleep`` oversleeps by tens of milliseconds on a loaded
+        host, and the oversleep is what turns a 10 Hz grid into 6 Hz. Slicing
+        bounds the error to one slice and never spins; a late slice simply ends
+        the wait.
+        """
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(remaining, SLEEP_SLICE_S))
+
+
+class VirtualClock(Clock):
+    """A clock that never waits: a wake-up costs one ``oversleep_s``."""
+
+    def __init__(self, oversleep_s=0.03, epoch=None):
+        self.now = 0.0
+        self.oversleep_s = float(oversleep_s)
+        self.epoch = time.time() if epoch is None else float(epoch)
+
+    def monotonic(self):
+        return self.now
+
+    def time(self):
+        return self.epoch + self.now
+
+    def sleep_until(self, deadline):
+        if deadline > self.now:
+            self.now = deadline + self.oversleep_s
+
+
+def next_slot(origin, period, last_emit, now):
+    """The next emission time on the fixed grid ``origin + k * period``.
+
+    The grid is pinned, so a late wake-up costs one emission its offset and
+    nothing after it. Slots the wake-up missed are skipped, never replayed, and
+    the half-period floor keeps a late wake from firing twice in a row.
+    """
+    target = max(last_emit + period / 2.0, now)
+    k = int(math.floor((target - origin) / period)) + 1
+    return origin + k * period
 
 
 def parse_rate(raw):
@@ -466,9 +528,16 @@ def parse_rate(raw):
     return value
 
 
-def stream(args, rate):
-    """One JSON object per line. Returns an exit code."""
+def stream(args, rate, clock=None):
+    """One JSON object per line. Returns an exit code.
+
+    Emission times sit on a fixed grid, ``t0 + k * period``. A host that
+    oversleeps delivers a late sample and then returns to the grid instead of
+    carrying the oversleep forward, and slots already gone by are skipped, so
+    the stream cannot burst to catch up.
+    """
     compact = True  # a stream is line-oriented by definition
+    clock = clock if clock is not None else Clock()
     count = args.count
     index = 0
     start = 0
@@ -485,24 +554,23 @@ def stream(args, rate):
         monitor.open()
 
     period = 1.0 / rate
-    next_at = time.monotonic() + period
+    origin = clock.monotonic()
+    last_emit = None
     try:
         while count is None or index < count:
+            if last_emit is not None:
+                now = clock.monotonic()
+                slot = next_slot(origin, period, last_emit, now)
+                if slot > now:
+                    clock.sleep_until(slot)
             if series is not None:
                 sample = series[(start + index) % len(series)]
-                payload = sample_payload(sample, "fixture", index=start + index)
+                payload = sample_payload(sample, "fixture", at=clock.time(), index=start + index)
             else:
-                payload = live_sample(args, monitor)
+                payload = live_sample(args, monitor, clock)
             emit(payload, compact)
             index += 1
-            now = time.monotonic()
-            if next_at > now:
-                time.sleep(next_at - now)
-                now = time.monotonic()
-            # One period after the later of the scheduled target and the actual
-            # wake-up. A loaded host can oversleep by 200 ms; the meter then runs
-            # slow for a beat, and it never fires two samples back to back.
-            next_at = max(next_at + period, now + period)
+            last_emit = clock.monotonic()
     except BrokenPipeError:
         return EXIT_OK
     finally:
@@ -658,16 +726,55 @@ def self_check(args):
         rc == 0 and len(lines) == 20 and parity,
         "rc=%s lines=%d parity=%s err=%r" % (rc, len(lines), parity, err[-200:]),
     )
+    # The real capture is a sanity band, not the proof: a loaded host may
+    # legitimately wake late. Drift would land far outside this window (the old
+    # re-anchoring loop gave 5.5 to 6.3 Hz, 3.0 to 3.6 s for 20 lines).
     check(
-        "10 Hz pacing is real (20 lines ~1.9 s)",
-        1.6 <= elapsed <= 6.0,
+        "20 lines at 10 Hz take about 1.9 s of wall clock",
+        1.7 <= elapsed <= 2.7,
         "elapsed=%.2fs" % elapsed,
     )
     gaps = _gaps_ms(lines)
+    # iso_ms truncates to whole milliseconds, so the half-period floor can read
+    # up to 2 ms short; the schedule itself never goes below period / 2.
     check(
-        "no two samples closer than 50 ms (never faster than the budget)",
-        bool(gaps) and min(gaps) >= 50,
+        "no two samples closer than half a period (never faster than the budget)",
+        bool(gaps) and min(gaps) >= 48,
         "min gap %sms of %d" % (min(gaps) if gaps else None, len(gaps)),
+    )
+
+    # Pacing under a virtual clock: 20 lines with 30 ms of oversleep on every
+    # sleep must still span about 1.9 s. The old loop re-anchored on each wake
+    # and landed at 130 ms per gap (2.47 s, 7.7 Hz); a fixed grid does not.
+    virtual = VirtualClock(0.03)
+    virtual_args = argparse.Namespace(
+        count=20, fixture=fixture, index=None, source=None,
+        timeout=DEFAULT_TIMEOUT_S, json=True,
+    )
+    virtual_origin = virtual.monotonic()
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc_virtual = stream(virtual_args, 10.0, clock=virtual)
+        virtual_lines = _parse_lines(buf.getvalue())
+        virtual_error = ""
+    except ValueError as exc:
+        rc_virtual = 1
+        virtual_lines = []
+        virtual_error = str(exc)
+    span = virtual.monotonic() - virtual_origin
+    virtual_gaps = _gaps_ms(virtual_lines)
+    mean_gap = sum(virtual_gaps) / len(virtual_gaps) if virtual_gaps else None
+    check(
+        "virtual clock, 30 ms oversleep: 20 lines land in 1.8-2.2 s",
+        rc_virtual == 0 and len(virtual_lines) == 20 and 1.8 <= span <= 2.2,
+        "rc=%s lines=%d span=%.2fs err=%r" % (rc_virtual, len(virtual_lines), span, virtual_error),
+    )
+    check(
+        "virtual clock gaps stay on the 100 ms grid (mean 90-110, max <= 150)",
+        bool(virtual_gaps) and mean_gap is not None and 90 <= mean_gap <= 110
+        and max(virtual_gaps) <= 150,
+        "gaps=%r mean=%s" % (virtual_gaps[:6], mean_gap),
     )
 
     # rate limit and bad rates

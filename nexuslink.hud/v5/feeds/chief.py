@@ -240,13 +240,20 @@ def cache_get(path, key, now=None):
         return None
     age = (time.time() if now is None else float(now)) - stamp
     if 0 <= age < CACHE_TTL_S:
-        return payload, age
+        raw_mtime = blob.get("metrics_mtime_ns")
+        mtime_ns = int(raw_mtime) if isinstance(raw_mtime, (int, float)) else None
+        return payload, age, mtime_ns
     return None
 
 
-def cache_put(path, key, payload):
+def cache_put(path, key, payload, metrics_mtime_ns=None):
     try:
-        write_json(path, {"key": key, "at": time.time(), "payload": payload})
+        write_json(path, {
+            "key": key,
+            "at": time.time(),
+            "metrics_mtime_ns": metrics_mtime_ns,
+            "payload": payload,
+        })
     except OSError:
         pass
 
@@ -310,18 +317,43 @@ def metrics_payload(data, age_s):
     return payload
 
 
-def live_status(args):
+def live_snapshot(args):
+    """Live payload plus the metrics file's mtime in nanoseconds (for the cache)."""
     path = metrics_path(args)
     data = read_json(path, "chief metrics file")
     if not isinstance(data, dict):
         raise Malformed("chief metrics at %s is not a JSON object" % tilde(path))
+    mtime_ns = None
+    age = None
     try:
-        age = max(0.0, time.time() - os.path.getmtime(path))
+        info = os.stat(path)
+        mtime_ns = int(info.st_mtime_ns)
+        age = max(0.0, time.time() - info.st_mtime)
     except OSError:
-        age = None
+        pass
     payload = metrics_payload(data, age)
     payload["source"] = "live"
+    return payload, mtime_ns
+
+
+def live_status(args):
+    payload, _ = live_snapshot(args)
     return payload
+
+
+def age_payload(payload, mtime_ns):
+    """The payload with metrics_age_s and stale recomputed for right now.
+
+    The cache holds the parsed file, not the reading of its clock: every answer
+    re-derives the age from the file's mtime, hit or miss.
+    """
+    fresh = dict(payload)
+    if mtime_ns is None:
+        return fresh
+    age = max(0.0, time.time() - (mtime_ns / 1000000000.0))
+    fresh["metrics_age_s"] = round(age, 1)
+    fresh["stale"] = age > STALE_AFTER_S
+    return fresh
 
 
 def fixture_status(args):
@@ -341,19 +373,27 @@ def fixture_status(args):
 def status_payload(args):
     if args.fixture:
         return fixture_status(args)
-    key = "status|metrics=%s" % metrics_path(args)
+    path = metrics_path(args)
+    key = "status|metrics=%s" % path
     if not args.no_cache:
         hit = cache_get(args.cache, key)
         if hit is not None:
-            payload, age = hit
-            fresh = dict(payload)
-            fresh["cached"] = True
-            fresh["cache_age_s"] = round(age, 1)
-            return fresh
-    payload = live_status(args)
+            payload, age, cached_mtime_ns = hit
+            try:
+                mtime_ns = int(os.stat(path).st_mtime_ns)
+            except OSError:
+                mtime_ns = None
+            if mtime_ns is not None and mtime_ns == cached_mtime_ns:
+                fresh = age_payload(payload, mtime_ns)
+                fresh["cached"] = True
+                fresh["cache_age_s"] = round(age, 1)
+                return fresh
+            # The file appeared, vanished or was rewritten under the cache: the
+            # cached parse no longer describes it, so fall through and re-read.
+    payload, mtime_ns = live_snapshot(args)
     payload["cached"] = False
     if not args.no_cache:
-        cache_put(args.cache, key, payload)
+        cache_put(args.cache, key, payload, mtime_ns)
     return payload
 
 
@@ -588,6 +628,49 @@ def self_check(args):
         rc == 0 and isinstance(second, dict) and second.get("cached") is True
         and isinstance(second.get("cache_age_s"), float),
         "second=%r" % (second,),
+    )
+
+    # A cached answer must never freeze the metrics age. This runs the real
+    # status_payload in-process: first read a file 4.5 s old, then move the clock
+    # 6.2 s forward with the file untouched (still inside the 10 s cache window).
+    # The answer must report the file's true 10.7 s age and flip stale to true.
+    aging = os.path.join(root, "aging.json")
+    with open(aging, "w", encoding="utf-8") as handle:
+        json.dump({"model": "ornith-chief-v3", "tokens_per_s": 41.6, "queue": 0,
+                   "vram_used_mib": 11012, "vram_total_mib": 12288}, handle)
+    read_at = time.time()
+    os.utime(aging, (read_at - 4.5, read_at - 4.5))
+    aging_cache = os.path.join(root, "aging-cache.json")
+    age_args = argparse.Namespace(fixture=None, metrics=aging, cache=aging_cache, no_cache=False)
+    first = status_payload(age_args)
+    real_time = time.time
+    try:
+        time.time = lambda: real_time() + 6.2
+        later = status_payload(age_args)
+    finally:
+        time.time = real_time
+    first_age = first.get("metrics_age_s")
+    later_age = later.get("metrics_age_s")
+    check(
+        "a cached answer reports the metrics file's true age",
+        first.get("cached") is False and first_age is not None and abs(first_age - 4.5) <= 0.2
+        and first.get("stale") is False
+        and later.get("cached") is True and isinstance(later.get("cache_age_s"), float)
+        and later_age is not None and 10.5 <= later_age <= 10.9
+        and later.get("stale") is True,
+        "first=%r later=%r" % (first, later),
+    )
+
+    # A metrics file rewritten under the cache is re-read, not served stale.
+    with open(aging, "w", encoding="utf-8") as handle:
+        json.dump({"model": "ornith-chief-v4", "tokens_per_s": 12.5, "queue": 1,
+                   "vram_used_mib": 2048, "vram_total_mib": 12288}, handle)
+    changed = status_payload(age_args)
+    check(
+        "a changed metrics file is re-read, not served from the cache",
+        changed.get("cached") is False and changed.get("model") == "ornith-chief-v4"
+        and isinstance(changed.get("metrics_age_s"), float) and changed["metrics_age_s"] < 1.0,
+        "changed=%r" % (changed,),
     )
 
     # a live metrics file with an old ts still reports its real age, flagged stale

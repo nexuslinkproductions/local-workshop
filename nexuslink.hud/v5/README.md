@@ -25,14 +25,6 @@ the Satoshi faces, feed fixtures and this file. Components arrive in Wave 1.
         metrics.json        host load, local AI, token day, screens, windows, kanban
         apps.json           9 most-used apps plus Arc Raiders, launcher arc order
         link.json           Mac link: route, tunnel, RTT samples, battery, load
-        callcap.json        call capture: running, elapsed, target, last three (F7)
-        chief.json          /run/user/1000/chief/metrics.json shape, local AI dock (F7)
-        level.json          two-channel meter series at 10 Hz, synthetic (F7)
-      feeds/
-        callcap.py          call capture bridge: --status, --start, --stop
-        chief.py            local AI dock bridge: --status, --on, --off
-        level.py            two-channel peak/RMS source, 10 Hz maximum
-        README.md           feed contract, the Linux commands wrapped, fixtures
       README.md
 
 `DeckMain.qml` and the shell-runtime layer are not in this tree yet. The
@@ -190,21 +182,6 @@ invented.
 `apps.json` glyph ids match the s1 icon set. `arc-raiders` has no glyph yet; W4
 draws it. Feed builders (W8) replace these files with live output of the same
 shape, and the Linux side does the live-data check.
-
-## Feeds (bridges)
-
-`feeds/` holds the thin Python 3 readers behind the widgets. They report state and
-run one action each; they never re-implement the tool they wrap. Full contract,
-the exact Linux commands and the fixture provenance: `feeds/README.md`.
-
-Local models run on the Linux box, never on this Mac. `chief-on`, `chief-off`,
-`callcap`, `pactl`, `parec` and `pw-record` are Linux binaries and none of them
-exists here, so on the Mac these readers are fixture-only or read over the
-tunnel. Every one of them passes its `--self-check` with no Linux host present.
-
-    python3 nexuslink.hud/v5/feeds/callcap.py --status --json
-    python3 nexuslink.hud/v5/feeds/chief.py   --status --json
-    python3 nexuslink.hud/v5/feeds/level.py   --rate 10
 
 ## Rules that outrank this file
 
