@@ -157,7 +157,38 @@ the module); they are gone now that the component is in the tree.
 so no one has to hand-edit `tools/qml-lint.sh` (the `-I` request W4 raised is
 still open; the scripts here are the workaround).
 
-## 5. What is deliberately not here
+## 5. Token hoist count
+
+76 literals that used to be local read-only properties in the kit now live in
+`kit/Tokens.qml` / `kit/Motion.qml`: 61 from the first pass, plus 15 folded in
+I1 repair round 1 (W3's `orbTilt` and the 14 W6 `FindField` values). Another 7
+(`FindResults`' `resultColumns`, `tileHeight`, `markSize`, `markDotFactor`,
+`markAlphaRest`, `markAlphaLift`, `subtitleGap`) are added as the token home
+while `kit/FindResults.qml` keeps its own copies — that file is W6-owned and its
+read side is a W6 follow-up card. 83 token values in all.
+
+The VI verifier's own `vi_checks.py`, run at this head against base `7ee2b21`:
+
+```
+[7a] literal->token pairs checked: 76  value mismatches: 0
+[7b] changed declarations that are not a plain token read: 0 (check by hand)
+[7c] FindField local numeric declarations: none
+```
+
+`[7a]` walks every base declaration whose head value changed, requires the head
+value to be a plain `Tokens.<name>` or `Motion.<name>` read, and compares the
+token's value against the base literal, so a hoist that moved a number is caught
+there. `[7c]` still lists one `springDamping` in `PulseRing`, `DotArc` and
+`LocalOrb` — that declaration is the formula
+`2 * Motion.expandZeta * Motion.expandOmega`, not a literal — and the seven
+`FindResults` literals that stay with W6.
+
+Motion evidence for criterion 3 is in `motion.md`: the expand overshoot there is
+read off the curve's closed form plus a duration-stretched run of the same easing
+(`CrewOrb.transitions[0].animations[0]`, read live), because the offscreen frame
+clock here is 25 to 100 ms and cannot resolve a 347 ms curve's ~10 ms vertex.
+
+## 6. What is deliberately not here
 
 * The live shell perf gate (idle CPU over 60 s warm, RSS) is Linux's check on the
   real compositor; see `perf.md` for the local frame-time number it will compare

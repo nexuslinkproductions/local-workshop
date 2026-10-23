@@ -62,8 +62,9 @@ Item {
     // squared; 56 dots is the floor that keeps a small orb a sphere, not a bead.
     readonly property int dotDensity: Tokens.orbDotDensity
     readonly property int minDotCount: Tokens.orbMinDots
-    // s2 build.py:66 tilts the fib sphere 0.5 rad on the y axis.
-    readonly property real fibonacciTilt: 0.5
+    // s2 build.py:66 tilts the fib sphere 0.5 rad on the y axis (Tokens.orbTilt,
+    // hoisted by I1; W3 asked for the token).
+    readonly property real fibonacciTilt: Tokens.orbTilt
     readonly property int dotCount: Math.max(minDotCount,
                                              Math.round(dotDensity * radiusFraction * radiusFraction))
     readonly property var points: root.fibonacci(dotCount, fibonacciTilt)

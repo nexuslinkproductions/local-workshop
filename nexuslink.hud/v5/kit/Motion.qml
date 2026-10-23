@@ -1,6 +1,7 @@
 pragma Singleton
 
 import QtQuick
+import NexusHud.V5 1.0      // so curveInOut6 below can name curveInOut by type
 
 // Motion.qml - v5 deck motion tokens. Numbers only: no Animation, no Behavior,
 // no Timer, no JS. A component builds the animation and reads its numbers here.
@@ -111,7 +112,8 @@ QtObject {
     // was 220 of 1000 at 225 ms), so any BezierSpline consumer needs six
     // numbers. This is curveInOut with [1.0, 1.0] closing the spline, so no
     // component has to append the pair itself.
-    readonly property var curveInOut6: [0.65, 0.0, 0.35, 1.0, 1.0, 1.0]
+    readonly property var curveInOut6: [Motion.curveInOut[0], Motion.curveInOut[1],
+                                        Motion.curveInOut[2], Motion.curveInOut[3], 1.0, 1.0]
     // OutBack `easing.overshoot` parameter for the approved 5 percent band:
     // peak = 1 + 0.04871 (requested by W6 FindField, which used the literal
     // 1.15). The expand spring's own 5.00 percent lives in expandOvershoot.

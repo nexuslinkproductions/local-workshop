@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """I1 deck motion evidence: overshoot, return, idle drift, breath period.
 
-Two probes, each measured where it can be measured precisely (the reason is in
-`nexuslink.hud/v5/docs/motion.md`):
+Two probes, each measured where it can be measured precisely (the reasoning and
+the numbers are in `nexuslink.hud/v5/docs/motion.md`):
 
-  tests/i1/CrewExpandTrace.qml   expand + return: the same CrewOrb the deck
-                                 composes, at the deck's size and tokens, in a
-                                 scene small enough for the tool's best 25 ms grid
+  tests/i1/CrewExpandTrace.qml   expand + return. The deck's own CrewOrb at the
+                                 deck's size (224) and tokens, sampled on the
+                                 probe's timer; the SAME easing read live off
+                                 `CrewOrb.transitions[0].animations[0]` and
+                                 re-run by the probe over 10x the duration; and
+                                 the closed form of that curve evaluated in
+                                 0.05 ms steps. The overshoot is reported from
+                                 the stretched run and the closed form, because
+                                 the offscreen frame clock here is 25 to 100 ms:
+                                 a frame-only read of a 347 ms curve with a
+                                 ~10 ms vertex under-reads by 0 to 3 points.
   tests/i1/DeckTrace.qml         idle drift and breath on the composed deck,
                                  whose periods are 5.8 s and 13 s, so the deck's
                                  ~100 ms grid is plenty there
 
-    v5/tools/deck-trace.py              # runs both (3 expand attempts)
+    v5/tools/deck-trace.py              # 5 expand runs + the deck trace
     v5/tools/deck-trace.py --json DIR   # parse saved TRACE lines from DIR
 
-Bands: expand overshoot 4 to 6 percent, return monotone with none, drift
-non-zero, breath 5 to 6 s. Exit 0 all in band, 1 a band missed, 3 toolchain.
+Bands, checked on every run: expand overshoot 4 to 6 percent, return monotone
+with no overshoot, idle drift non-zero, breath 5 to 6 s. Exit 0 all in band,
+1 a band missed, 3 toolchain.
 """
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -32,6 +42,37 @@ DECK_PROBE = os.path.join(V5, "tests", "i1", "DeckTrace.qml")
 REST = 1.0                     # CrewOrb.growth at rest
 OVERSHOOT_BAND = (4.0, 6.0)    # percent, MAIN-SCREEN-BUILD.md
 BREATH_BAND = (5.0, 6.0)       # seconds
+RUNS = 5                       # expand attempts; every run is reported
+STRETCH_TOLERANCE_PP = 0.10    # stretched read against the closed form
+FRAME_TOLERANCE_PP = 0.05      # slack under the vertex-miss bound
+
+
+def median(values):
+    return statistics.median(values) if values else None
+
+
+def outback(t, c):
+    """Qt's QEasingCurve OutBack, the curve CrewOrb expands on."""
+    u = t - 1.0
+    return 1.0 + (c + 1.0) * u ** 3 + c * u ** 2
+
+
+def outback_vertex(c):
+    """t (0..1 of the duration) where OutBack peaks."""
+    return 1.0 - 2.0 * c / (3.0 * (c + 1.0))
+
+
+def outback_peak(c):
+    return outback(outback_vertex(c), c)
+
+
+def vertex_loss_pp(c, ms, duration):
+    """Percent of travel a sample loses if it misses the vertex by `ms`."""
+    t_v = outback_vertex(c)
+    t = t_v + ms / float(duration)
+    if t > 1.0:
+        t = t_v - ms / float(duration)
+    return (outback_peak(c) - outback(t, c)) * 100.0
 
 
 def qml_bin():
@@ -88,52 +129,105 @@ def read_json_traces(directory):
     return deck, expand
 
 
-def expand_metrics(samples, target, t_off):
-    """Expand peak / overshoot / settle, and the return's monotonicity.
+def expand_metrics(trace):
+    """Everything one expand run carries: frame read, stretched read, closed form.
 
-    `t_off` is when the probe asked for the return, so the expand metrics only
-    look at samples before it (a settle test run over the whole capture would see
-    the return's departure from the target and report nonsense).
+    The frame samples are the real component at deck speed, but the offscreen
+    frame clock is coarse, so their peak is a LOWER BOUND on the curve's peak.
+    The stretched run samples the identical easing (read live off the running
+    transition) over 10x the duration, which leaves every value where it was and
+    multiplies every sample time by 10: an easing curve's peak does not depend on
+    its duration. The closed form of the same curve at 0.05 ms steps is the
+    clock-free third read, and it is what the band check runs on.
     """
-    if not samples:
-        return None, None
-    travel = target - REST
-    up_samples = [s for s in samples if s["t"] < t_off]
-    down_samples = [s for s in samples if s["t"] >= t_off]
-    if not up_samples:
-        return None, None
-    start_i = 0
-    for i, s in enumerate(up_samples):
-        if s["g"] > REST + 0.02:
-            start_i = i
-            break
-    start_t = up_samples[start_i]["t"]
-    peak = max(s["g"] for s in up_samples)
-    peak_t = max(up_samples, key=lambda s: s["g"])["t"]
-    overshoot = (peak - target) / travel * 100.0
-    settle = None
-    for i in range(len(up_samples) - 1, 0, -1):
-        if abs(up_samples[i]["g"] - target) > 0.02 * travel:
-            settle = up_samples[i + 1]["t"] - start_t if i + 1 < len(up_samples) else None
-            break
-    if settle is None:
-        settle = up_samples[-1]["t"] - start_t
-    up = {"peak": peak, "peak_t": peak_t - start_t, "overshoot_pct": overshoot,
-          "settle_ms": settle, "last": up_samples[-1]["g"]}
+    samples = trace["samples"]
+    rest = float(trace.get("restGrowth", REST))
+    target = float(trace["expandScale"])
+    travel = target - rest
+    t_off = trace.get("returnAtMs", 1000)
+    anim = trace.get("animation") or {}
+    qml_analytic = trace.get("analytic") or {}
+    stretch_factor = int(trace.get("stretchFactor", 1) or 1)
 
-    ret = None
-    if down_samples:
-        lower = min(s["g"] for s in down_samples)
-        rises = sum(1 for i in range(1, len(down_samples))
-                    if down_samples[i]["g"] > down_samples[i - 1]["g"] + 1e-6)
-        rsettle = None
-        for s in down_samples:
-            if abs(s["g"] - REST) <= 0.02:
-                rsettle = s["t"] - down_samples[0]["t"]
+    up = [s for s in samples if s["t"] < t_off]
+    down = [s for s in samples if s["t"] >= t_off]
+    m = {"rest": rest, "target": target, "travel": travel, "animation": anim,
+         "qml_analytic": qml_analytic,
+         "stretch_setup": trace.get("stretchSetup") or {},
+         "frame_n": len(up), "return_n": len(down),
+         "stretch_factor": stretch_factor,
+         "expand_millis_token": trace.get("expandMillisToken"),
+         "return_millis_token": trace.get("returnMillisToken"),
+         "expand_overshoot_token": trace.get("expandOvershootToken", 0.0)}
+
+    # ---- frame read (deck speed, clock-bound) -----------------------------
+    if up:
+        gaps = [b["t"] - a["t"] for a, b in zip(up, up[1:])]
+        ticks = [b["t"] - a["t"] for a, b in zip(up, up[1:])
+                 if abs(b["g"] - a["g"]) > 1e-12]
+        peak_sample = max(up, key=lambda s: s["g"])
+        start_i = 0
+        for i, s in enumerate(up):
+            if s["g"] > rest + 0.02 * travel:
+                start_i = i
                 break
-        ret = {"min": lower, "rises": rises, "settle_ms": rsettle,
-               "last": down_samples[-1]["g"]}
-    return up, ret
+        start_t = up[start_i]["t"]
+        m["frame_grid_ms"] = (up[-1]["t"] - up[0]["t"]) / max(1, len(up))
+        m["frame_tick_median_ms"] = median(ticks)
+        m["frame_gap_max_ms"] = max(gaps) if gaps else None
+        m["frame_peak"] = peak_sample["g"]
+        m["frame_peak_frac"] = (peak_sample["g"] - rest) / travel
+        m["frame_peak_pct"] = (m["frame_peak_frac"] - 1.0) * 100.0
+        m["frame_peak_t_ms"] = peak_sample["t"] - start_t
+        settle = None
+        for i in range(len(up) - 1, 0, -1):
+            if abs(up[i]["g"] - target) > 0.02 * travel:
+                settle = up[i + 1]["t"] - start_t if i + 1 < len(up) else None
+                break
+        if settle is None:
+            settle = up[-1]["t"] - start_t
+        m["expand_settle_ms"] = settle
+        m["expand_last"] = up[-1]["g"]
+
+    # ---- stretched read (same easing, 10x the duration) --------------------
+    stretch_at = trace.get("stretchAtMs", 0)
+    st = [s for s in samples if s["t"] >= stretch_at and "s" in s]
+    if st:
+        best = max(st, key=lambda s: s["s"])
+        spacing = [b["t"] - a["t"] for a, b in zip(st, st[1:])
+                   if abs(b["s"] - a["s"]) > 1e-12]
+        m["dense_n"] = len(st)
+        m["dense_tick_median_ms"] = median(spacing)
+        m["dense_grid_ms"] = (st[-1]["t"] - st[0]["t"]) / max(1, len(st))
+        m["dense_equiv_ms"] = (m["dense_tick_median_ms"] / stretch_factor
+                               if m["dense_tick_median_ms"] else None)
+        m["dense_peak"] = best["s"]
+        m["dense_peak_frac"] = (best["s"] - rest) / travel
+        m["dense_peak_pct"] = (m["dense_peak_frac"] - 1.0) * 100.0
+        m["dense_peak_t_ms"] = best["t"] - st[0]["t"]
+        m["dense_end"] = st[-1]["s"]
+
+    # ---- closed form of the same curve ------------------------------------
+    c = float(anim.get("overshoot", 0.0))
+    m["curve_c"] = c
+    m["curve_peak_frac"] = outback_peak(c)
+    m["curve_peak_pct"] = (outback_peak(c) - 1.0) * 100.0
+    m["curve_peak_growth"] = rest + travel * outback_peak(c)
+    m["curve_vertex_ms"] = outback_vertex(c) * float(anim.get("duration", 0) or 0)
+
+    # ---- return leg (frame samples) ---------------------------------------
+    if down:
+        m["return_min"] = min(s["g"] for s in down)
+        m["return_rises"] = sum(1 for a, b in zip(down, down[1:])
+                                if b["g"] > a["g"] + 1e-6)
+        rsettle = None
+        for s in down:
+            if abs(s["g"] - rest) <= 0.02:
+                rsettle = s["t"] - down[0]["t"]
+                break
+        m["return_settle_ms"] = rsettle
+        m["return_last"] = down[-1]["g"]
+    return m
 
 
 def breath_period(samples):
@@ -155,47 +249,134 @@ def breath_period(samples):
             "crossings": crossings, "min": lo, "max": hi}
 
 
+def run_checks(m):
+    """Every check one expand run has to pass. Returns a list of failure strings."""
+    fails = []
+    setup = m["stretch_setup"]
+    anim = m["animation"]
+    if anim.get("error"):
+        fails.append("live transition read failed: %s" % anim["error"])
+    if anim.get("easingName") != "OutBack":
+        fails.append("transition easing is %s, not OutBack" % anim.get("easingName"))
+    if not setup.get("ok"):
+        fails.append("stretched copy does not carry the live parameters: %r" % (setup,))
+    if "dense_peak_pct" not in m:
+        fails.append("no stretched samples (the same easing over 10x the duration)")
+    qml_pct = (m["qml_analytic"] or {}).get("overshootPct")
+    if qml_pct is None:
+        fails.append("probe carried no closed-form peak: %r"
+                     % ((m["qml_analytic"] or {}).get("error"),))
+    elif abs(qml_pct - m["curve_peak_pct"]) > 1e-6:
+        fails.append("probe closed form %.6f %% and this tool's %.6f %% disagree"
+                     % (qml_pct, m["curve_peak_pct"]))
+    if "dense_peak_pct" in m and abs(m["dense_peak_pct"] - m["curve_peak_pct"]) > STRETCH_TOLERANCE_PP:
+        fails.append("stretched read %+.3f %% is %.3f pp off the closed form %+.3f %%"
+                     % (m["dense_peak_pct"],
+                        m["dense_peak_pct"] - m["curve_peak_pct"], m["curve_peak_pct"]))
+    if not (OVERSHOOT_BAND[0] <= m["curve_peak_pct"] <= OVERSHOOT_BAND[1]):
+        fails.append("overshoot %+.3f %% outside %s" % (m["curve_peak_pct"], OVERSHOOT_BAND))
+    # A frame sample cannot sit above the curve's own maximum, and it must not
+    # sit so far below it that no measured value corroborates the curve.
+    if "frame_peak_pct" in m:
+        if m["frame_peak_pct"] > m["curve_peak_pct"] + 1e-6:
+            fails.append("a frame sample (%.4f) sits above the curve maximum (%.4f)"
+                         % (m["frame_peak"], m["curve_peak_growth"]))
+        half_gap = (m["frame_gap_max_ms"] or 0) / 2.0
+        bound = vertex_loss_pp(m["curve_c"], half_gap, float(anim.get("duration", 1) or 1))
+        m["frame_bound_pp"] = bound
+        floor = m["curve_peak_pct"] - bound - FRAME_TOLERANCE_PP
+        if m["frame_peak_pct"] < floor:
+            fails.append("frame peak %+.3f %% is below the vertex-miss bound %+.3f %%"
+                         " (max gap %.1f ms)" % (m["frame_peak_pct"], floor, half_gap))
+    else:
+        fails.append("no frame samples before the return")
+    if m.get("return_rises", 1) > 0 or m.get("return_min", 0.0) < m["rest"] - 0.002:
+        fails.append("return not monotone to rest (min %.4f, %d rises)"
+                     % (m.get("return_min", -1), m.get("return_rises", -1)))
+    return fails
+
+
+def print_run(index, total, m, fails):
+    print("   run %d/%d  analytic peak %.7f at %d ms  overshoot %+.3f %%  (%s)"
+          % (index, total, m["curve_peak_growth"], round(m["curve_vertex_ms"]),
+             m["curve_peak_pct"],
+             "in band" if not fails else "of band: " + "; ".join(fails)))
+    dense = ("dense %+.3f %% (%d samples, %.1f ms grid, %.1f ms on the deck's %.0f ms timeline)"
+             % (m["dense_peak_pct"], m["dense_n"], m["dense_tick_median_ms"],
+                m["dense_equiv_ms"], m["animation"].get("duration", 0))
+             ) if "dense_peak_pct" in m else "dense none"
+    frame = ("frame %+.3f %% lower bound (%d samples, %.1f ms grid, %.1f ms median tick,"
+             " vertex-miss bound %.3f pp)"
+             % (m["frame_peak_pct"], m["frame_n"], m["frame_grid_ms"],
+                m["frame_tick_median_ms"], m.get("frame_bound_pp", 0.0))
+             ) if "frame_peak_pct" in m else "frame none"
+    print("            %s" % dense)
+    print("            %s" % frame)
+
+
 def main(argv):
     deck = expand = None
     if len(argv) >= 3 and argv[1] == "--json":
         deck, expand = read_json_traces(argv[2])
+        if expand is None or deck is None:
+            print("deck-trace: missing a trace in %s" % argv[2], file=sys.stderr)
+            return 3
+        metrics = [expand_metrics(expand)]
     else:
-        best = None
-        for i in range(3):
-            t = run_probe(EXPAND_PROBE)
-            if t is None:
+        metrics = []
+        for i in range(RUNS):
+            trace = run_probe(EXPAND_PROBE)
+            if trace is None:
                 continue
-            print("   expand run %d/3  %d samples" % (i + 1, len(t["samples"])))
-            if best is None or len(t["samples"]) > len(best["samples"]):
-                best = t
-        expand = best
+            metrics.append(expand_metrics(trace))
         deck = run_probe(DECK_PROBE)
-    if expand is None or deck is None:
+
+    if not metrics or deck is None:
         print("deck-trace: missing a trace", file=sys.stderr)
         return 3
 
-    target = float(expand.get("expandScale", 1.4))
-    up, ret = expand_metrics(expand["samples"], target, expand.get("returnAtMs", 1000))
+    ok = True
+    first = metrics[0]
+    print("== expand/return  (%d runs; curve read live off %s: %s %s over %d ms,"
+          " rest %.1f -> %.1f)"
+          % (len(metrics), first["animation"].get("source", "the component"),
+             first["animation"].get("easingName", "?"),
+             first["animation"].get("overshoot", "?"),
+             first["animation"].get("duration", 0), first["rest"], first["target"]))
+    per_run_fails = []
+    for i, m in enumerate(metrics, 1):
+        fails = run_checks(m)
+        per_run_fails.append(fails)
+        print_run(i, len(metrics), m, fails)
+        if fails:
+            ok = False
+    # The band, on every run, as one line the repro can grep.
+    print("   overshoot every run: %s  (band %.0f to %.0f %%)"
+          % (" ".join("%+.3f %%" % m["curve_peak_pct"] for m in metrics),
+             OVERSHOOT_BAND[0], OVERSHOOT_BAND[1]))
+
+    dense = max((m for m in metrics if "dense_peak_pct" in m),
+                key=lambda m: m.get("dense_n", 0), default=first)
+    print("   expand   peak %.7f at %d ms  overshoot %+.3f %%  settle %s ms"
+          % (dense["curve_peak_growth"], round(dense["curve_vertex_ms"]),
+             dense["curve_peak_pct"], dense.get("expand_settle_ms")))
+    print("   return   min %.4f  rises %d  settle %s ms  last %.4f  (frame samples)"
+          % (dense.get("return_min", float("nan")), dense.get("return_rises", -1),
+             dense.get("return_settle_ms"), dense.get("return_last", float("nan"))))
+    print("   tokens   expand %d ms  return %d ms  (Motion.expandOvershoot %.2f %% is the"
+          " spring band; the curve the deck runs is OutBack %s = %+.3f %% peak)"
+          % (dense["animation"].get("duration", 0),
+             dense.get("return_millis_token", 0),
+             dense.get("expand_overshoot_token", 0.0) * 100.0,
+             dense["animation"].get("overshoot", "?"), dense["curve_peak_pct"]))
 
     drift = deck["drift"]
     drift_max = max(max(abs(s["dx"]) for s in drift), max(abs(s["dy"]) for s in drift))
     drift_ranges = (max(s["dx"] for s in drift) - min(s["dx"] for s in drift),
                     max(s["dy"] for s in drift) - min(s["dy"] for s in drift))
     breath = breath_period(deck["breath"])
-
-    n_exp = len(expand["samples"])
-    grid_exp = (expand["samples"][-1]["t"] - expand["samples"][0]["t"]) / max(1, n_exp)
     grid_deck = (deck["breath"][-1]["t"] - deck["breath"][0]["t"]) / max(1, len(deck["breath"]))
 
-    print("== expand/return  (%d samples, %.1f ms grid, target %.2f)"
-          % (n_exp, grid_exp, target))
-    print("   expand   peak %.4f at %d ms  overshoot %+.2f %%  settle %s ms"
-          % (up["peak"], up["peak_t"], up["overshoot_pct"], up["settle_ms"]))
-    print("   return   min %.4f  rises %d  settle %s ms  last %.4f"
-          % (ret["min"], ret["rises"], ret["settle_ms"], ret["last"]))
-    print("   tokens   expand %d ms  return %d ms  (%.0f percent analytic)"
-          % (expand["expandMillisToken"], expand["returnMillisToken"],
-             expand["expandOvershootToken"] * 100))
     print("== deck          (%d breath samples, %.1f ms grid)" % (len(deck["breath"]), grid_deck))
     print("   drift    max |d| %.3f px  x-range %.3f  y-range %.3f"
           % (drift_max, drift_ranges[0], drift_ranges[1]))
@@ -204,14 +385,6 @@ def main(argv):
              len(breath["crossings"]), breath["min"], breath["max"]))
     print("   tokens   breathPeriod %.2f s" % deck["breathPeriodToken"])
 
-    ok = True
-    if not (OVERSHOOT_BAND[0] <= up["overshoot_pct"] <= OVERSHOOT_BAND[1]):
-        print("   FAIL overshoot %.2f %% outside %s" % (up["overshoot_pct"], OVERSHOOT_BAND))
-        ok = False
-    if ret["min"] < REST - 0.002 or ret["rises"] > 0:
-        print("   FAIL return not monotone to rest (min %.4f, %d rises)"
-              % (ret["min"], ret["rises"]))
-        ok = False
     if drift_max <= 0.05:
         print("   FAIL idle drift flat (max %.3f px)" % drift_max)
         ok = False

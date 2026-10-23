@@ -171,21 +171,31 @@ is deliberately not registered: `IconTile` reaches the glyphs with
 `import "icons" as Icons` and `Glyph` maps a key to a `Component`, so the file
 grows by two lines instead of nineteen (W4's measured reason).
 
-Token hoisting promised during the wave, 61 literals moved out of components:
+Token hoisting promised during the wave: **76 literals moved out of components**
+(61 in the first pass, 15 folded in I1 repair round 1), plus **7 token values
+whose reader is the W6 follow-up card** — 83 token values in `kit/Tokens.qml`
+and `kit/Motion.qml` that exist because of this wave:
 
 | component | hoisted to `Tokens` |
 |---|---|
 | `PulseRing.qml` | `pulseRingSize`, `rttWarnMs`, `rttPeriodFloorS`, `rttPeriodBaseS`, `rttPeriodSlope`, `rttFloorMs`, `focusLift`, `ringAlphaRead`, `ringAlphaFocusGain`, `ringAlphaRest`, `pulseScaleMin/Max`, `pulseAlphaMin/Max`, `ringPhases`, and `pulseCurve` → `Motion.curveInOut6` |
 | `DotArc.qml` | `dotArcSize`, `dotArcDots`, `dotArcRadius`, `dotArcDotRadius`, `dotArcStartDegrees`, `dotArcSpanDegrees`, `focusLift`, `dotLit`, `dotDim`, `dotDimFocusGain` |
 | `DotBar.qml` | `dotBarSegments`, `dotBarSize`, `dotLitShare`, `dotDimShare`, `barHeightHeadroom`, `focusLift`, `dotLitBar`, `dotDimBar`, `dotDimFocusGain` |
-| `LocalOrb.qml` | `localBudgetGb`, `localOrbSize`, `localOrbRadius`, `orbRadiusFloor/Span`, `orbDotDensity`, `orbMinDots`, `activityLift`, `activityAlphaBase/Gain`, `focusLift`, `orbCoreSize/SizeGain/Alpha/AlphaGain`, `orbDotRadiusBase/DepthGain`, `orbDotAlphaBase/DepthGain`, and `breathCurve` → `Motion.curveInOut6` |
-| `FindField.qml` | `findRestDotBand` (the `restDotBand` promise), `findFieldHeight`, `findFieldRestWidth`, `findFieldActiveWidth`, `findChipHeight`, and `expandOvershoot` → `Motion.curveOvershoot5` |
+| `LocalOrb.qml` | `localBudgetGb`, `localOrbSize`, `localOrbRadius`, `orbRadiusFloor/Span`, `orbDotDensity`, `orbMinDots`, `orbTilt` (the `fibonacciTilt` literal, W3's request), `activityLift`, `activityAlphaBase/Gain`, `focusLift`, `orbCoreSize/SizeGain/Alpha/AlphaGain`, `orbDotRadiusBase/DepthGain`, `orbDotAlphaBase/DepthGain`, and `breathCurve` → `Motion.curveInOut6` |
+| `FindField.qml` | `findRestDotBand` (the `restDotBand` promise), `findFieldHeight`, `findFieldRestWidth`, `findFieldActiveWidth`, `findChipHeight`, `expandOvershoot` → `Motion.curveOvershoot5`, and the 14 W6 values `capsuleFillAlpha`, `placeholderAlpha`, `caretWidth`, `caretRadius`, `caretGap`, `caretAlpha`, `restDotInset`, `restDotPitch`, `restDotSize`, `restDotChosenSize`, `restDotAlphaTop`, `restDotAlphaStep`, `chipHoverScale`, `chipRestOpacity` |
+| `kit/Tokens.qml` only (no reader yet) | the 7 W6 `FindResults` values `resultColumns`, `tileHeight`, `markSize`, `markDotFactor`, `markAlphaRest`, `markAlphaLift`, `subtitleGap`. `kit/FindResults.qml` is W6-owned and outside this card's file list, so these are the token home only; its read side is a W6 follow-up card |
 
 Every value is unchanged: the components read the token, the number lives in one
 place. Nothing was renamed or removed, so every component that already read
 `Tokens` or `Motion` still resolves. The two alpha pairs that differ between the
 arc and the bar (0.95/0.18 against 1.0/0.16) are kept as four tokens rather than
 collapsed into two, because both were measured design values from s2.
+
+`Motion.curveInOut6` is declared as `Motion.curveInOut`'s four control points
+plus the closing `1.0, 1.0` — the exact expression `LocalOrb` and `PulseRing`
+carried before the hoist, so the token and the code it replaced cannot drift
+apart, and a verifier diffing base against head sees the same expression on both
+sides. The value is `[0.65, 0, 0.35, 1, 1, 1]`, measured at runtime.
 
 Still local (a token request that would mean editing W2/W4/W5 files, which this
 card does not own — they are listed here so the next wave can fold them):
