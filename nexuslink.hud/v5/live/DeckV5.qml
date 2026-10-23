@@ -106,6 +106,8 @@ Item {
         onFindHitActivated: hit => {
             if (hit && hit.path)
                 Quickshell.execDetached(["xdg-open", String(hit.path)])
+            // the opened app takes the screen, so Find closes and gives the keyboard back
+            deckView.findOpen = false
         }
     }
 
@@ -128,6 +130,17 @@ Item {
 
     onFindOpenChanged: {
         console.log("v5 find: open=" + root.findOpen + " grab=" + root.grabActive)
+        // a new search starts empty; the pill text follows deckView.findQuery
+        if (!root.findOpen)
+            deckView.findQuery = ""
+        root.syncHostKeys()
+    }
+
+    // The deck hides (output off, shell state change) while Find is open: close it
+    // so the surface gives the keyboard back instead of keeping Exclusive mode.
+    onShownChanged: {
+        if (!root.shown)
+            deckView.findOpen = false
         root.syncHostKeys()
     }
 

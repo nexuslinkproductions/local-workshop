@@ -18,9 +18,9 @@ Item {
     readonly property int pointCount: 4384
     readonly property int gridColumns: pointCount * 2
     // point texture layout, keep in sync with TEXEL_STRIDE / TEX_ROWS /
-    // TEX_WIDTH at the top of shaders/knot.vert. v2 (knot-points2.png) is
-    // 5 texels per point and 11 rows; the source is a property so a scene can
-    // swap the point set without editing the shader.
+    // TEX_WIDTH at the top of shaders/knot.vert. The production set is
+    // knot-points2-keep.png (5 texels per point, 11 rows); the source is a property
+    // so a scene can swap the point set without editing the shader.
     property url pointsSource: Qt.resolvedUrl("shaders/knot-points2-keep.png")
     readonly property int texelStride: 5
     readonly property int texRows: 11
