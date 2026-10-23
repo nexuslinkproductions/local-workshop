@@ -38,14 +38,14 @@ Item {
     // s3's 78, because the search glyph that needed the 78 is gone. Tokens
     // missing for this component are requested in the PR body: fieldHeight,
     // fieldRestWidth, fieldActiveWidth, chipHeight.
-    readonly property int fieldHeight: 68
-    readonly property int fieldRestWidth: 380
-    readonly property int fieldActiveWidth: 560
+    readonly property int fieldHeight: Tokens.findFieldHeight
+    readonly property int fieldRestWidth: Tokens.findFieldRestWidth
+    readonly property int fieldActiveWidth: Tokens.findFieldActiveWidth
     readonly property int fieldInset: Tokens.sp4                 // 34, text inset
     readonly property int chipsTop: fieldHeight + Tokens.sp3     // 89
-    readonly property int chipHeight: 50
+    readonly property int chipHeight: Tokens.findChipHeight
     // Right band the five rest dots occupy (s3: right 30, pitch 22).
-    readonly property int restDotBand: 128
+    readonly property int restDotBand: Tokens.findRestDotBand
 
     // ---- local design values ----------------------------------------------
     // Design numbers that no token carries yet. Each one is a named readonly
@@ -89,7 +89,7 @@ Item {
     // another). An OutBack curve with the same durations and overshoot gives
     // the identical feel with a value a verifier can reproduce at any frame
     // rate. Trace in the PR body.
-    readonly property real expandOvershoot: 1.15   // OutBack parameter, peak 1.04871
+    readonly property real expandOvershoot: Motion.curveOvershoot5   // OutBack parameter, peak 1.04871
 
     property real fieldWidth: fieldRestWidth
 

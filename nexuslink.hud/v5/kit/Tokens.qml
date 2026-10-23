@@ -153,4 +153,81 @@ QtObject {
     // Ambient swarm tick (plan constraint 3: one GPU pass, 24 to 30 Hz).
     readonly property int swarmTickHzMin: 24
     readonly property int swarmTickHz: 30
+
+    // ---- gauge tokens (Wave 1 W3, hoisted by I1) --------------------------
+    // Every number below was a named local `readonly` property in
+    // kit/PulseRing.qml, kit/DotArc.qml, kit/DotBar.qml or kit/LocalOrb.qml and
+    // was requested as a token in the W3 PR body. The values are unchanged: the
+    // components now read these instead of carrying their own copy. Two pairs
+    // split because the arc and the bar had different values and both are kept:
+    // the arc's lit dot is 0.95 and the bar's is 1.0, its unlit floor 0.18 vs
+    // 0.16 (s2 build.py:102 and :104 draw the two gauges differently).
+    readonly property real focusLift: 0.04             // gauge lift with focus
+    // PulseRing: s2 build.py:99, amber at or above 100 ms RTT.
+    readonly property int rttWarnMs: 100
+    // PulseRing ring alpha while reading, with focus, and with no reading.
+    readonly property real ringAlphaRead: 0.90
+    readonly property real ringAlphaFocusGain: 0.10
+    readonly property real ringAlphaRest: 0.45
+    // PulseRing breath keyframes (s2 build.py:152).
+    readonly property real pulseScaleMin: 0.94
+    readonly property real pulseScaleMax: 1.07
+    readonly property real pulseAlphaMin: 0.55
+    readonly property real pulseAlphaMax: 1.0
+    readonly property int ringPhases: 3                // rings per period
+    // PulseRing period mapping max(0.6, 3.4 - log2(rtt / 5) * 0.8), s2 :27.
+    readonly property real rttPeriodFloorS: 0.6
+    readonly property real rttPeriodBaseS: 3.4
+    readonly property real rttPeriodSlope: 0.8         // per octave of RTT
+    readonly property real rttFloorMs: 5
+    // Dot language: lit and unlit dot alpha per gauge family.
+    readonly property real dotLit: 0.95                // DotArc lit dot
+    readonly property real dotLitBar: 1.0              // DotBar lit dot
+    readonly property real dotDim: 0.18                // DotArc unlit dot
+    readonly property real dotDimBar: 0.16             // DotBar unlit dot
+    readonly property real dotDimFocusGain: 0.14       // unlit lift with focus
+    // DotBar dot diameters as a share of the pitch (s2 radii 2.9 / 2.2 on 11 px).
+    readonly property real dotLitShare: 0.53
+    readonly property real dotDimShare: 0.40
+    readonly property real barHeightHeadroom: 1.1      // box over the lit dot
+    // LocalOrb: model size as a radius. 4 GB is the s2 study scale, not a cap.
+    readonly property real localBudgetGb: 4.0
+    readonly property real orbRadiusFloor: 0.45
+    readonly property real orbRadiusSpan: 0.55
+    readonly property int orbDotDensity: 360            // dots per unit r^2
+    readonly property int orbMinDots: 56                // floor for a small orb
+    // LocalOrb activity: radius lift and field alpha range, and the core point.
+    readonly property real activityLift: 0.08
+    readonly property real activityAlphaBase: 0.62
+    readonly property real activityAlphaGain: 0.38
+    readonly property real orbCoreSize: 4
+    readonly property real orbCoreSizeGain: 14
+    readonly property real orbCoreAlpha: 0.10
+    readonly property real orbCoreAlphaGain: 0.85
+    // LocalOrb dot depth cues (s2 build.py:73).
+    readonly property real orbDotRadiusBase: 1.0
+    readonly property real orbDotRadiusDepthGain: 2.5
+    readonly property real orbDotAlphaBase: 0.28
+    readonly property real orbDotAlphaDepthGain: 0.72
+    // Gauge reference boxes, the s2 art boxes the ratios above are expressed in.
+    readonly property real pulseRingSize: 156
+    readonly property real dotArcSize: 216
+    readonly property int dotArcDots: 28
+    readonly property real dotArcRadius: 104
+    readonly property real dotArcDotRadius: 3.6
+    readonly property real dotArcStartDegrees: 115
+    readonly property real dotArcSpanDegrees: 310
+    readonly property int dotBarSegments: 12
+    readonly property real dotBarSize: 132
+    readonly property real localOrbSize: 144
+    readonly property real localOrbRadius: 68
+
+    // ---- find tokens (Wave 1 W6, hoisted by I1) ---------------------------
+    // The right band the five rest dots occupy in the search pill, reserved
+    // from the text width at rest (s3: right 30, pitch 22, five dots).
+    readonly property int findRestDotBand: 128
+    readonly property int findFieldHeight: 68
+    readonly property int findFieldRestWidth: 380
+    readonly property int findFieldActiveWidth: 560
+    readonly property int findChipHeight: 50
 }

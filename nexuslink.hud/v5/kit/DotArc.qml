@@ -31,24 +31,25 @@ Item {
     implicitWidth: size
     implicitHeight: size + textBlock
 
-    readonly property real referenceSize: 216
-    readonly property int dots: 28
-    readonly property real arcRadius: 104
-    readonly property real dotRadius: 3.6
-    readonly property real startDegrees: 115
-    readonly property real spanDegrees: 310
+    readonly property real referenceSize: Tokens.dotArcSize
+    readonly property int dots: Tokens.dotArcDots
+    readonly property real arcRadius: Tokens.dotArcRadius
+    readonly property real dotRadius: Tokens.dotArcDotRadius
+    readonly property real startDegrees: Tokens.dotArcStartDegrees
+    readonly property real spanDegrees: Tokens.dotArcSpanDegrees
 
     // ---- design values ---------------------------------------------------
-    // Local to this component until the integrator promotes them; each one is
-    // requested as a token in the PR body (W3).
+    // Hoisted to Tokens by I1 (Wave 2): every number below now reads its token,
+    // so the value lives in kit/Tokens.qml. The named properties stay, so this
+    // component's own code and its probes are unchanged.
     // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
-    readonly property real focusLift: 0.04
+    readonly property real focusLift: Tokens.focusLift
     // s2 build.py:102 draws lit dots at full alpha and unlit at 0.2. The deck
     // holds the lit dots just under full, and lifts the unlit ones with focus
     // so a dimmed gauge still reads.
-    readonly property real litAlpha: 0.95
-    readonly property real unlitAlpha: 0.18
-    readonly property real unlitFocusGain: 0.14
+    readonly property real litAlpha: Tokens.dotLit
+    readonly property real unlitAlpha: Tokens.dotDim
+    readonly property real unlitFocusGain: Tokens.dotDimFocusGain
 
     // One animation owns level changes. The feed writes `level`, this property
     // follows it through a single NumberAnimation.

@@ -32,31 +32,32 @@ Item {
     property string label: ""
 
     // s2 build.py:103-104: 12 dots on an 11 px pitch, 132 px across.
-    readonly property int referenceSegments: 12
-    readonly property real referenceSize: 132
+    readonly property int referenceSegments: Tokens.dotBarSegments
+    readonly property real referenceSize: Tokens.dotBarSize
     readonly property int pitchCount: Math.max(1, segments)
     readonly property real pitch: size / pitchCount
     // s2 build.py:105 draws radii 2.9 and 2.2 on the 11 px pitch, so the dot
     // diameters are 0.53 and 0.40 of the pitch.
-    readonly property real litDiameterShare: 0.53
-    readonly property real dimDiameterShare: 0.40
+    readonly property real litDiameterShare: Tokens.dotLitShare
+    readonly property real dimDiameterShare: Tokens.dotDimShare
     // The bar box runs 10 percent taller than the lit dot: headroom over the
     // row, so the dots sit inside a box and not on a line.
-    readonly property real barHeightHeadroom: 1.1
+    readonly property real barHeightHeadroom: Tokens.barHeightHeadroom
     readonly property real litDiameter: pitch * litDiameterShare
     readonly property real dimDiameter: pitch * dimDiameterShare
     readonly property real barHeight: litDiameter * barHeightHeadroom
 
     // ---- design values ---------------------------------------------------
-    // Local to this component until the integrator promotes them; each one is
-    // requested as a token in the PR body (W3).
+    // Hoisted to Tokens by I1 (Wave 2): every number below now reads its token,
+    // so the value lives in kit/Tokens.qml. The named properties stay, so this
+    // component's own code and its probes are unchanged.
     // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
-    readonly property real focusLift: 0.04
+    readonly property real focusLift: Tokens.focusLift
     // s2 build.py:104 draws lit dots at full alpha and unlit at 0.16; focus
     // lifts the unlit ones so a dimmed gauge still reads.
-    readonly property real litAlpha: 1.0
-    readonly property real unlitAlpha: 0.16
-    readonly property real unlitFocusGain: 0.14
+    readonly property real litAlpha: Tokens.dotLitBar
+    readonly property real unlitAlpha: Tokens.dotDimBar
+    readonly property real unlitFocusGain: Tokens.dotDimFocusGain
 
     readonly property real textBlock: !showValue
         ? 0

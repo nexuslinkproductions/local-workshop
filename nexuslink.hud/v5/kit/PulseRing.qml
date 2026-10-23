@@ -40,22 +40,22 @@ Item {
 
     // The s2 reference box: outer ring radius 76 plus a 1.6 dot = 77.6, so the
     // art spans 155.2 px. Kept as the unit the radii below are expressed in.
-    readonly property real referenceSize: 156
+    readonly property real referenceSize: Tokens.pulseRingSize
     readonly property bool hasReading: value > 0
     // s2 build.py:99 switches the dots to amber at an RTT of 100 ms or more.
     // Requested as Tokens.rttWarnMs.
-    readonly property int warnMillis: 100
+    readonly property int warnMillis: Tokens.rttWarnMs
     readonly property color dotColor: value >= warnMillis ? Tokens.amber : accent
 
     // s2 build.py:27, the RTT period mapping max(0.6, 3.4 - log2(rtt / 5) * 0.8):
     // the period floor and the period at the 5 ms floor, in seconds, then the
     // slope per octave of RTT.
-    readonly property real periodFloorS: 0.6
-    readonly property real periodBaseS: 3.4
-    readonly property real periodSlopeOctave: 0.8
+    readonly property real periodFloorS: Tokens.rttPeriodFloorS
+    readonly property real periodBaseS: Tokens.rttPeriodBaseS
+    readonly property real periodSlopeOctave: Tokens.rttPeriodSlope
     // The formula's own RTT floor: a reading under 5 ms counts as 5 ms, so the
     // same property feeds both max() calls.
-    readonly property real rttFloorMs: 5
+    readonly property real rttFloorMs: Tokens.rttFloorMs
     // s2 build.py:27. Recomputed when value changes, never per frame.
     readonly property real pulsePeriod: hasReading
         ? Math.max(periodFloorS,
@@ -65,29 +65,29 @@ Item {
     readonly property int pulseMillis: Math.round(pulsePeriod * 1000)
 
     // ---- design values ---------------------------------------------------
-    // Local to this component until the integrator promotes them; each one is
-    // requested as a token in the PR body (W3). The rings table below keeps
+    // Hoisted to Tokens by I1 (Wave 2): every number below now reads its token,
+    // so the value lives in kit/Tokens.qml. The named properties stay, so this
+    // component's own code and its probes are unchanged. The rings table below keeps
     // the s2 geometry and ring alphas keyed per ring instead of one property
     // per value.
     // Focus band: the gauge lifts 4 percent on a spring (all four gauges).
-    readonly property real focusLift: 0.04
+    readonly property real focusLift: Tokens.focusLift
     // Ring wrapper opacity: 0.90 while reading, plus 0.10 with focus; 0.45
     // when there is no reading at all.
-    readonly property real ringAlphaBase: 0.90
-    readonly property real ringAlphaFocusGain: 0.10
-    readonly property real ringAlphaRest: 0.45
+    readonly property real ringAlphaBase: Tokens.ringAlphaRead
+    readonly property real ringAlphaFocusGain: Tokens.ringAlphaFocusGain
+    readonly property real ringAlphaRest: Tokens.ringAlphaRest
     // s2 `pl` keyframes, build.py:152: scale 0.94 to 1.07, opacity 0.55 to 1.
-    readonly property real pulseScaleMin: 0.94
-    readonly property real pulseScaleMax: 1.07
-    readonly property real pulseAlphaMin: 0.55
-    readonly property real pulseAlphaMax: 1.0
+    readonly property real pulseScaleMin: Tokens.pulseScaleMin
+    readonly property real pulseScaleMax: Tokens.pulseScaleMax
+    readonly property real pulseAlphaMin: Tokens.pulseAlphaMin
+    readonly property real pulseAlphaMax: Tokens.pulseAlphaMax
     // s2 build.py:99: the three rings sit a third of the period apart.
-    readonly property int ringPhases: 3
+    readonly property int ringPhases: Tokens.ringPhases
     // Motion.curveInOut is a 4-value list, and Qt 6.12 evaluates a 4-value
     // bezierCurve as linear (probe: 220 of 1000 at 225 ms). The brief's
     // 6-value form carries the curve; [1.0, 1.0] closes the spline.
-    readonly property var pulseCurve: [Motion.curveInOut[0], Motion.curveInOut[1],
-                                       Motion.curveInOut[2], Motion.curveInOut[3], 1.0, 1.0]
+    readonly property var pulseCurve: Motion.curveInOut6
 
     // Rings: radius and dot radius in reference px, alpha from s2.
     readonly property var rings: [
