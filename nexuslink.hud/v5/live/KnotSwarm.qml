@@ -17,6 +17,12 @@ Item {
 
     readonly property int pointCount: 4384
     readonly property int gridColumns: pointCount * 2
+    // point texture layout, keep in sync with TEXEL_STRIDE / TEX_ROWS /
+    // TEX_WIDTH at the top of shaders/knot.vert. v2 (knot-points2.png) keeps
+    // the same stride and rows, so only the source and USE_UV2 change.
+    readonly property int texelStride: 4
+    readonly property int texRows: 9
+    readonly property int texWidth: 2048
     readonly property int rows: 9
 
     width: 700
@@ -26,13 +32,13 @@ Item {
     // nearest sampling, no mipmap: the vertex stage reads exact texels.
     Image {
         id: points
-        width: 2048
-        height: 9
+        width: root.texWidth
+        height: root.texRows
         smooth: false
         mipmap: false
         cache: true
-        sourceSize.width: 2048
-        sourceSize.height: 9
+        sourceSize.width: root.texWidth
+        sourceSize.height: root.texRows
         source: Qt.resolvedUrl("shaders/knot-points.png")
         asynchronous: false
     }
@@ -47,9 +53,9 @@ Item {
         recursive: false
         smooth: false
         mipmap: false
-        width: 2048
-        height: 9
-        textureSize: Qt.size(2048, 9)
+        width: root.texWidth
+        height: root.texRows
+        textureSize: Qt.size(root.texWidth, root.texRows)
     }
 
     ShaderEffect {
@@ -67,8 +73,8 @@ Item {
 
         property Item src: pointTexture
         property real uN: root.pointCount
-        property real uWidth: 2048
-        property real uRows: root.rows
+        property real uWidth: root.texWidth
+        property real uRows: root.texRows
         property real t: root.t
         property real knotPx: root.knotPx
         property real uW: root.width
