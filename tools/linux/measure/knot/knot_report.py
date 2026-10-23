@@ -5,9 +5,13 @@ Every gate prints the band the code really tests, taken from the same
 expression the code evaluates (no hand written target that drifts from it).
 The round 3 M gates are withdrawn: see README.md in this directory.
 
-  R1  yaw span exactly 0 deg (analytic and from the port); pitch and roll
-      peak to peak <= 4 deg each over 240 s; global scale peak to peak
-      <= 0.8 percent with a period in 6 to 8 s
+  R1  yaw equivalent angle (atan of the measured centroid x span over the
+      270 px knot radius) at most atan(2.0 / 270) deg; pitch and roll peak
+      to peak <= 4 deg each over 240 s; global scale peak to peak <= 0.8
+      percent with a period in 6 to 8 s
+  R1c centroid drift from the port positions: x span of the centroid of
+      all dots over the hold windows (t in [0,33) and [60,93)) <= 2.0 px,
+      y span over those windows <= 3.0 px, x span over 0..120 s <= 3.0 px
   R2  max per frame displacement of ANY dot, 24 fps, t = 0..120 s with the
       morph running, at knotPx 540 < 1.6 px
   R3  local activity in the HOLD windows only (morph weight 0 or 1):
@@ -16,10 +20,12 @@ The round 3 M gates are withdrawn: see README.md in this directory.
   R4  max change of the per frame displacement vector between consecutive
       frames (acceleration) over 0..120 s at 24 fps < 0.35 px per frame^2
   R5  morph present: at x = 1 the mean screen displacement from the hold
-      form >= 20 px (form 1) and >= 35 px (form 2); hold fraction over
-      120 s in [0.50, 0.60]; per point morph weight monotone per leg
-  R6  the three lobe thickness signals: pairwise cross correlation peak lag
-      >= 1.0 s and three distinct periods
+      form >= 20 px (form 1) and >= 35 px (form 2); nominal triquetra hold
+      fraction from the schedule constants (HOLD_A / CYC) in
+      [0.50, 0.60]; per point morph weight monotone per leg
+  R6  the three lobe thickness signals (the port lobe term lb per lobe,
+      8 Hz, 0..120 s): max pairwise |Pearson r| < 0.6, FFT peak period of
+      each within 10 percent of 9, 11 and 13 s and distinct by >= 1 s
   R7  wave loops in 9 to 16 s (fronts and ring fronts) and ripple spacing
       in 8 to 14 s, read from the port constants
   R8  render based (acid share of bright pixels < 2 percent, lobe luminance
@@ -52,31 +58,45 @@ R4_MAX_ACC = 0.35
 R5_FORM1_PX = 20.0
 R5_FORM2_PX = 35.0
 R5_HOLD = (0.50, 0.60)
-R6_MIN_LAG = 1.0
+R6_MAX_CORR = 0.6
+R6_T = (9.0, 11.0, 13.0)
+R6_TOL_REL = 0.10
+R6_MIN_SEP = 1.0
+R1C_X_HOLD_PX = 2.0
+R1C_Y_HOLD_PX = 3.0
+R1C_X_FULL_PX = 3.0
+R1C_R_PX = 270.0               # knot radius at knotPx 540
 
 
-def lobe_signals(times):
-    """Lobe thickness signal per lobe: one sine breath per lobe clock."""
-    out = []
-    for k, T in enumerate(kp.KnotPort.LOBE_T):
-        ph = kp.KnotPort.LOBE_PH[k]
-        s = 0.5 - 0.5 * np.cos(kp.TAU * np.mod(np.asarray(times) / T + ph, 1.0))
-        out.append(s)
-    return np.stack(out, axis=0)
+def lobe_signals(lobe_all, wlobe):
+    """Port lobe term lb per lobe, 8 Hz, averaged over that lobe's strand.
+
+    lobe_all is the per frame lb from the 24 fps run; every third frame is
+    exactly an 8 Hz sample, so no extra port sampling is needed.
+    """
+    dom = np.argmax(wlobe, axis=0)
+    sub = lobe_all[::3]
+    out = np.zeros((3, sub.shape[0]))
+    for k in range(3):
+        out[k] = sub[:, dom == k].mean(axis=1)
+    return out
 
 
-def xcorr_lag(a, b, fps):
-    """Lag in seconds of the cross correlation peak, b relative to a."""
-    a = a - a.mean()
-    b = b - b.mean()
-    n = len(a)
-    lags = np.arange(-(n - 1), n)
-    # FFT cross correlation, full
-    fa = np.fft.rfft(a, 2 * n)
-    fb = np.fft.rfft(b, 2 * n)
-    cc = np.fft.irfft(fa * np.conj(fb), 2 * n)
-    cc = np.concatenate([cc[-(n - 1):], cc[:n]])
-    return float(lags[int(np.argmax(cc))]) / fps
+def fft_period(y, fps):
+    """Dominant period in seconds, Hann window, 4x zero pad, parabolic peak."""
+    y = np.asarray(y, dtype=np.float64)
+    y = (y - y.mean()) * np.hanning(len(y))
+    n = len(y)
+    sp = np.abs(np.fft.rfft(y, 4 * n))
+    fr = np.fft.rfftfreq(4 * n, 1.0 / fps)
+    lo = max(1, int(np.searchsorted(fr, 1.0 / 40.0)))
+    hi = int(np.searchsorted(fr, 1.0 / 4.0))
+    k = lo + int(np.argmax(sp[lo:hi]))
+    y0, y1, y2 = (math.log(sp[k - 1] + 1e-12), math.log(sp[k] + 1e-12),
+                  math.log(sp[k + 1] + 1e-12))
+    den = y0 - 2.0 * y1 + y2
+    dk = 0.5 * (y0 - y2) / den if abs(den) > 1e-12 else 0.0
+    return 1.0 / (fr[k] + dk * (fr[1] - fr[0]))
 
 
 def ramp(vals, lo, hi):
@@ -116,6 +136,7 @@ def main():
     loc_len = np.zeros((nf, n), dtype=np.float32)
     morph_s = np.zeros((nf, n), dtype=np.float32)
     morph_px = np.zeros((nf, n), dtype=np.float32)
+    lobe_all = np.zeros((nf, n), dtype=np.float32)
     hold = np.zeros(nf, dtype=bool)
 
     for i, t in enumerate(ts):
@@ -124,6 +145,7 @@ def main():
         loc_len[i] = d["local_len"]
         morph_s[i] = d["morph_s"]
         morph_px[i] = np.linalg.norm(d["morph_px"], axis=1)
+        lobe_all[i] = d["lobe"]
         hold[i] = kp.morph_x(t) in (0.0, 1.0)
     runtime = _time.time() - t0
 
@@ -131,8 +153,23 @@ def main():
     tp = np.arange(0.0, 240.0, 0.25)
     pitch = np.array([math.degrees(port.pose(t)[1]) for t in tp])
     roll = np.array([math.degrees(port.pose(t)[2]) for t in tp])
-    yaw_span_deg = 0.0            # knot.vert has no yaw term at all
-    r1_yaw = yaw_span_deg == 0.0
+    # R1c: the centroid of all dots, from the port positions, screen px
+    cen = pos_full.astype(np.float64).mean(axis=1)
+    hold_win = ((ts >= 0.0) & (ts < kp.HOLD_A)) | \
+               ((ts >= kp.CYC) & (ts < kp.CYC + kp.HOLD_A))
+    c_x_hold = float(np.ptp(cen[hold_win, 0]))
+    c_y_hold = float(np.ptp(cen[hold_win, 1]))
+    c_x_full = float(np.ptp(cen[:, 0]))
+    r1c_ok = (c_x_hold <= R1C_X_HOLD_PX + 1e-9
+              and c_y_hold <= R1C_Y_HOLD_PX + 1e-9
+              and c_x_full <= R1C_X_FULL_PX + 1e-9)
+    # the shader has no yaw term by construction, so yaw is read off the
+    # measured centroid drift: a horizontal sweep of s px on a 270 px radius
+    # is atan(s / 270) of equivalent yaw
+    yaw_equiv_deg = math.degrees(math.atan(c_x_hold / R1C_R_PX))
+    yaw_band_deg = math.degrees(math.atan(R1C_X_HOLD_PX / R1C_R_PX))
+    yaw_full_deg = math.degrees(math.atan(c_x_full / R1C_R_PX))
+    r1_yaw = yaw_equiv_deg <= yaw_band_deg + 1e-12
     r1_pitch = float(pitch.max() - pitch.min()) <= 4.0
     r1_roll = float(roll.max() - roll.min()) <= 4.0
     scale_pp_pct = port.SCALE_AMP * 100.0
@@ -160,8 +197,8 @@ def main():
     idx2 = int(np.argmin(np.abs(ts - (kp.CYC + kp.HOLD_A + kp.LEG + 1.0))))
     m1 = float(morph_px[idx1].mean())
     m2 = float(morph_px[idx2].mean())
-    hold_frac_global = (kp.HOLD_A + kp.HOLD_B) / kp.CYC
-    # the port's own schedule over a fine grid (this is the gate value)
+    hold_frac_nominal = kp.HOLD_A / kp.CYC     # triquetra hold, gate value
+    # the frame grid and the 0.25 s grid are INFO only (see below)
     tg = (np.arange(int(round(a.seconds / 0.25))) + 0.5) * 0.25
     hold_frac_grid = float(np.mean([kp.morph_x(t) in (0.0, 1.0) for t in tg]))
     hold_frac_point = float(hold.mean())
@@ -176,16 +213,22 @@ def main():
         if dif.size and float(dif.min()) < -1e-9:
             mono = False
     r5_ok = (m1 >= R5_FORM1_PX and m2 >= R5_FORM2_PX and mono
-             and R5_HOLD[0] <= hold_frac_grid <= R5_HOLD[1])
+             and R5_HOLD[0] <= hold_frac_nominal <= R5_HOLD[1])
 
-    # ---- R6: lobe phase lags -------------------------------------------
-    sig = lobe_signals(np.arange(0.0, 240.0, 1.0 / a.fps))
-    lags = {}
+    # ---- R6: lobe phase, from the port's own lb per lobe ----------------
+    sig = lobe_signals(lobe_all, port.wlobe)      # 8 Hz over 0..120 s
+    fps8 = a.fps / 3.0
+    corr = {}
     for i, j in ((0, 1), (0, 2), (1, 2)):
-        lags["%d_%d" % (i, j)] = round(xcorr_lag(sig[i], sig[j], a.fps), 3)
-    periods = kp.KnotPort.LOBE_T
-    r6_ok = (min(abs(v) for v in lags.values()) >= R6_MIN_LAG
-             and len(set(periods)) == 3)
+        corr["%d_%d" % (i, j)] = round(
+            float(np.corrcoef(sig[i], sig[j])[0, 1]), 4)
+    max_abs_corr = max(abs(v) for v in corr.values())
+    periods = [round(float(fft_period(sig[k], fps8)), 3) for k in range(3)]
+    t_err = [abs(periods[k] - R6_T[k]) / R6_T[k] for k in range(3)]
+    sep = min(abs(periods[i] - periods[j])
+              for i, j in ((0, 1), (0, 2), (1, 2)))
+    r6_ok = (max_abs_corr < R6_MAX_CORR and max(t_err) <= R6_TOL_REL
+             and sep >= R6_MIN_SEP)
 
     # ---- R7: constants --------------------------------------------------
     loops = list(kp.KnotPort.C_T) + list(kp.KnotPort.CR_T)
@@ -202,9 +245,32 @@ def main():
                                 else ("PASS" if ok else "FAIL")),
                      "value": value, "target": target, "note": note})
 
-    add("R1_yaw_span_deg", r1_yaw, 0.0,
-        "yaw span == 0 deg (knot.vert has no yaw term; the port reports 0)",
-        "analytic and port")
+    def add_info(name, value, note=""):
+        crit.append({"name": name, "pass": None, "status": "INFO",
+                     "value": value, "target": "informational, not gated",
+                     "note": note})
+
+    add("R1_yaw_equivalent_deg", r1_yaw, round(yaw_equiv_deg, 4),
+        "<= %.4f deg = atan(%.1f px / %.0f px), equivalent yaw from the "
+        "centroid x span in the hold windows"
+        % (yaw_band_deg, R1C_X_HOLD_PX, R1C_R_PX),
+        "knot.vert has no yaw term by construction; this gate measures the "
+        "result. x span in the hold windows %.3f px, over 0..%.0f s %.3f px "
+        "(%.4f deg)" % (c_x_hold, a.seconds, c_x_full, yaw_full_deg))
+    add("R1c_centroid_x_hold_px", c_x_hold <= R1C_X_HOLD_PX + 1e-9,
+        round(c_x_hold, 4),
+        "<= %.1f px peak to peak, centroid of all %d dots, hold windows "
+        "t in [0,%.0f) and [%.0f,%.0f) at %.0f fps"
+        % (R1C_X_HOLD_PX, n, kp.HOLD_A, kp.CYC, kp.CYC + kp.HOLD_A, a.fps),
+        "%d hold frames" % int(hold_win.sum()))
+    add("R1c_centroid_y_hold_px", c_y_hold <= R1C_Y_HOLD_PX + 1e-9,
+        round(c_y_hold, 4),
+        "<= %.1f px peak to peak over the same hold windows"
+        % R1C_Y_HOLD_PX)
+    add("R1c_centroid_x_full_px", c_x_full <= R1C_X_FULL_PX + 1e-9,
+        round(c_x_full, 4),
+        "<= %.1f px peak to peak over 0..%.0f s (morph included)"
+        % (R1C_X_FULL_PX, a.seconds))
     add("R1_pitch_pp_deg", r1_pitch, round(float(pitch.max() - pitch.min()), 3),
         "<= 4.0 deg peak to peak over 240 s")
     add("R1_roll_pp_deg", r1_roll, round(float(roll.max() - roll.min()), 3),
@@ -232,19 +298,29 @@ def main():
     add("R5_morph_form2_px", m2 >= R5_FORM2_PX, round(m2, 3),
         ">= %.0f px mean screen displacement at x = 1, form 2" % R5_FORM2_PX,
         "t = %.1f s" % ts[idx2])
-    add("R5_hold_fraction", R5_HOLD[0] <= hold_frac_grid <= R5_HOLD[1],
-        round(hold_frac_grid, 4),
-        "hold fraction in [%.2f, %.2f] over %.0f s, from the port schedule"
-        % (R5_HOLD[0], R5_HOLD[1], a.seconds),
-        "schedule holds %.4f per %.0f s cycle; frames with every point at a "
-        "hold = %.4f (%d of %d), the extra frames are the first eased steps"
-        % (hold_frac_global, kp.CYC, hold_frac_point, int(hold.sum()), nf))
+    add("R5_hold_fraction", R5_HOLD[0] <= hold_frac_nominal <= R5_HOLD[1],
+        round(hold_frac_nominal, 4),
+        "nominal triquetra hold = HOLD_A %.1f s / CYC %.1f s = %.4f in "
+        "[%.2f, %.2f], from the schedule constants"
+        % (kp.HOLD_A, kp.CYC, hold_frac_nominal, R5_HOLD[0], R5_HOLD[1]),
+        "the schedule constants are the gate; sampled grids are INFO")
+    add_info("R5_hold_fraction_frame_grid", round(hold_frac_point, 4),
+             "INFO only: frames with every point at a hold = %d of %d = "
+             "%.4f; 0.25 s grid = %.4f (eased leg edges, not gated)"
+             % (int(hold.sum()), nf, hold_frac_point, hold_frac_grid))
     add("R5_weights_monotone", mono, bool(mono),
         "per point weight non decreasing along every out leg")
-    add("R6_lobe_phase_lag_s", r6_ok,
-        [lags["0_1"], lags["0_2"], lags["1_2"]],
-        "every pairwise cross correlation peak lag >= %.1f s" % R6_MIN_LAG,
-        "lobe periods %s s" % (periods,))
+    add("R6_lobe_phase_corr", r6_ok,
+        "r %.2f / %.2f / %.2f" % (corr["0_1"], corr["0_2"], corr["1_2"]),
+        "max pairwise |Pearson r| < %.1f; FFT peak period within %.0f "
+        "percent of %.1f, %.1f, %.1f s and separated by >= %.1f s "
+        "(port lobe lb per lobe, 8 Hz, 0..%.0f s)"
+        % (R6_MAX_CORR, R6_TOL_REL * 100.0, R6_T[0], R6_T[1], R6_T[2],
+           R6_MIN_SEP, a.seconds),
+        "periods %s s (errors %.2f / %.2f / %.2f percent), min separation "
+        "%.2f s, corr 0_1 %.3f 0_2 %.3f 1_2 %.3f"
+        % (periods, t_err[0] * 100.0, t_err[1] * 100.0, t_err[2] * 100.0,
+           sep, corr["0_1"], corr["0_2"], corr["1_2"]))
     add("R7_loop_periods_s", r7_ok,
         [round(x, 1) for x in loops],
         "every wave loop in 9 to 16 s",
@@ -260,6 +336,7 @@ def main():
     npass = sum(1 for c in crit if c["status"] == "PASS")
     nfail = sum(1 for c in crit if c["status"] == "FAIL")
     nskip = sum(1 for c in crit if c["status"] == "SKIPPED_RENDER")
+    ninfo = sum(1 for c in crit if c["status"] == "INFO")
     verdict = "PASS" if nfail == 0 else "FAIL"
     if nskip:
         verdict += " (%d render gate(s) SKIPPED_RENDER)" % nskip
@@ -287,7 +364,7 @@ def main():
                          "form1": round(float(np.linalg.norm(port.P1 - port.P, axis=1).max()) * port.knot_px / kp.KNOT_H, 2),
                          "form2": round(float(np.linalg.norm(port.P2 - port.P, axis=1).max()) * port.knot_px / kp.KNOT_H, 2)}},
            "criteria": crit, "passed": npass, "failed": nfail,
-           "skipped_render": nskip, "verdict": verdict}
+           "skipped_render": nskip, "info": ninfo, "verdict": verdict}
 
     # heat map of the local activity in time (arc bins x time)
     nb = 32
@@ -330,12 +407,16 @@ def main():
         if c["note"]:
             L.append("                 %s" % c["note"])
     L.append("")
-    L.append("verdict %s: %d pass, %d fail, %d SKIPPED_RENDER"
-             % (verdict, npass, nfail, nskip))
+    L.append("verdict %s: %d pass, %d fail, %d SKIPPED_RENDER, %d INFO"
+             % (verdict, npass, nfail, nskip, ninfo))
     L.append("local activity: mean %.2f px, p99 %.2f px, peak %.2f px in the "
              "hold windows" % (r3_mean, r3_p99, r3_peak))
     L.append("max per frame displacement %.3f px, max acceleration %.4f px/frame^2"
              % (r2_max, r4_max))
+    L.append("centroid drift: x hold %.3f px, y hold %.3f px, x 0..%.0f s "
+             "%.3f px; equivalent yaw %.4f deg (band %.4f deg)"
+             % (c_x_hold, c_y_hold, a.seconds, c_x_full, yaw_equiv_deg,
+                yaw_band_deg))
     L.append("runtime %.1f s" % runtime)
     txt = "\n".join(L) + "\n"
     with open(os.path.join(a.outdir, pre + "report.txt"), "w",

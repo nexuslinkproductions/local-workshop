@@ -113,15 +113,18 @@ class KnotPort:
     C_W = 0.10
     C_TROUGH = 0.09
     C_TROUGH_K = 0.15
-    C_SW = 0.022
+    C_SW = 0.028
     C_PUSH = 0.014
     C_ENV_MIX = 0.6
     CR_T = (12.0, 16.0)
     CR_DIR = (1.0, -1.0)
     CR_OFF = (0.25, 0.70)
-    D_SCALE = 55.0
+    D_SCALE = 35.0
     D_STEP = 0.05
-    D_GAIN = 0.022
+    # B2c: curl gain 0.022 -> 0.002 and spatial scale 55 -> 35 (see knot.vert).
+    # At 0.022 the curl alone moved the dot centroid 6.3 px in x; the drift of
+    # a term that small is not worth 3 px of sideways sway of the whole knot.
+    D_GAIN = 0.002
     D_AMP = 0.025
     E_L = (9.0, 13.0)
     E_OFF = (0.0, 2.9)
@@ -141,6 +144,13 @@ class KnotPort:
     YAW_AMP = 0.0
     PITCH_AMP = math.radians(1.6)
     ROLL_AMP = math.radians(1.6)
+    # roll pivot: the dot centroid of the BASE pose (triquetra, all 4384 dots)
+    # in screen px from the item centre at knotPx 540, pitch 0, roll 0, scale
+    # pulse 1. Rolling about the knot centre instead swept the whole dot
+    # centroid 1.2 px sideways. Same two numbers are hard coded in knot.vert
+    # (ROLL_PIVOT_PX); __init__ asserts this file's own measurement of the
+    # texture matches them within 0.2 px.
+    PIVOT_PX = (-4.203, 35.411)
     SCALE_AMP = 0.008
     SCALE_T = 7.0
     B_LB, B_G, B_EV = 0.08, 0.40, 0.30
@@ -220,6 +230,17 @@ class KnotPort:
         h = fract(np.sin(self.pid * 78.233 + 1.7) * 43758.5453)
         self.carrier = np.where(h < self.SPARK_CARRIER, 1.0, 0.3)
 
+        # the roll pivot hard coded here (and in knot.vert as ROLL_PIVOT_PX)
+        # must still describe THIS texture: measure it again and refuse to run
+        # on a mismatch, so a rebaked point set cannot silently drift
+        mx, my = self.measure_pivot_px()
+        err = max(abs(mx - self.PIVOT_PX[0]), abs(my - self.PIVOT_PX[1]))
+        assert err <= 0.2, (
+            "roll pivot mismatch: texture centroid (%.3f, %.3f) px vs "
+            "PIVOT_PX (%.3f, %.3f) px, err %.3f px > 0.2 (update PIVOT_PX in "
+            "knot_port.py and ROLL_PIVOT_PX in knot.vert)"
+            % (mx, my, self.PIVOT_PX[0], self.PIVOT_PX[1], err))
+
     def form_of_cycle(self, t):
         return 1 if int(math.floor(t / CYC)) % 2 == 0 else 2
 
@@ -242,12 +263,31 @@ class KnotPort:
         y1 = Q[:, 1] * cpt - Q[:, 2] * spt
         z2 = Q[:, 1] * spt + Q[:, 2] * cpt
         x1 = Q[:, 0]
-        crl, srl = math.cos(roll), math.sin(roll)
-        xr = x1 * crl - y1 * srl
-        yr = x1 * srl + y1 * crl
         k = CAM_D / (CAM_D - z2)
         fs = k * (self.knot_px / KNOT_H)
-        return np.stack([self.w * 0.5 + xr * fs, self.h * 0.5 + yr * fs], axis=1)
+        # roll in the screen plane about PIVOT_PX, NOT about the item centre:
+        # the base pose centroid sits about 35 px below the centre, so a roll
+        # about the centre translates the dot centroid sideways by
+        # roll * 35 px (1.2 px peak to peak over 0..120 s)
+        crl, srl = math.cos(roll), math.sin(roll)
+        kp = self.knot_px / 540.0
+        pvx, pvy = self.PIVOT_PX[0] * kp, self.PIVOT_PX[1] * kp
+        dx = x1 * fs - pvx
+        dy = y1 * fs - pvy
+        return np.stack([self.w * 0.5 + pvx + dx * crl - dy * srl,
+                         self.h * 0.5 + pvy + dx * srl + dy * crl], axis=1)
+
+    def measure_pivot_px(self):
+        """Own measurement of the roll pivot from the point texture.
+
+        Mean screen offset from the item centre of all dots of the base pose
+        at pitch 0, roll 0, scale pulse 1, knotPx 540. __init__ asserts this
+        matches PIVOT_PX (the numbers knot.vert hard codes) to 0.2 px.
+        """
+        q = self.P
+        k = CAM_D / (CAM_D - q[:, 2])
+        fs = k * (540.0 / KNOT_H)
+        return float(np.mean(q[:, 0] * fs)), float(np.mean(q[:, 1] * fs))
 
     def env(self, t):
         u = self.u

@@ -284,8 +284,16 @@ void main() {
     float rr = cls < 0.5 ? 20.0 : 5.5;
 
     // ---- D: curl-noise micro-currents -----------------------------------
-    vec3 vel = curlA(Pm / 55.0, t);
-    vec3 dD = vel * (R * 0.022 * env);
+    // B2c: the curl was the main source of sideways drift of the whole dot
+    // centroid (scaling pot by 1/55 at gain 0.022 R, it moved the centroid
+    // 6.3 px peak to peak in x over one hold window while y moved 0.8 px;
+    // the field does not average out across the strands). pot at 1/35 gives
+    // more eddies per strand so they cancel better, and the gain came down
+    // 0.022 -> 0.002 R (0.9 units, 0.54 px): together 5.80 -> 1.77 px x
+    // centroid span over t 0..33 s. The front swell went 0.022 -> 0.028 R to
+    // keep the R3 mean local displacement above 2.0 px.
+    vec3 vel = curlA(Pm / 35.0, t);
+    vec3 dD = vel * (R * 0.002 * env);
     float dl0 = length(dD);
     float dlim = R * 0.025;
     // R4: saturate the curl with tanh, not the exponential cap used before.
@@ -322,7 +330,7 @@ void main() {
     float ringK = cls < 0.5 ? 1.0 : 0.5;
     vec3 dloc = vec3(Pm.x, Pm.y, 0.0) * (0.010 * lb)
               + Nm * (rr * 0.32 * lb)
-              + Nm * (R * 0.022 * g * ringK + R * 0.016 * ev * evK)
+              + Nm * (R * 0.028 * g * ringK + R * 0.016 * ev * evK)
               + dirW * (R * 0.014 * g + R * 0.012 * ev * evK)
               + dD;
     float lim = R * 0.04;
@@ -347,8 +355,6 @@ void main() {
     float y1 = Q.y * cpt - Q.z * spt;
     float z2 = Q.y * spt + Q.z * cpt;
     float x1 = Q.x;
-    float xr = x1 * crl - y1 * srl;
-    float yr = x1 * srl + y1 * crl;
 
     float nz2 = Nm.y * spt + Nm.z * cpt;
 
@@ -414,7 +420,20 @@ void main() {
     float hh = rpx + 1.5;
 
     vec2 centre = vec2(uW, uH) * 0.5;
-    vec2 spos = centre + vec2(xr, yr) * k * (knotPx / KNOT_H);
+    // roll pivots about the dot centroid of the BASE pose, not the knot
+    // centre: the triquetra hangs about 35 px low in the frame, so a roll
+    // about the centre swept the whole dot centroid sideways by 1.2 px peak
+    // to peak. ROLL_PIVOT_PX is the mean screen offset from the item centre
+    // of all 4384 base dots (pitch 0, roll 0, scale pulse 1) at knotPx 540,
+    // measured from knot-points4.png in tools/linux/measure/knot/knot_port.py
+    // (measure_pivot_px); that port asserts its own measurement of the same
+    // texture matches these two numbers within 0.2 px.
+    const vec2 ROLL_PIVOT_PX = vec2(-4.203, 35.411);
+    float pxScale = knotPx / KNOT_H;
+    vec2 pv = ROLL_PIVOT_PX * (knotPx / 540.0);
+    vec2 rel = vec2(x1, y1) * k * pxScale - pv;
+    vec2 spos = centre + pv + vec2(rel.x * crl - rel.y * srl,
+                                   rel.x * srl + rel.y * crl);
     vec2 pos = spos + corner * hh;
 
     v_local = corner * hh;

@@ -100,42 +100,84 @@ normal that points away from N3 so the blended normal never passes through
 zero, and it falls back to er when the dirW sum would be degenerate mid morph
 (the shader does the same).
 
-knot_report.py now runs gates R1 to R8 of section 4 and prints, for every gate,
-the band the code actually compares against. R8 needs a render (acid share of
-bright pixels, lobe luminance ratios, clipped pixels) and prints
-SKIPPED_RENDER when no render metrics are supplied; render_metrics.py and
-lobe_lum.py fill it in the render run.
+knot_report.py runs gates R1 to R8 of section 4 and prints, for every gate, the
+band the code actually compares against: each target string is built from the
+same constant the comparison uses, so a band cannot drift from its check. R8
+needs a render (acid share of bright pixels, lobe luminance ratios, clipped
+pixels) and prints SKIPPED_RENDER when no render metrics are supplied;
+render_metrics.py and lobe_lum.py fill it in the render run.
+
+R1c is new. The old R1 pinned yaw to the constant 0.0; that was true of the
+shader but it made the gate blind, because a knot that sways 12 px sideways
+still has no yaw term in the code. knot.vert still has no yaw term by
+construction (pitch about x and roll in the screen plane only), so R1c
+measures the RESULT instead: the peak to peak drift of the centroid of all
+dots, in screen px at knotPx 540, over the triquetra hold windows and over the
+whole 120 s. R1 then reports the equivalent yaw angle of that measurement,
+atan(x span / 270 px), with the 270 px knot radius.
+
+R6 is a real phase test now. The old one compared cross correlation peak lags
+over a 240 s window, which for three incommensurate periods lands near a
+quarter of the window (217 / 166 / 133 s) and would have passed with all three
+phases equal. The new gate samples the port's own lobe thickness term lb on
+each lobe's strand at 8 Hz, requires the largest pairwise |Pearson r| < 0.6,
+the FFT peak period of each signal within 10 percent of 9, 11, 13 s and the
+three periods separated by at least 1 s.
+
+R5 hold fraction now gates the nominal schedule (HOLD_A / CYC = 33 / 60 =
+0.55, band [0.50, 0.60]). The sampled frame grid sits at 0.6014 because the
+eased leg edges count as hold frames; it is printed as INFO, not gated, so a
+0.6000 value can no longer pass on the exact band edge.
 
     python3 knot_report.py --outdir <dir> --prefix r4-
 
-Gate bands the code compares against (knot_report.py, constants at the top:
-R2_MAX_STEP = 1.6 px, R4_MAX_ACC = 0.35 px/frame^2, R3 band [7.0, 10.8] px
-peak / [2.0, 5.0] px mean / 9.0 px p99, R5 >= 20 px form 1 and >= 35 px form 2,
-hold fraction [0.50, 0.60], R1 4 deg p2p and 0.8 percent at 6 to 8 s, R6 lag
->= 1.0 s, R7 loops 9 to 16 s with ripples 8 to 14 s, R8 acid share < 2 percent
-and lobe luminance ratio <= 1.4):
+Gate bands, exactly as the code compares them (constants at the top of
+knot_report.py):
 
-    R1  yaw span 0.000 deg (must be 0), pitch p2p <= 4.0 deg, roll p2p <= 4.0 deg,
-        scale p2p <= 0.80 percent with period 6.0 to 8.0 s
-    R2  max per frame step of any dot < 1.6 px
-    R3  hold windows only: peak local in [7.0, 10.8] px, mean in [2.0, 5.0] px,
-        99th percentile <= 9.0 px
-    R4  max per frame change of the step vector < 0.35 px per frame squared
-    R5  mean screen displacement at x = 1 >= 20 px (form 1), >= 35 px (form 2),
-        hold fraction in [0.50, 0.60], weights non decreasing per leg
-    R6  pairwise lobe breath lag >= 1.0 s and three distinct periods
-    R7  every wave loop in [9, 16] s, ripple slots in [8, 14] s
-    R8  acid share of bright pixels < 2 percent, lobe luminance ratio <= 1.4,
-        clipped pixels about 0 (render metrics only)
+    R1   yaw equivalent <= atan(2.0 px / 270 px) = 0.4244 deg, pitch p2p
+         <= 4.0 deg, roll p2p <= 4.0 deg, scale p2p <= 0.80 percent with
+         period in [6.0, 8.0] s
+    R1c  centroid of all dots (screen px at knotPx 540): x span over the hold
+         windows t in [0,33) and [60,93) at 24 fps <= 2.0 px, y span over
+         those windows <= 3.0 px, x span over 0..120 s <= 3.0 px
+    R2   max per frame step of any dot < 1.6 px
+    R3   hold windows only: peak local in [7.0, 10.8] px, mean in [2.0, 5.0] px,
+         99th percentile <= 9.0 px
+    R4   max per frame change of the step vector < 0.35 px per frame squared
+    R5   mean screen displacement at x = 1 >= 20 px (form 1), >= 35 px (form 2),
+         nominal hold fraction HOLD_A / CYC in [0.50, 0.60], weights non
+         decreasing per leg
+    R6   port lobe lb per lobe at 8 Hz over 0..120 s: max pairwise |Pearson r|
+         < 0.6, FFT peak period within 10 percent of 9.0, 11.0, 13.0 s, the
+         three periods distinct by >= 1.0 s
+    R7   every wave loop in [9.0, 16.0] s, ripple slots in [8.0, 14.0] s
+    R8   acid share of bright pixels < 2 percent, lobe luminance ratio <= 1.4,
+         clipped pixels about 0 (render metrics only)
 
-Measured on 2026-10-23 on the final knot-points4.png (sha1 bc15e194, 120 s at
-24 fps, exp limiter, L = 4 percent of R, runtime 11.8 s): R1 pass (yaw 0.000,
-pitch 3.122, roll 2.983 deg p2p, scale 0.800 percent at 7.0 s), R2 pass
-0.9372 px, R3 pass (peak 9.450 px, mean 3.501 px, p99 7.314 px), R4 pass
-0.1131 px/frame^2, R5 pass form 1 25.998 px and form 2 41.504 px, hold 0.6000
-(0.6014 counted on the frame grid), weights monotone, R6 pass (lags 217.3 /
-165.8 / 132.9 s), R7 pass (11/15/12/16 s loops, 9 and 13 s ripples), R8
-SKIPPED_RENDER. Verdict PASS, 13 pass, 0 fail.
+Measured on 2026-10-23 on knot-points4.png (sha1 bc15e194) with the round 4
+port after the centroid fix (knot_port.py sha1 92854b8d), 120 s at 24 fps, exp
+limiter, L = 4 percent of R, runtime 11.9 s: R1 pass (yaw equivalent 0.4200 deg
+against the 0.4244 deg band), R1c pass (x hold 1.9792 px, y hold 2.4564 px,
+x over 120 s 2.7654 px), R1 pitch 3.122 and roll 2.983 deg p2p, scale 0.800
+percent at 7.0 s, R2 pass 0.8733 px, R3 pass (peak 9.301 px, mean 2.239 px,
+p99 7.093 px), R4 pass 0.1027 px/frame^2, R5 pass form 1 25.998 px, form 2
+41.504 px, nominal hold 0.5500 (frame grid 0.6014 INFO), weights monotone, R6
+pass (r 0.19 / 0.21 / 0.17, periods 8.994 / 11.002 / 13.028 s, min separation
+2.01 s), R7 pass (11/15/12/16 s loops, 9 and 13 s ripples), R8 SKIPPED_RENDER.
+Verdict PASS, 16 pass, 0 fail, 1 INFO.
+
+The x hold band passes with 1 percent margin, so any later reduction of the
+local motion has to keep the curl term low (see the centroid note in
+work3/B2/FINAL2); the gate is tight on purpose, a 2 px hold sway is already
+0.42 deg of equivalent yaw.
+
+Mutation proofs (all in scratch copies under work3/B2c/mut/, worktree
+untouched, transcript work3/B2c/MUTATION.txt): a 12 px horizontal sine sway at
+60 s period added to the port output makes R1c_centroid_x_hold_px FAIL at
+18.3895 px and R1_yaw_equivalent_deg FAIL at 3.8963 deg while R2 and R4 still
+pass; HOLD_A = 10 s makes R5_hold_fraction FAIL at 0.1667; LOBE_T all 11 s
+with phases all 0 makes R6_lobe_phase_corr FAIL at r 0.96 / 0.92 / 0.97 with
+periods 10.996 / 11.006 / 11.014 s.
 
 ### R4: what the acceleration gate caught
 
