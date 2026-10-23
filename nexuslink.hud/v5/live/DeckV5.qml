@@ -22,6 +22,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Tokens.field
+        visible: !root.underEnvironment
     }
 
     // ---- same input contract as DeckCommand --------------------------------
@@ -30,6 +31,9 @@ Item {
     property var crew: ({})
     property string screenName: ""
     property bool shown: true
+    // HudV4 sets this while the Environment room is live under the deck; the
+    // base below then steps aside so the room shows through.
+    property bool underEnvironment: false
     // the host PanelWindow (HudV4 passes it); falls back to the attached window
     property var window: null
     readonly property var hostWindow: root.window ? root.window : QsWindow.window
@@ -95,6 +99,7 @@ Item {
         y: Math.round((root.height - 1440 * root.fit) / 2)
 
         shown: root.shown
+        underEnvironment: root.underEnvironment
         now: clock.date
         crew: root.crew
         link: linkFeed.link

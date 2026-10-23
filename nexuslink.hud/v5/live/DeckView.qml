@@ -24,6 +24,9 @@ Item {
     // ---- inputs ----------------------------------------------------------
     property bool shown: true
     property bool autoTick: true
+    // true when the Environment room sits under this view (full-bleed host):
+    // the opaque base below steps aside so the room shows through.
+    property bool underEnvironment: false
     property real tick: 0
     property date now: new Date()
     property var crew: ({})
@@ -108,12 +111,42 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Tokens.field
+        visible: !root.underEnvironment
     }
 
     // ---- HUD content: dims and softens while a focus view is open -------
     FocusDim {
         anchors.fill: parent
         active: root.focusActive
+
+        // s10 wall labels (build_s10.py .wl: 700, 16 px, tracking .26em,
+        // rgba(143,216,232,.40), line box 16 px at left 722 / 1718, top 546).
+        // Flat on the far wall, so they sit under the knot and the widgets.
+        Text {
+            id: wallMacGate
+            x: 722
+            y: 546
+            text: "MAC GATE"
+            color: Tokens.ice
+            opacity: 0.40
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightBold
+            font.letterSpacing: Tokens.trackLabel * Tokens.sizeCaption
+        }
+
+        Text {
+            id: wallSector7
+            x: 1718
+            y: 546
+            text: "SECTOR 7"
+            color: Tokens.ice
+            opacity: 0.40
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.sizeCaption
+            font.weight: Tokens.weightBold
+            font.letterSpacing: Tokens.trackLabel * Tokens.sizeCaption
+        }
 
         KnotSwarm {
             x: root.knotCx - 350

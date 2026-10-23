@@ -1317,6 +1317,8 @@ Item {
                             Binding { target: v5Loader.item; property: "crew"; value: hud.crew; when: v5Loader.item !== null }
                             Binding { target: v5Loader.item; property: "shown"; value: deck.shown; when: v5Loader.item !== null }
                             Binding { target: v5Loader.item; property: "window"; value: win; when: v5Loader.item !== null }
+                            // the Environment room sits under the deck (bleed only, once loaded)
+                            Binding { target: v5Loader.item; property: "underEnvironment"; value: win.bleed && envHost.status === Loader.Ready; when: v5Loader.item !== null }
                         }
                     }
                     Component {
