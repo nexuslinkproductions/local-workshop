@@ -8,7 +8,7 @@ widget expands into its deeper view, and how the whole thing rolls back.
 | file | imports | role |
 |---|---|---|
 | `nexuslink.hud/v5/DeckMain.qml` | `Quickshell`, `Quickshell.Io`, `Quickshell.Wayland` | the shell layer: one `PanelWindow` on the command-role output, every feed `Process`, every `FileView`, the IPC target, the launch table, the rollout flag |
-| `nexuslink.hud/v5/DeckSurface.qml` | `QtQuick` + `NexusHud.V5` only | the composition: knot slot, crew orb, gauges, launcher, find, clock, deep views, the focus manager, the four `FontLoader`s |
+| `nexuslink.hud/v5/DeckSurface.qml` | `QtQuick` + `NexusHud.V5` only | the composition: the knot, crew orb, gauges, launcher, find, clock, deep views, the focus manager, the four `FontLoader`s |
 | `nexuslink.hud/v5/kit/*` | `QtQuick`, `QtQuick.Shapes`, `QtQuick.Effects`, `NexusHud.V5` | Wave 1 components, property-driven, no I/O |
 | `nexuslink.hud/v4/HudV4.qml` | unchanged imports | the v4 root, with one flag and one extra `Loader` |
 

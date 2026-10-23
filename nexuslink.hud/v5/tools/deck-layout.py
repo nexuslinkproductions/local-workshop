@@ -94,6 +94,11 @@ def check(name, measured, expected, mode):
         got, want = ((x0 + x1) / 2.0, y1), expected
     elif mode == "yonly":
         got, want = ((measured["centre"][1],), (expected[1],))
+    elif mode == "bboxcentre":
+        # For a mark whose ink is not symmetric (the triquetra's lobes), the
+        # bounding box is the placement measure; the centroid follows the ink.
+        got = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+        want = expected
     else:
         raise ValueError(mode)
     dx = max(abs(got[i] - want[i]) for i in range(len(want)))
@@ -129,7 +134,7 @@ def main(argv):
     lowerBarX = 890 - 11.34 - 13          # first bar y
     checks = [
         # name,      window,                 mode,     expected
-        ("knot",     (940, 200, 1620, 940),  "centre", (1280.0, 550.0)),
+        ("knot",     (940, 200, 1620, 940),  "bboxcentre", (1280.0, 550.0)),
         ("crew",     (250, 380, 620, 700),   "centre", (426.5, 550.0)),
         ("local",    (2060, 400, 2210, 680), "xcentre", (2133.5, 666.5)),
         ("mac",      (250, 830, 620, 902),   "origin", (310.0, lowerBarX)),

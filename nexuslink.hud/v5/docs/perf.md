@@ -28,19 +28,19 @@ QML_IMPORT_PATH=<NexusHud/V5 -> v5/kit> \
 
 | state | frames | mean | p50 | p95 | max |
 |---|---|---|---|---|---|
-| rest, placeholder knot slot | 240 | 1.98 ms | 1.63 ms | 3.24 ms | 6.80 ms |
-| rest, **with `kit/Knot.qml`** | 240 ×2 | 3.02 / 2.15 ms | 2.79 / 1.43 ms | 4.15 / 5.46 ms | 9.89 / 10.51 ms |
-| crew focus (dim + scrim + blur) | 240 ×2 | 0.84 / 0.87 ms | 0.74 / 0.76 ms | 2.10 / 2.22 ms | 2.77 / 3.00 ms |
-| launcher focus | 240 ×2 | 0.92 / 0.87 ms | 0.77 / 0.77 ms | 2.25 / 2.05 ms | 2.99 / 2.82 ms |
+| rest, with `kit/Knot.qml` | 240 ×3 | 3.03 / 2.33 / 1.98 ms | 2.97 / 1.92 / 1.63 ms | 3.63 / 5.64 / 3.24 ms | 4.07 / 6.40 / 6.80 ms |
+| crew focus (dim + scrim + blur) | 240 ×3 | 0.77 / 0.87 / 0.84 ms | 0.64 / 0.76 / 0.74 ms | 1.70 / 2.22 / 2.10 ms | 2.52 / 3.00 / 2.77 ms |
+| launcher focus | 240 ×2 | 0.68 / 0.87 ms | 0.58 / 0.77 ms | 1.42 / 2.05 ms | 2.35 / 2.82 ms |
 
 A 60 Hz frame is 16.7 ms, so the whole deck costs 12 to 18 percent of one frame
-at rest and about 5 percent while a widget owns focus. The rest figures carry the
-first frames (pipeline compilation for the two swarm shaders), which is why
-`p50` is well under the mean; the two with-Knot runs straddle each other, so the
-honest statement is **1.4 to 2.8 ms p50, 3.0 ms mean at worst**. The focus states
-are cheaper, not dearer: with `hideSource` on, the stage is replaced by one
-blurred copy instead of the swarms, and a single blurred quad is cheaper than two
-full-screen shader passes on this GPU.
+at rest and about 4 to 5 percent while a widget owns focus. The rest figures
+carry the first frames (pipeline compilation for the two swarm shaders), which is
+why `p50` sits well under the mean; the runs spread because the machine was also
+building this branch, so the honest statement is **1.6 to 3.0 ms p50, 3.0 ms mean
+at worst, 6.8 ms worst single frame**. The focus states are cheaper, not dearer:
+with `hideSource` on, the stage is replaced by one blurred copy instead of the
+swarms, and a single blurred quad is cheaper than two full-screen shader passes
+on this GPU.
 
 ## Why idle cost stays where it is
 

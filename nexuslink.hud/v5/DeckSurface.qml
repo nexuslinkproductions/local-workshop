@@ -272,34 +272,22 @@ Item {
         anchors.fill: parent
 
         // ---------------------------------------------------------------- knot
-        // W1's kit/Knot.qml is not on v5/main-deck yet (PR #51 is in a repair
-        // round after the verifier's REPAIR verdict), so the slot is a plain
-        // 540x540 Item sitting exactly on the guide. The layout, the word count,
-        // the overlap audit and the render path are all real with it; only the
-        // mark itself is missing, and a placeholder is NOT shippable. Swap in the
-        // block below the moment `git fetch origin` shows kit/Knot.qml.
-        Item {
+        // W1's Knot.qml, the 540 px triquetra on the s2 trace, centred on
+        // Tokens.knotCentreX/Y (1280, 550) as the layout asks. Its default accent
+        // is Tokens.ice; s2's mark is azure-to-ice, and the repair round moved the
+        // dot field back to s2, so the deck leaves the accent at the component's
+        // own default rather than tinting it from here.
+        Knot {
             id: knot
 
             x: Tokens.knotCentreX - width / 2
             y: Tokens.knotCentreY - height / 2
-            width: Tokens.knotDiameter
-            height: Tokens.knotDiameter
+            size: Tokens.knotDiameter
+            focusLevel: 0
+            assembling: deck.assembling
+            assembleProgress: deck.assembleProgress
+            animate: deck.animate
         }
-
-        // The real knot, one copy-paste away (I1 final form):
-        //
-        //   Knot {
-        //       id: knot
-        //       x: Tokens.knotCentreX - width / 2
-        //       y: Tokens.knotCentreY - height / 2
-        //       size: Tokens.knotDiameter
-        //       accent: Tokens.azure          // s2 azure, per the W1 repair
-        //       focusLevel: 0
-        //       assembling: deck.assembling
-        //       assembleProgress: deck.assembleProgress
-        //       animate: deck.animate
-        //   }
 
         // Everything that is not the knot drifts on the W7 helper: two sine
         // terms at an irrational ratio, amplitude and period from Motion, so the
