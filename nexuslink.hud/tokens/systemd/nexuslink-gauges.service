@@ -1,10 +1,10 @@
 [Unit]
 Description=Usage gauges collector (Claude, Devin, OpenCode Go, VRAM)
-Documentation=file:%h/hud-wt/gauge-fix/nexuslink.hud/tokens/gauges.py
+Documentation=file:%h/.local/lib/nexuslink/gauges.py
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/hud-wt/gauge-fix/nexuslink.hud/tokens/gauges.py run
+ExecStart=/usr/bin/python3 %h/.local/lib/nexuslink/gauges.py run
 Restart=always
 RestartSec=10
 Nice=19
