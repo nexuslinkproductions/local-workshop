@@ -44,7 +44,7 @@ LIVE MECHANISMS (both are upstream-documented, nothing is invented):
   backend; if the live box does not, point ``--slot-url`` at the llama-server
   port instead.
 
-KEY PARITY WITH F7 ``chief.py`` (branch ``v5/f7-callcap-chief``, head 5d7c2e5):
+KEY PARITY WITH F7 ``chief.py`` (branch ``v5/f7-callcap-chief``, head a448a2d):
 the dock and this utility view must not describe the same VRAM differently, so
 the status payload reuses F7's key names and semantics exactly:
 

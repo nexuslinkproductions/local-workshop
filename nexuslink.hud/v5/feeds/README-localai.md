@@ -67,19 +67,23 @@ host; `2` for a bad argument, a named missing fixture, a refusal to act (no
 `linux_only` reversible run on the wrong host), or a request whose outcome is
 unknown.
 
-## Key parity with F7 `chief.py` (head 5d7c2e5, branch `v5/f7-callcap-chief`)
+## Key parity with F7 `chief.py` (head a448a2d, branch `v5/f7-callcap-chief`)
 
 The LOCAL AI dock (F7) and this utility view describe the same model, so the
 status payload reuses F7's key names, arithmetic and fixture semantics. F7 at
-head 5d7c2e5, on its own fixture (`fixtures/chief.json`):
+head a448a2d (F7 REPAIR 3), on its own fixture (`fixtures/chief.json`):
 
 ```json
-{"ok":true,"source":"fixture","generated_at":"2026-10-23T01:38:54Z","running":true,
+{"ok":true,"source":"fixture","generated_at":"2026-10-23T01:44:41Z","running":true,
  "model":"ornith-chief-v3","vram_gb":10.75,"tokens_per_s":41.6,"metrics_age_s":null,
  "vram_total_gb":12.0,"queue":0,"stale":null,
  "metrics_age_reason":"fixture mode reads no clock; age and stale are not measured",
  "snapshot_ts":"2026-10-22T21:07:02Z"}
 ```
+
+The dock payload is identical at the previous head 5d7c2e5: F7 REPAIR 3
+changed the source field on refusals and how paths are displayed, not the
+status keys or values.
 
 This module, on the same numbers (`fixtures/localai.json` carries F7's exact
 `ts`, model, tokens/s, queue and VRAM values):
