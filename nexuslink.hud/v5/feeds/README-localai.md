@@ -151,7 +151,7 @@ Live mechanisms, both upstream-documented and never exercised in a test:
 
 ```
 $ python3 hudfix_localai.py --self-check
-... 32 checks ...
+... 34 checks ...
 EXIT=0
 ```
 
