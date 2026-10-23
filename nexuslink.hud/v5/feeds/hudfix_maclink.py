@@ -37,7 +37,10 @@ Safety, in order of what matters most:
     things: it is a Hermes worker, it carries ``-p <profile>`` for that card's
     assignee, and it names that card id. A command line that mentions
     ``gateway``, ``kanban dispatch``, this module's own process tree, or this
-    very card is refused. There is no pattern kill anywhere in this file.
+    very card is refused. A row whose ``worker_pid`` cell is not a number, or
+    whose ``assignee`` is null or empty, is rejected by name before the host is
+    touched: without those two cells the row cannot be tied to a worker at all.
+    There is no pattern kill anywhere in this file.
   * ``restart-relay`` and ``restart-tunnel`` are the only actions that restart a
     shared service. Both refuse when the named unit or CLI is not present
     instead of reporting a restart that did not happen.
@@ -230,6 +233,30 @@ def positive_int(value, default):
     return number if number > 0 else default
 
 
+def pid_from_cell(value):
+    """The pid as an int, or None when the value is not a pid.
+
+    ``tasks.worker_pid`` is an untyped SQLite cell: a text value, a float or a
+    bool can sit there. Only a whole positive number (or its exact decimal
+    text) is a pid; everything else is refused instead of coerced, so a float
+    is never truncated onto a different process.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        number = int(value)
+        return number if number > 0 else None
+    text = str(value).strip()
+    if not re.fullmatch(r"[0-9]{1,12}", text):
+        return None
+    number = int(text)
+    return number if number > 0 else None
+
+
 def state_paths(ctx):
     root = expand(ctx_value(ctx, "state_dir", os.path.join(home(), ".local", "state", "nexuslink")))
     return {
@@ -338,8 +365,12 @@ class Runtime(object):
         return _spawn_detached(argv)
 
     def ps(self, pid):
+        """Never raises: a malformed pid is no command line, not a crash."""
+        pid_int = pid_from_cell(pid)
+        if pid_int is None:
+            return ""
         out, _err, code = self.run(
-            ["ps", "-ww", "-o", "command=", "-p", str(int(pid))], timeout=5.0
+            ["ps", "-ww", "-o", "command=", "-p", str(pid_int)], timeout=5.0
         )
         return out.strip() if code == 0 else ""
 
@@ -698,12 +729,17 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
     body = (cmdline or "").strip()
     if not body:
         return False, "pid %s has no command line, so it is gone or unreadable" % pid
-    try:
-        pid_int = int(pid)
-    except (TypeError, ValueError):
+    pid_int = pid_from_cell(pid)
+    if pid_int is None:
         return False, "pid %r is not a number" % (pid,)
     if pid_int <= 1:
         return False, "pid %d is launchd or invalid" % pid_int
+    assignee = "" if profile is None else str(profile).strip()
+    if not assignee:
+        # Without an assignee the profile half of the identity check is vacuous:
+        # a hermes process with no -p at all would pass. The row cannot be tied
+        # to a worker, so refuse it.
+        return False, "the row carries no assignee, so pid %d cannot be tied to a worker" % pid_int
     tokens = tokens_of(body)
     lower = [token.lower() for token in tokens]
     if "gateway" in lower:
@@ -723,11 +759,11 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
             return False, "pid %d is not a Hermes or Devin worker (argv0: %s)" % (pid_int, name)
         return False, "pid %d is not a Hermes or Devin worker" % pid_int
     found_profile = profile_from_command(body)
-    if found_profile != profile:
+    if found_profile != assignee:
         return False, "pid %d carries profile %r, not %r" % (
             pid_int,
             safe_argv_label(found_profile),
-            profile,
+            assignee,
         )
     found_card = card_from_command(body)
     if not found_card:
@@ -775,9 +811,23 @@ def stale_workers(ctx, runtime):
         if age < threshold:
             continue
         pid = task["worker_pid"]
-        cmdline = runtime.ps(pid)
+        pid_int = pid_from_cell(pid)
+        if pid_int is None:
+            # SQLite is dynamically typed: a text cell is not a pid. Refuse the
+            # row before the host boundary, so a corrupt board never raises.
+            rejected.append(
+                {
+                    "card": task["id"],
+                    "profile": task.get("assignee"),
+                    "pid": pid,
+                    "heartbeat_age_s": age,
+                    "reason": "worker_pid %r is not a number" % (pid,),
+                }
+            )
+            continue
+        cmdline = runtime.ps(pid_int)
         ok, reason = classify_worker(
-            cmdline, task.get("assignee"), task["id"], pid, self_pids, self_card
+            cmdline, task.get("assignee"), task["id"], pid_int, self_pids, self_card
         )
         if not ok:
             rejected.append(
@@ -795,7 +845,7 @@ def stale_workers(ctx, runtime):
                 "card": task["id"],
                 "title": task.get("title"),
                 "profile": task.get("assignee"),
-                "pid": pid,
+                "pid": pid_int,
                 "heartbeat_age_s": age,
                 "heartbeat_source": source,
                 "heartbeat_iso": iso_from_epoch(stamp),
@@ -2171,8 +2221,16 @@ def self_check():
         "/Users/marcel/.hermes/tools/python3/bin/python3 -m hermes_cli.main -p kakashi "
         "--cli chat -q work kanban task t_selfcheck_stale"
     )
+    null_assignee_pid = 4344
+    null_assignee_cmd = (
+        "/Users/marcel/.hermes/tools/python3/bin/python3 -m hermes_cli.main "
+        "--cli chat -q work kanban task t_selfcheck_corrupt"
+    )
     with open(os.path.join(fix_dir, "ps.json"), "w", encoding="utf-8") as handle:
-        json.dump({str(stale_pid): worker_cmd}, handle)
+        json.dump(
+            {str(stale_pid): worker_cmd, str(null_assignee_pid): null_assignee_cmd},
+            handle,
+        )
     with open(os.path.join(fix_dir, "ps_table.txt"), "w", encoding="utf-8") as handle:
         handle.write("1 0 /sbin/launchd\n")
         handle.write("%d 1 %s\n" % (stale_pid, worker_cmd))
@@ -2538,6 +2596,121 @@ def self_check():
         "existing-garbage-db-exit-0",
         code == 0 and garbage_payload.get("ok") is False and bool(garbage_payload.get("reason")),
         "exit=%s %s" % (code, one_line(stderr)),
+    )
+
+    # --- corrupt board rows: no traceback, no candidate, no signal --------
+    def corrupt_board(worker_pid, assignee, filename, card_id):
+        path = os.path.join(root, filename)
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT, assignee TEXT, status TEXT, "
+            "worker_pid INTEGER, last_heartbeat_at INTEGER, current_run_id INTEGER, started_at INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)",
+            (
+                card_id,
+                "corrupt board row",
+                assignee,
+                "running",
+                worker_pid,
+                int(time.time()) - 900,
+                9,
+                int(time.time()) - 1200,
+            ),
+        )
+        connection.commit()
+        connection.close()
+        return path
+
+    def stub_log():
+        if not os.path.exists(log_file):
+            return []
+        with open(log_file, encoding="utf-8") as handle:
+            return [line.strip() for line in handle if line.strip()]
+
+    corrupt_state_dir = os.path.join(temp_home, ".local", "state", "nexuslink")
+    corrupt_pid_db = corrupt_board("not-a-pid", "kakashi", "kanban-corrupt-pid.db",
+                                   "t_selfcheck_corrupt")
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", corrupt_pid_db, "--state-dir", corrupt_state_dir],
+        env,
+    )
+    try:
+        corrupt_pid_plan = json.loads(stdout)
+    except ValueError:
+        corrupt_pid_plan = {}
+    corrupt_pid_rejected = corrupt_pid_plan.get("rejected") or []
+    check(
+        "corrupt-worker-pid-plan-refused",
+        code == 0
+        and corrupt_pid_plan.get("ok") is False
+        and bool(corrupt_pid_plan.get("reason"))
+        and corrupt_pid_plan.get("items") == []
+        and len(corrupt_pid_rejected) == 1
+        and "is not a number" in (corrupt_pid_rejected[0].get("reason") or "")
+        and stderr.strip() == "",
+        "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 200)),
+    )
+    corrupt_pid_before = len(stub_log())
+    code, stdout, stderr = _cli(
+        ["run", "maclink.kick-bot", "--confirm", "maclink.kick-bot",
+         "--db", corrupt_pid_db, "--state-dir", corrupt_state_dir],
+        env,
+    )
+    corrupt_pid_run_stderr = stderr.strip().splitlines()
+    corrupt_pid_calls = stub_log()[corrupt_pid_before:]
+    check(
+        "corrupt-worker-pid-run-refused",
+        code == 2
+        and stdout.strip() == ""
+        and len(corrupt_pid_run_stderr) == 1
+        and "no stale worker" in corrupt_pid_run_stderr[0]
+        and not any(line.startswith(("kill", "pkill", "kickstart")) for line in corrupt_pid_calls),
+        "exit=%s out=%s err=%s calls=%s"
+        % (code, one_line(stdout, 200), one_line(stderr, 200), str(corrupt_pid_calls)[:200]),
+    )
+
+    null_assignee_db = corrupt_board(null_assignee_pid, None, "kanban-null-assignee.db",
+                                     "t_selfcheck_corrupt")
+    code, stdout, stderr = _cli(
+        ["plan", "maclink.kick-bot", "--db", null_assignee_db, "--state-dir", corrupt_state_dir],
+        env,
+    )
+    try:
+        null_assignee_plan = json.loads(stdout)
+    except ValueError:
+        null_assignee_plan = {}
+    null_assignee_rejected = null_assignee_plan.get("rejected") or []
+    check(
+        "null-assignee-plan-refused",
+        code == 0
+        and null_assignee_plan.get("ok") is False
+        and null_assignee_plan.get("items") == []
+        and (null_assignee_plan.get("total") or {}).get("items") == 0
+        and len(null_assignee_rejected) == 1
+        and null_assignee_rejected[0].get("profile") is None
+        and "no assignee" in (null_assignee_rejected[0].get("reason") or "")
+        and stderr.strip() == "",
+        "exit=%s out=%s err=%s" % (code, one_line(stdout, 200), one_line(stderr, 200)),
+    )
+    null_assignee_before = len(stub_log())
+    code, stdout, stderr = _cli(
+        ["run", "maclink.kick-bot", "--confirm", "maclink.kick-bot",
+         "--db", null_assignee_db, "--state-dir", corrupt_state_dir],
+        env,
+    )
+    null_assignee_run_stderr = stderr.strip().splitlines()
+    null_assignee_calls = stub_log()[null_assignee_before:]
+    check(
+        "null-assignee-run-refused",
+        code == 2
+        and stdout.strip() == ""
+        and len(null_assignee_run_stderr) == 1
+        and "no stale worker" in null_assignee_run_stderr[0]
+        and not any(line.startswith(("kill", "pkill", "kickstart")) for line in null_assignee_calls),
+        "exit=%s out=%s err=%s calls=%s"
+        % (code, one_line(stdout, 200), one_line(stderr, 200), str(null_assignee_calls)[:200]),
     )
 
     # --- status cache: 10 s, atomic, and never probes on a hit -------------
