@@ -272,6 +272,12 @@ def load_fixture(ctx):
     path = _fixture_path(ctx)
     if path is None:
         raise FixtureProblem("no fixture path", "missing")
+    if path.is_dir():
+        main = path / FIXTURE_MAIN
+        if not main.exists():
+            raise FixtureProblem("fixture directory has no %s: %s"
+                                 % (FIXTURE_MAIN, display_path(path)), "missing")
+        path = main
     if not path.exists():
         raise FixtureProblem("fixture does not exist: %s" % display_path(path), "missing")
     try:
@@ -1918,7 +1924,26 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
         payload = json.loads(out.stdout.decode("utf-8"))
         assert_true(payload.get("ok") is False, "missing fixture is not ok:false")
         assert_true(payload.get("kind") == "missing", "missing fixture kind %r" % payload.get("kind"))
-        return "exit 2, ok:false kind:missing"
+
+        empty_dir = temp_root / "empty-fixture-dir"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+        out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                              "--fixture", str(empty_dir), "--plan", "network.latency", "--json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert_true(out.returncode == 2, "empty fixture dir exit %d" % out.returncode)
+        payload = json.loads(out.stdout.decode("utf-8"))
+        assert_true("network.json" in (payload.get("reason") or ""),
+                    "the empty dir reason does not name the file it needs: %r"
+                    % payload.get("reason"))
+
+        out = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                              "--fixture", str(fixtures), "--plan", "network.latency", "--json"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert_true(out.returncode == 0, "fixture directory exit %d" % out.returncode)
+        payload = json.loads(out.stdout.decode("utf-8"))
+        assert_true(payload.get("ok") is True and payload.get("source") == "fixture",
+                    "the fixture directory was not read as a fixture")
+        return "exit 2 missing file, exit 2 empty dir, exit 0 fixture dir"
 
     record("missing_fixture_exit_2", check_missing_fixture)
 

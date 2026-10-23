@@ -138,6 +138,11 @@ Connectivity booleans are computed from those inputs, never read as booleans:
 the self-check flips one input at a time (empty DNS answer, stopped backend,
 100 percent loss on the gateway ping) and proves exactly one boolean moves.
 
+The one value a fixture run still takes from the clock is `generated_at`, so a
+HUD tick always has a timestamp. Every measured value is byte identical between
+two fixture runs, and the self-check asserts that for latency and jitter
+(numbers, loss, samples, verdict) rather than trusting it.
+
 `v5/fixtures/network.json` is a real capture from this MacBook (2026-10-23),
 sanitised: tailnet node addresses are `100.100.x`, the tailnet DNS name is
 `example-tailnet.ts.net`, ether addresses are zeroed. The LAN gateway and the
