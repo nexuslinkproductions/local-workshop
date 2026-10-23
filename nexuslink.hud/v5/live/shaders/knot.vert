@@ -1,8 +1,9 @@
 #version 440
 
 // One sprite quad per point, expanded in the vertex stage.
-// Mesh is GridMesh{resolution: (2N, 1)}, so a grid column c belongs to
-// point pid = floor(c/2) and side c%2. Cells between two columns of the
+// Mesh is GridMesh{resolution: (2N, 1)} per slice (N = slice size, at most
+// 16000 points, see KnotSwarm.qml), so a grid column c belongs to point
+// pid = uOffset + floor(c/2) and side c%2. Cells between two columns of the
 // same point are the quad; cells between different points are bridges and
 // are killed in the fragment stage by comparing a flat copy of the point id
 // with an interpolated copy.
@@ -50,21 +51,22 @@ layout(std140, binding = 0) uniform buf {
     float knotPx;
     float uW;
     float uH;
+    float uOffset;
 };
 
 layout(binding = 1) uniform sampler2D src;
 
 // ---- point texture layout, keep in sync with KnotSwarm.qml ---------------
-// v4 (shaders/knot-points4.png, 2048 x 24, 11 texels per point):
+// v5 (shaders/knot-points5.png, 2048 x 178, 11 texels per point, 33000 points):
 //   t0  = P.xy (16 bit each), t1 = P.z (16 bit) + spare,
-//   t2  = N3 (8 bit per axis), t3 = u, q, cls + spare,
-//   t4  = (u * 255, occl * 255, crowd * 255). u is the true arc length per
-//   class, occl the under strand weight (0 away from the crossings).
+//   t2  = N3 (8 bit per axis), t3 = (lat, q, cls),
+//   t4  = (u, knock, crowd). lat = |v| (0 on the centreline, 1 at the tube
+//   edge), u = true arc length per class, knock = knockout weight at rest
+//   (0 visible, 1 fully cut, no scale), crowd 1 at rest.
 //   t5,t6 = form 1 position (same 16 bit encoding), t7 = form 1 normal,
 //   t8,t9 = form 2 position, t10 = form 2 normal.
-//   Texels 0..4 are byte for byte the round 3 data (knot-points3.png).
 const float TEXEL_STRIDE = 11.0;  // texels per point
-const float TEX_ROWS = 24.0;      // texture rows
+const float TEX_ROWS = 178.0;     // texture rows
 const float TEX_WIDTH = 2048.0;   // texture width
 
 const float PI = 3.141592653589793;
@@ -73,6 +75,14 @@ const float KNOT_H = 900.0;
 const float R = 450.0;            // knot radius in knot units
 const float DEPTH_K = 0.35;       // how much of the z depth cue survives (1 = old)
 const float ALPHA_CAP = 0.80;     // per dot alpha ceiling, acid sparks excepted
+
+// round 5 sprite and alpha recipe (spec section 4); GAIN is the tuning knob
+const float GAIN = 0.35;          // TUNE: additive blend, the core overlaps about 3 deep
+const float RMIN = 0.55;          // px at knotPx 540, edge radius floor
+const float RMAX_RIBBON = 1.75;   // px at knotPx 540, core radius of the ribbon
+const float RMAX_RING = 1.5;      // px at knotPx 540, core radius of the ring
+const float A_FLOOR = 0.40;    // edge floor of the core weight a0 (spec 0.18)
+const float W_CORE = 0.35;      // white in the core, wm = core^3 * W_CORE + 0.15 * dd (spec 0.55)
 
 // morph schedule, mirrors MORPH_* in tools/linux/measure/knot/knot_port.py
 const float CYC = 60.0;           // full alternation cycle, s
@@ -160,8 +170,10 @@ vec3 curlA(vec3 p, float tt) {
 }
 
 void main() {
+    // uN is the slice size, uOffset the first point of this slice (round 5)
     float c = floor(qt_MultiTexCoord0.x * (2.0 * uN) + 0.5);
-    float pid = floor(c * 0.5);
+    float pidLocal = floor(c * 0.5);
+    float pid = uOffset + pidLocal;
     float side = mod(c, 2.0);
     float cyl = qt_MultiTexCoord0.y;
     vec2 corner = vec2(side * 2.0 - 1.0, cyl * 2.0 - 1.0);
@@ -171,7 +183,7 @@ void main() {
     v_color = vec4(0.0);
     v_pidSmooth = pid;
 
-    if (pid < 0.0 || pid >= uN) {
+    if (pidLocal < 0.0 || pidLocal >= uN) {
         v_pidSmooth = pid + 1.0;
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
@@ -186,15 +198,16 @@ void main() {
 
     vec3 P = posDecode(t0, t1);
     vec3 N3 = t2.rgb * 2.0 - 1.0;
+    // lateral coordinate |v| (texel 3 red): 0 on the centreline, 1 at the edge
+    float lat = t3.r;
     float q = t3.g;
     float cls = t3.b;
 
-    // true arc length along its own class (v2 texel 4 red), 0..1
+    // true arc length along its own class (texel 4 red), 0..1
     float su = t4.r;
-    // under strand weight, 0 away from the crossings, 0.839 at the deepest
-    float occl2 = clamp(t4.g * 1.19, 0.0, 1.0);
-    // crowd weight (texel4.b): 1 on an isolated strand, down to 0.35 where
-    // another pass stacks behind it in projection
+    // knockout weight at rest (texel 4 green, no scale): 0 visible, 1 fully cut
+    float occl2 = t4.g;
+    // crowd weight (texel 4 blue): 1 at rest, the knockout replaces the stacking weight
     float crowd = t4.b;
 
     // ---- B: lobe weights, from the ORIGINAL P so the clocks never jump ---
@@ -345,8 +358,7 @@ void main() {
     bfac = clamp(bfac, 0.60, 1.90);
     rfac = clamp(rfac, 0.75, 1.50);
 
-    // v2 under strand dimming: the weave reads at the three crossings
-    rfac = clamp(rfac * (1.0 - 0.25 * occl2), 0.60, 1.80);
+    // round 5: the knockout no longer dims the radius, it cuts the alpha below
 
     // ---- project: pitch about x, then roll in the screen plane ----------
     float cpt = cos(pitch), spt = sin(pitch);
@@ -364,12 +376,14 @@ void main() {
     float f = clamp(0.5 + 0.5 * nz2, 0.0, 1.0);
 
     // density breath: a point is present while the threshold is above its q
-    float thr = 0.86 + 0.14 * br0;
+    // round 5: breath softened, no visible twinkle and no gaps
+    float thr = 0.95 + 0.05 * br0;
     float vis = smoothstep(q - 0.03, q + 0.03, thr);
 
     // ---- F: five acid sparks gliding along the strands (u) --------------
     float spark = 0.0;
-    float carrier = fract(sin(pid * 78.233 + 1.7) * 43758.5453) < 0.33 ? 1.0 : 0.3;
+    // round 5: 7x the particles, so only 5 percent carry a spark (was 33 percent)
+    float carrier = fract(sin(pid * 78.233 + 1.7) * 43758.5453) < 0.05 ? 1.0 : 0.05;
     for (int i = 0; i < 5; i++) {
         float ck = i < 3 ? 0.0 : 1.0;
         if (abs(cls - ck) > 0.5) continue;
@@ -386,37 +400,49 @@ void main() {
         float tail = behind > 0.0 ? exp(-behind / 0.012) : 0.0;
         // the head is a small cluster of carrier dots, not a solid band
         head *= carrier;
-        spark = max(spark, max(head, 0.55 * tail));
+        spark = max(spark, max(head, 0.55 * tail * carrier));
     }
 
-    vec3 cAzure = vec3(96.0, 165.0, 250.0) / 255.0;
-    vec3 cIce = vec3(143.0, 216.0, 232.0) / 255.0;
-    vec3 cWhite = vec3(244.0, 248.0, 251.0) / 255.0;
+    vec3 cAzure = vec3(86.0, 150.0, 238.0) / 255.0;
+    vec3 cIce = vec3(150.0, 220.0, 236.0) / 255.0;
+    vec3 cWhite = vec3(236.0, 247.0, 252.0) / 255.0;
     vec3 cAcid = vec3(200.0, 243.0, 29.0) / 255.0;
 
     // depth cue flattened: the three lobes sit at different z, and the full range
     // made the near lobe 3 to 5 times brighter than the far one (v3 hotspot)
     float dd = mix(0.5, d, DEPTH_K);
-    vec3 col = mix(cAzure, cIce, clamp(0.55 * dd + 0.45 * f, 0.0, 1.0));
-    col = mix(col, cWhite, 0.35 * step(0.5, cls));
+    // round 5 colour: azure to ice by depth, then white in the dense core
+    float core = 1.0 - pow(lat, 1.5);
+    float mixT = 0.35 + 0.35 * dd;
+    vec3 col = mix(cAzure, cIce, mixT);
+    float wm = pow(core, 3.0) * W_CORE + 0.15 * dd;
+    col = mix(col, cWhite, wm);
     // the crest of a travelling bulge turns toward white-ice so it reads against the azure
     col = mix(col, cWhite, 0.25 * clamp(g, 0.0, 1.0));
     col *= min(bfac, 1.15);   // the rest of the crest goes into alpha and radius: no channel clips
     col = mix(col, cAcid, spark);
 
-    // depth and facing
-    float alpha = (0.34 + 0.56 * dd) * (0.40 + 0.60 * f) * (0.86 + 0.14 * br0)
-                * vis * mix(0.80, 1.55, clamp((bfac - 0.60) / 1.10, 0.0, 1.0));
-    // v2: alpha dims on the strand that passes under a crossing
-    alpha *= (1.0 - 0.75 * occl2) * mix(1.0, crowd, 0.9);
+    // round 5 alpha (spec section 4): core weight a0 (dense bright core, soft
+    // falloff to the edge), depth, the knockout cut (occl2 = knock * (1 - sm)),
+    // vis and GAIN; the bfac term and the crowd weight stay as before
+    float h2 = fract(sin(pid * 39.3468 + 2.1) * 24634.6345);
+    float aCore = (A_FLOOR + (1.0 - A_FLOOR) * pow(core, 0.9)) * (0.9 + 0.1 * h2) * (cls < 0.5 ? 1.0 : 1.25);
+    float alpha = aCore * (0.55 + 0.45 * dd) * (0.95 + 0.05 * br0) * (1.0 - occl2)
+                * vis * GAIN * mix(0.80, 1.55, clamp((bfac - 0.60) / 1.10, 0.0, 1.0));
+    alpha *= mix(1.0, crowd, 0.9);
     // cap per dot so overlapping dots cannot add up to a clipped white patch;
     // the ring (cls 1) is a thin sparse circle, kept at 70 percent of the ribbon
     alpha = min(alpha, ALPHA_CAP) * (cls < 0.5 ? 1.0 : 0.70);
     alpha = mix(alpha, 1.0, spark * 0.85 * (0.4 + 0.6 * f));
     if (vis < 0.01) alpha = 0.0;
 
-    float rpx = 1.75 * (knotPx / 540.0) * mix(0.82, 1.12, dd) * rfac;
-    rpx = clamp(rpx, 1.0, 3.4);
+    // round 5 sprite (spec section 4): radius falls from the core to the edge,
+    // a per dot size jitter h1, the perspective factor k; clamp 0.45 .. 3.0 px at 540
+    float h1 = fract(sin(pid * 12.9898) * 43758.5453);
+    float sc = knotPx / 540.0;
+    float rmax = cls < 0.5 ? RMAX_RIBBON : RMAX_RING;
+    float rpx = (RMIN + (rmax - RMIN) * pow(1.0 - lat, 0.9) * (0.72 + 0.28 * h1)) * k * sc * rfac;
+    rpx = clamp(rpx, 0.45 * sc, 3.0 * sc);
     float hh = rpx + 1.5;
 
     vec2 centre = vec2(uW, uH) * 0.5;
@@ -428,7 +454,9 @@ void main() {
     // measured from knot-points4.png in tools/linux/measure/knot/knot_port.py
     // (measure_pivot_px); that port asserts its own measurement of the same
     // texture matches these two numbers within 0.2 px.
-    const vec2 ROLL_PIVOT_PX = vec2(-4.203, 35.411);
+    // round 5: meta.pivotPx of shaders/knot-points5.meta.json (measured on the
+    // new set, same formula as knot_port.py). K3b asserts the agreement within 0.2 px.
+    const vec2 ROLL_PIVOT_PX = vec2(-4.780, 35.939);
     float pxScale = knotPx / KNOT_H;
     vec2 pv = ROLL_PIVOT_PX * (knotPx / 540.0);
     vec2 rel = vec2(x1, y1) * k * pxScale - pv;

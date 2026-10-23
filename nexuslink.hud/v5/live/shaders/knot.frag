@@ -19,6 +19,7 @@ layout(std140, binding = 0) uniform buf {
     float knotPx;
     float uW;
     float uH;
+    float uOffset;
 };
 
 layout(binding = 1) uniform sampler2D src;

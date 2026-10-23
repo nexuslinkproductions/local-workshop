@@ -1,0 +1,262 @@
+{
+  "name": "knot-points5.png",
+  "stage": "final",
+  "N": 33000,
+  "width": 2048,
+  "rows": 178,
+  "stride": 11,
+  "texels": 363000,
+  "classCounts": {
+    "0": 24000,
+    "1": 9000
+  },
+  "layout": "t0 (x_hi,x_lo,y_hi) t1 (y_lo,z_hi,z_lo) rest pos; t2 N3; t3 (lat,q,cls); t4 (u,knock,crowd); t5,t6 form1 pos; t7 form1 N; t8,t9 form2 pos; t10 form2 N",
+  "positionDecode": "v = (hi*256+lo)/65535*1024-512",
+  "normalEncode": "(n*0.5+0.5)*255",
+  "constants": {
+    "seed": 5005,
+    "sigmaLateral": 0.36,
+    "radTubeUnits": {
+      "ribbon": 20.0,
+      "ring": 5.5
+    },
+    "zOffsetShare": 0.55,
+    "zNoiseUnits": 0.8,
+    "gapPx": 3.2,
+    "dzOverUnits": 14.0,
+    "arcSkipSamples": 60,
+    "pxPerUnit": 0.6,
+    "camD": 2430.0,
+    "knotPx": 540.0,
+    "rminPx": {
+      "0": 0.55,
+      "1": 0.55
+    },
+    "rmaxPx": {
+      "0": 1.75,
+      "1": 1.5
+    },
+    "tiltDeg": 20.0,
+    "tipPull": 0.09,
+    "zLiftUnits": 140.0,
+    "zRingUnits": 72.0,
+    "boundUnits": 240.0,
+    "phiRad": 3.036872898470133,
+    "sourceCentreline": "/home/nexuslink/NEXUS_AI_CENTER/04_PROJECTS/HUD/hud-candidates/comp-r1/s3/src/knot/knot3d.json"
+  },
+  "restYawDeg": 0.0,
+  "restPitchDeg": 0.0,
+  "uConvention": "u = seg / n_c per class (sample index fraction, not true arc length)",
+  "normalConvention": "outward, N3 = normalize((-Ty*v, Tx*v, sqrt(1-v^2))): same sense as the build_points2 noise normal (cos*U + sin*V, away from the centre line)",
+  "stats": {
+    "lat": {
+      "min": 3.760587568260669e-05,
+      "max": 1.0,
+      "mean": 0.288217993352048,
+      "p50": 0.24441188443459128,
+      "p95": 0.7151123502359595
+    },
+    "q": {
+      "min": 3.331859959032624e-05,
+      "max": 0.9999750134314893,
+      "mean": 0.5001368374433596,
+      "p50": 0.502051075539903,
+      "p95": 0.9508189284802845
+    },
+    "knock": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.046721829655487164,
+      "p50": 0.0,
+      "p95": 0.2634880351323218
+    },
+    "u": {
+      "min": 3.549491283467746e-06,
+      "max": 0.9999854583995975,
+      "mean": 0.49999993658575115,
+      "p50": 0.49999383271213516,
+      "p95": 0.9499836678357031
+    }
+  },
+  "knockBands": {
+    "fracAbove05": 0.04660606060606061,
+    "fracAbove095": 0.04015151515151515,
+    "ribbonClusters": [
+      {
+        "u0": 0.1378,
+        "u1": 0.1504,
+        "n": 294
+      },
+      {
+        "u0": 0.4622,
+        "u1": 0.4747,
+        "n": 289
+      },
+      {
+        "u0": 0.7866,
+        "u1": 0.7991,
+        "n": 286
+      },
+      {
+        "u0": 0.9697,
+        "u1": 0.9745,
+        "n": 36
+      },
+      {
+        "u0": 0.3178,
+        "u1": 0.3223,
+        "n": 26
+      },
+      {
+        "u0": 0.6437,
+        "u1": 0.6473,
+        "n": 24
+      },
+      {
+        "u0": 0.1225,
+        "u1": 0.1233,
+        "n": 2
+      }
+    ],
+    "ringClusters": [
+      {
+        "u0": 0.9734,
+        "u1": 0.9977,
+        "n": 201
+      },
+      {
+        "u0": 0.3104,
+        "u1": 0.3334,
+        "n": 195
+      },
+      {
+        "u0": 0.6408,
+        "u1": 0.6626,
+        "n": 185
+      }
+    ]
+  },
+  "forms": {
+    "form1": {
+      "name": "lift",
+      "zLiftUnits": 140.0,
+      "zRingUnits": 72.0,
+      "tiltDeg": 20.0,
+      "tipPull": 0.09,
+      "periods": 3,
+      "phiRad": 3.036872898470133,
+      "phiDeg": 174.0,
+      "crossingDzUnits": [
+        -233.60653143339044,
+        248.05717813718223,
+        -223.5815002175588
+      ],
+      "crossingOverUnder": "-+-",
+      "crossingAlternating": true,
+      "residualMax": 4.715564781849735,
+      "residualMean": 0.20350141471612213,
+      "residualStats": {
+        "p50": 0.108291759131385,
+        "p95": 0.7439473064556714,
+        "p99": 1.1971289989604874,
+        "count_gt3": 1,
+        "count_gt1": 751,
+        "n": 33000
+      },
+      "max": 236.42486609509163,
+      "mean": 111.75882706900184,
+      "p95": 221.4187306688762,
+      "maxPx": 141.85491965705498,
+      "meanPx": 67.0552962414011,
+      "p95Px": 132.85123840132573,
+      "staticDots": 0,
+      "maxAbsCoord": 402.6304531709208,
+      "ribbonMean": 104.62309177186441,
+      "ringMean": 130.78745452803508
+    },
+    "form2": {
+      "name": "bloom",
+      "hash": "build_points4.hash_u seed 4404",
+      "groups": {
+        "0": {
+          "points": 5454,
+          "angleDeg": 14.0,
+          "sign": 1.0,
+          "expand": 0.08
+        },
+        "1": {
+          "points": 5464,
+          "angleDeg": 16.0,
+          "sign": -1.0,
+          "expand": 0.088
+        },
+        "2": {
+          "points": 5513,
+          "angleDeg": 18.0,
+          "sign": 1.0,
+          "expand": 0.096
+        },
+        "3": {
+          "points": 5549,
+          "angleDeg": 20.0,
+          "sign": -1.0,
+          "expand": 0.10400000000000001
+        },
+        "4": {
+          "points": 5570,
+          "angleDeg": 22.0,
+          "sign": 1.0,
+          "expand": 0.112
+        },
+        "5": {
+          "points": 5450,
+          "angleDeg": 24.000000000000004,
+          "sign": -1.0,
+          "expand": 0.12
+        }
+      },
+      "squashedPoints": 67,
+      "max": 230.01480269987096,
+      "mean": 92.95118226019916,
+      "p95": 162.22054367503583,
+      "maxPx": 138.00888161992256,
+      "meanPx": 55.7707093561195,
+      "p95Px": 97.33232620502149,
+      "staticDots": 0,
+      "maxAbsCoord": 501.17393446901343,
+      "ribbonMean": 82.98771071121053,
+      "ringMean": 119.5204397241689
+    },
+    "boundUnits": 240.0
+  },
+  "pivotPx": [
+    -4.780104870161912,
+    35.93925860733201
+  ],
+  "pivotMethod": "knot_port.measure_pivot_px formula on decoded texture positions",
+  "pivotFormulaCheckKnotPoints4": [
+    -4.202540233064318,
+    35.41051058312594
+  ],
+  "decodeCheck": {
+    "rows": 178,
+    "P_max": 0.013386752956663892,
+    "P_mean": 0.007503700580000835,
+    "P1_max": 0.013428849197778042,
+    "P2_max": 0.01329420612065373,
+    "N_max": 0.0039215686274509665,
+    "lat_max": 0.001960759791985678,
+    "q_max": 0.0019607761030328297,
+    "u_max": 0.0019607156014864735,
+    "knock_max": 0.0019507237546506628,
+    "crowd_max": 0.0,
+    "cls_max": 0.0,
+    "classCountsDecoded": [
+      24000,
+      9000
+    ]
+  },
+  "pngSha1": "12292ada808e54af35c4a4d43ef222e56a1aac18",
+  "pngBytes": 1080693,
+  "buildSeconds": 0.27
+}

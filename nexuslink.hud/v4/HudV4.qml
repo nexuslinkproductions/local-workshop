@@ -87,6 +87,26 @@ Item {
         printErrors: false
     }
     readonly property bool v5Enabled: v5FlagFile.loaded
+    // BLEED SWITCH: the one place that names the flag that turns the
+    // full-output surface on. Deck A: the v5 flag file. Deck B ports this
+    // single line to `hud.v5Deck` (env NEXUSLINK_HUD_V5).
+    readonly property bool bleedFlag: v5Enabled
+    // WORLD BOX (ENV-SPEC section 2): bounding box of every output in global
+    // desktop pixels. One JS binding, re-run only when Quickshell.screens
+    // changes. No Timer, no polling.
+    readonly property rect desktopWorld: {
+        var s = Quickshell.screens, n = s.length
+        if (n === 0) return Qt.rect(0, 0, 2560, 1440)
+        var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+        for (var i = 0; i < n; i++) {
+            var m = s[i]
+            x0 = Math.min(x0, Number(m.x))
+            y0 = Math.min(y0, Number(m.y))
+            x1 = Math.max(x1, Number(m.x) + Number(m.width))
+            y1 = Math.max(y1, Number(m.y) + Number(m.height))
+        }
+        return Qt.rect(x0, y0, x1 - x0, y1 - y0)
+    }
 
     // ------------------------------------------------------------------ state
     property var stats: ({})
@@ -480,24 +500,24 @@ Item {
     function ipcMove(pid, fx, fy) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
-        if (w.v5Owns) return "v5 deck is fixed"
+        if (w.bleedOwner) return "v5 deck is fixed"
         return w.ipcMove(w.roleIds[0], Number(fx), Number(fy)) ? "ok" : "panel " + pid + " is hidden"
     }
     function ipcResize(pid, fw) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
-        if (w.v5Owns) return "v5 deck is fixed"
+        if (w.bleedOwner) return "v5 deck is fixed"
         return w.ipcResize(w.roleIds[0], Number(fw)) ? "ok" : "panel " + pid + " is hidden"
     }
     function ipcShowHide(pid, hidden) {
         var w = winForPanel(pid)
         if (w === null) return "no panel " + pid
-        if (w.v5Owns) return "v5 deck is fixed"
+        if (w.bleedOwner) return "v5 deck is fixed"
         return w.setHidden(w.roleIds[0], hidden) ? "ok" : "no panel " + pid
     }
     function ipcLayout(name) {
         var cw = commandWindow()
-        if (cw !== null && cw.v5Owns) return "v5 deck is fixed"
+        if (cw !== null && cw.bleedOwner) return "v5 deck is fixed"
         var ins = winVariants.instances, applied = false
         for (var i = 0; i < ins.length; i++)
             if (ins[i].applyPreset(name)) applied = true
@@ -630,13 +650,14 @@ Item {
             readonly property bool isHardware: role === "hardware"
             readonly property string deckId: isCommand ? "hub" : isHardware ? "board" : "bench"
             readonly property var roleIds: [deckId]
-            // v5 bleed: the flag makes every window full-output; only the
-            // command window OWNS that surface (its deck IS the window, not a
-            // movable slab), so its geometry and gestures are fixed.
-            readonly property bool v5Bleed: hud.v5Enabled
-            readonly property bool v5Owns: isCommand && hud.v5Enabled
+            // bleed: the one root switch (hud.bleedFlag) makes every window
+            // take its whole output. bleedOwner: the command window's deck IS
+            // that surface (not a movable slab), so its geometry and gestures
+            // are fixed. No other code tests the flag.
+            readonly property bool bleed: hud.bleedFlag
+            readonly property bool bleedOwner: isCommand && hud.bleedFlag
             // the command window's DeckV5 instance, or null (root IPC entry)
-            readonly property var v5Deck: (isCommand && hud.v5Enabled && deckLoader.item)
+            readonly property var v5Deck: (bleedOwner && deckLoader.item)
                                            ? deckLoader.item.deckItem : null
 
             anchors { top: true; bottom: true; left: true; right: true }
@@ -644,7 +665,7 @@ Item {
             // Auto reserves the bar's exclusive zone (the window lands at y=26,
             // h=1414 on DP-2); Ignore makes the surface the whole output. Only
             // the v5 flag turns it on, so v4 geometry is unchanged.
-            exclusionMode: win.v5Bleed ? ExclusionMode.Ignore : ExclusionMode.Auto
+            exclusionMode: win.bleed ? ExclusionMode.Ignore : ExclusionMode.Auto
             WlrLayershell.namespace: "nexuslink-hud"
             WlrLayershell.layer: WlrLayer.Background
             // Keyboard: None by default. The v5 Find pill needs the keyboard
@@ -707,7 +728,7 @@ Item {
             // to the screen height proves the exclusive zone was ignored;
             // with ExclusionMode.Auto it would be 26 px shorter.
             function logGeometry(why) {
-                if (!v5Bleed) return
+                if (!bleed) return
                 var md = win.modelData
                 var sw = Math.round(Number(md.width)), sh = Math.round(Number(md.height))
                 var ww = Math.round(win.width), wh = Math.round(win.height)
@@ -715,15 +736,27 @@ Item {
                     + " role=" + win.role
                     + " screen=" + Number(md.x) + "," + Number(md.y) + "," + sw + "x" + sh
                     + " window=" + ww + "x" + wh
-                    + " exclusion=" + (v5Bleed ? "Ignore" : "Auto")
+                    + " exclusion=" + (bleed ? "Ignore" : "Auto")
                     + " fullBleed=" + (ww === sw && wh === sh)
-                    + " v5=" + hud.v5Enabled
+                    + " v5=" + hud.bleedFlag
                     + " deck=" + Math.round(deck.x) + "," + Math.round(deck.y) + ","
                     + Math.round(deck.width) + "x" + Math.round(deck.height)
                     + " why=" + why)
             }
             onWidthChanged: logGeometry("width")
             onHeightChanged: logGeometry("height")
+            // environment evidence (ENV-SPEC section 1): one line per bleed
+            // output, logged once the Environment item has its size.
+            function logEnvironment() {
+                if (!bleed || envHost.item === null) return
+                var it = envHost.item, md = win.modelData, w = hud.desktopWorld
+                console.log("nexuslink-hud environment: output=" + String(md.name)
+                    + " origin=" + Math.round(Number(md.x)) + "," + Math.round(Number(md.y))
+                    + " size=" + Math.round(it.width) + "x" + Math.round(it.height)
+                    + " world=" + Math.round(w.x) + "," + Math.round(w.y) + ","
+                    + Math.round(w.width) + "x" + Math.round(w.height)
+                    + " shader=plain")
+            }
             function defaultRects() {
                 // centred near-full slab: reactor/knot sit on the screen
                 // centre by construction while the margin ring stays
@@ -777,7 +810,7 @@ Item {
             }
 
             function commitRect(pid, x, y, w, h) {
-                if (v5Owns) return          // every move/resize path ends here
+                if (bleedOwner) return          // every move/resize path ends here
                 var W = Math.max(1, field.width), H = Math.max(1, field.height)
                 var e = layoutMap[pid]
                 var ww = (w !== undefined && w > 0) ? w : (e ? e.fw * W : deck.width)
@@ -815,7 +848,7 @@ Item {
                 }
             }
             function dragPress(src, item, pid, mx, my) {
-                if (v5Owns) return          // the v5 deck is the background, not a slab
+                if (bleedOwner) return          // the v5 deck is the background, not a slab
                 gestureStale()
                 if (draggingId !== "" || sizingId !== "") return
                 dragSrc = src; dragItem = item; dragPendingId = pid
@@ -856,7 +889,7 @@ Item {
 
             // ---- bottom-right edge-resize lifecycle ----
             function sizePress(src, item, pid, mx, my) {
-                if (v5Owns) return          // no resize grip on the v5 deck
+                if (bleedOwner) return          // no resize grip on the v5 deck
                 gestureStale()
                 if (draggingId !== "" || sizingId !== "") return
                 sizeSrc = src; sizeItem = item; sizingId = pid
@@ -893,7 +926,7 @@ Item {
             }
             function setHidden(pid, hid) {
                 // hiding the v5 deck would leave a full-bleed empty window
-                if (v5Owns) return false
+                if (bleedOwner) return false
                 if (itemFor(pid) === null) return false
                 var m = {}
                 for (var k in hiddenMap) m[k] = hiddenMap[k]
@@ -903,7 +936,7 @@ Item {
                 return true
             }
             function applyPreset(name) {
-                if (v5Owns) return false   // the v5 deck has no presets
+                if (bleedOwner) return false   // the v5 deck has no presets
                 var n = String(name || "").toLowerCase()
                 if (n === "reset") n = "default"
                 var e = null
@@ -923,14 +956,14 @@ Item {
                 return true
             }
             function ipcMove(pid, fx, fy) {
-                if (v5Owns) return false
+                if (bleedOwner) return false
                 if (itemFor(pid) === null || isHidden(pid)) return false
                 commitRect(pid, Number(fx) * field.width, Number(fy) * field.height)
                 persist()
                 return true
             }
             function ipcResize(pid, fw) {
-                if (v5Owns) return false
+                if (bleedOwner) return false
                 var it = itemFor(pid)
                 if (it === null || isHidden(pid)) return false
                 var r = rectOf(pid)
@@ -1128,7 +1161,36 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     color: "#06080a"
-                    visible: win.v5Bleed
+                    visible: win.bleed
+                }
+
+                // Environment host (ENV-SPEC section 2): the background slot,
+                // bleed windows only. The opaque base above stays under it, so
+                // a load failure leaves a plain opaque field, never a hole.
+                Loader {
+                    id: envHost
+                    anchors.fill: parent
+                    active: win.bleed
+                    source: Qt.resolvedUrl("../v5/live/Environment.qml")
+                    initialProperties: ({ objectName: String(win.modelData.name) })
+                    onLoaded: Qt.callLater(win.logEnvironment)
+                    onStatusChanged: {
+                        if (status === Loader.Error)
+                            console.warn("nexuslink-hud environment: load failed on "
+                                         + String(win.modelData.name) + ", keeping the opaque base")
+                    }
+                }
+                Binding {
+                    target: envHost.item
+                    property: "origin"
+                    when: envHost.status === Loader.Ready
+                    value: Qt.point(Number(win.modelData.x), Number(win.modelData.y))
+                }
+                Binding {
+                    target: envHost.item
+                    property: "world"
+                    when: envHost.status === Loader.Ready
+                    value: hud.desktopWorld
                 }
 
                 // snapped drop preview while a move gesture is live
@@ -1153,7 +1215,7 @@ Item {
                     readonly property bool resizing: win.sizingId === win.deckId
                     // the v5 deck cannot be hidden (a stale persisted hidden list
                     // would otherwise leave an empty full-bleed window)
-                    readonly property bool shown: win.v5Owns || !win.isHidden(win.deckId)
+                    readonly property bool shown: win.bleedOwner || !win.isHidden(win.deckId)
                     // mask membership for the WHOLE gesture, hide mid-drag included
                     readonly property bool masked: shown || dragging || resizing
                     readonly property real minW: Math.min(420, field.width * 0.3)
@@ -1164,25 +1226,25 @@ Item {
                     opacity: dragging ? 0.94 : 1.0
                     z: (dragging || resizing) ? 60 : 0
 
-                    // v5 command window: the deck IS the field. v5Owns wins
+                    // v5 command window: the deck IS the field. bleedOwner wins
                     // unconditionally, so neither the persisted layout map nor
                     // the layoutReady gate can hold it back or move it.
-                    Binding on x { when: win.v5Owns || (win.layoutReady && !deck.dragging)
-                                   value: win.v5Owns ? 0 : win.pxOfX(win.deckId) }
-                    Binding on y { when: win.v5Owns || (win.layoutReady && !deck.dragging)
-                                   value: win.v5Owns ? 0 : win.pxOfY(win.deckId) }
-                    Binding on width { when: win.v5Owns || (win.layoutReady && !deck.resizing)
-                                       value: win.v5Owns ? field.width : win.pwOf(win.deckId) }
-                    Binding on height { when: win.v5Owns || (win.layoutReady && !deck.resizing)
-                                        value: win.v5Owns ? field.height : win.phOf(win.deckId) }
+                    Binding on x { when: win.bleedOwner || (win.layoutReady && !deck.dragging)
+                                   value: win.bleedOwner ? 0 : win.pxOfX(win.deckId) }
+                    Binding on y { when: win.bleedOwner || (win.layoutReady && !deck.dragging)
+                                   value: win.bleedOwner ? 0 : win.pxOfY(win.deckId) }
+                    Binding on width { when: win.bleedOwner || (win.layoutReady && !deck.resizing)
+                                       value: win.bleedOwner ? field.width : win.pwOf(win.deckId) }
+                    Binding on height { when: win.bleedOwner || (win.layoutReady && !deck.resizing)
+                                        value: win.bleedOwner ? field.height : win.phOf(win.deckId) }
                     // no easing on the fixed v5 deck; the v4 slab keeps it
-                    Behavior on x { enabled: !win.v5Owns && win.animateLayout && !deck.dragging
+                    Behavior on x { enabled: !win.bleedOwner && win.animateLayout && !deck.dragging
                                     NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on y { enabled: !win.v5Owns && win.animateLayout && !deck.dragging
+                    Behavior on y { enabled: !win.bleedOwner && win.animateLayout && !deck.dragging
                                     NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on width { enabled: !win.v5Owns && win.animateLayout && !deck.resizing
+                    Behavior on width { enabled: !win.bleedOwner && win.animateLayout && !deck.resizing
                                         NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                    Behavior on height { enabled: !win.v5Owns && win.animateLayout && !deck.resizing
+                    Behavior on height { enabled: !win.bleedOwner && win.animateLayout && !deck.resizing
                                          NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
                     // drag pad — lowest child, so a press anywhere the screen
@@ -1191,7 +1253,7 @@ Item {
                         id: dragPad
                         anchors.fill: parent
                         // v5 is the desktop itself, not a movable panel
-                        enabled: !(win.isCommand && hud.v5Enabled)
+                        enabled: !win.bleedOwner
                         onPressed: m => win.dragPress(dragPad, deck, win.deckId, m.x, m.y)
                         onPositionChanged: m => win.dragMove(dragPad, deck, m.x, m.y)
                         onReleased: () => win.dragRelease(deck)
@@ -1206,7 +1268,7 @@ Item {
                     Loader {
                         id: deckLoader
                         anchors.fill: parent
-                        sourceComponent: win.isCommand ? (hud.v5Enabled ? v5Screen : commandScreen)
+                        sourceComponent: win.isCommand ? (win.bleedOwner ? v5Screen : commandScreen)
                                        : win.isHardware ? tokensScreen
                                        : systemScreen
                     }
@@ -1271,7 +1333,7 @@ Item {
                     // machined slab edge — the deck's chrome frame
                     Rectangle {
                         anchors.fill: parent
-                        visible: !(win.isCommand && hud.v5Enabled)
+                        visible: !win.bleedOwner
                         color: "transparent"
                         border.width: 1
                         border.color: win.flashId === win.deckId
@@ -1281,7 +1343,7 @@ Item {
                     // focus flash — a brief accent pulse on ipc focus
                     Rectangle {
                         anchors.fill: parent
-                        visible: !(win.isCommand && hud.v5Enabled)
+                        visible: !win.bleedOwner
                         color: "transparent"
                         border.width: 2
                         border.color: Style.c.accent
@@ -1295,7 +1357,7 @@ Item {
                     // inside the mask region for the whole gesture
                     Item {
                         id: grip
-                        visible: !(win.isCommand && hud.v5Enabled)
+                        visible: !win.bleedOwner
                         width: 26
                         height: 26
                         anchors.right: parent.right
