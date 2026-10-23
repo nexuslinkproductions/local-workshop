@@ -18,7 +18,6 @@ WidgetBase {
     property var disks: []
 
     expandable: true
-    hoverScale: 1.05
 
     readonly property var rows: root.rowsFrom(root.disks)
     readonly property real fullest: root.fullestOf(root.rows)

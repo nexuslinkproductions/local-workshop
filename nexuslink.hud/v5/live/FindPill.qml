@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Shapes
 import "../kit"
@@ -27,6 +29,8 @@ Item {
     // ---- outputs --------------------------------------------------------
     // Writable so scenes and the deck can place the selection.
     property int selected: 0
+    // thumbnails decode off the GUI thread; a still render scene sets this false so the grab holds pixels
+    property bool thumbsAsync: true
     readonly property bool editing: input.activeFocus
 
     signal openRequested()
@@ -228,7 +232,7 @@ Item {
             selected = 0
         }
     }
-    onResultsChanged: clampSelection()
+    onResultsChanged: selected = 0
     onQueryChanged: clampSelection()
     Component.onCompleted: {
         if (open)
@@ -358,6 +362,7 @@ Item {
             Repeater {
                 model: 5
                 delegate: Rectangle {
+                    required property int index
                     width: 10
                     height: 10
                     radius: 5
@@ -436,6 +441,7 @@ Item {
             Repeater {
                 model: 3
                 delegate: Rectangle {
+                    required property int index
                     width: 7
                     height: 7
                     radius: 3.5
@@ -479,7 +485,8 @@ Item {
                 model: chipRow.chips
                 delegate: Item {
                     id: chip
-                    readonly property bool active: root.filter === modelData.key
+                    required property var modelData
+                    readonly property bool active: root.filter === chip.modelData.key
                     readonly property bool hot: chipArea.containsMouse
                     width: active ? 96 : 28
                     height: 44
@@ -502,7 +509,7 @@ Item {
 
                         // All: four solid dots.
                         Grid {
-                            visible: chip.active && modelData.key === "all"
+                            visible: chip.active && chip.modelData.key === "all"
                             x: 2
                             y: 2
                             columns: 2
@@ -519,7 +526,7 @@ Item {
                         }
                         // Files: folder silhouette.
                         Item {
-                            visible: !chip.active && modelData.key === "files"
+                            visible: !chip.active && chip.modelData.key === "files"
                             x: 1
                             y: 5
                             width: 26
@@ -542,7 +549,7 @@ Item {
                         }
                         // Images: frame bars, a sun and two hills.
                         Item {
-                            visible: !chip.active && modelData.key === "images"
+                            visible: !chip.active && chip.modelData.key === "images"
                             anchors.fill: parent
                             Rectangle { x: 1; y: 5; width: 26; height: 3.4; radius: 1.7; color: Tokens.textDim }
                             Rectangle { x: 1; y: 21; width: 26; height: 3.4; radius: 1.7; color: Tokens.textDim }
@@ -565,7 +572,7 @@ Item {
                         }
                         // Docs: page with a cut top-right corner.
                         Shape {
-                            visible: !chip.active && modelData.key === "docs"
+                            visible: !chip.active && chip.modelData.key === "docs"
                             anchors.fill: parent
                             ShapePath {
                                 fillColor: Tokens.textDim
@@ -580,7 +587,7 @@ Item {
                         }
                         // Downloads: tray with an arrow.
                         Item {
-                            visible: !chip.active && modelData.key === "downloads"
+                            visible: !chip.active && chip.modelData.key === "downloads"
                             anchors.fill: parent
                             Rectangle { x: 3; y: 21; width: 22; height: 3.4; radius: 1.7; color: Tokens.textDim }
                             Rectangle { x: 3; y: 16; width: 3.4; height: 8; radius: 1.7; color: Tokens.textDim }
@@ -601,7 +608,7 @@ Item {
                     }
 
                     Text {
-                        visible: chip.active && modelData.key === "all"
+                        visible: chip.active && chip.modelData.key === "all"
                         anchors.verticalCenter: parent.verticalCenter
                         x: 50
                         text: "All"
@@ -619,7 +626,7 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             root.selected = 0
-                            root.filterPicked(modelData.key)
+                            root.filterPicked(chip.modelData.key)
                         }
                     }
                 }
@@ -653,26 +660,35 @@ Item {
                 fillColor: root.pageFill(topTile.sel || topTile.hot)
             }
 
-            // Image top hit: inset portrait, no effect layer so it always draws.
+            // Image top hit: the page path is filled with the image, so the
+            // rounded corners come from the path itself (no effect layer).
             Item {
                 anchors.fill: parent
                 anchors.margins: 16
                 visible: root.isImage(topTile.hit)
-                Rectangle {
+
+                Shape {
+                    id: topThumb
                     anchors.fill: parent
-                    radius: 24
-                    color: Tokens.ink
-                    opacity: 0.06
-                    visible: topImg.status !== Image.Ready
-                }
-                Image {
-                    id: topImg
-                    anchors.fill: parent
-                    asynchronous: true
-                    source: topTile.hit ? root.fileUrl(topTile.hit) : ""
-                    sourceSize: Qt.size(504, 650)
-                    fillMode: Image.PreserveAspectCrop
-                    visible: status === Image.Ready
+                    ShapePath {
+                        fillColor: Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, 0.35)
+                        strokeColor: "transparent"
+                        PathRectangle {
+                            x: 0
+                            y: 0
+                            width: topThumb.width
+                            height: topThumb.height
+                            radius: 24
+                        }
+                        fillItem: Image {
+                            width: topThumb.width
+                            height: topThumb.height
+                            asynchronous: root.thumbsAsync
+                            source: topTile.hit ? root.fileUrl(topTile.hit) : ""
+                            sourceSize: Qt.size(504, 650)
+                            fillMode: Image.PreserveAspectCrop
+                        }
+                    }
                 }
             }
 
@@ -687,7 +703,7 @@ Item {
                 Text {
                     id: topBadge
                     anchors.centerIn: parent
-                    text: root.extOf(topTile.hit).toUpperCase()
+                    text: root.extOf(topTile.hit).toLowerCase()
                     color: Tokens.field
                     font.family: Tokens.fontFamily
                     font.pixelSize: 20
@@ -718,6 +734,7 @@ Item {
             Repeater {
                 model: root.isImage(topTile.hit) ? 0 : 3
                 delegate: Rectangle {
+                    required property int index
                     x: 48
                     y: 500 + index * 60
                     width: [262, 202, 232][index]
@@ -762,6 +779,7 @@ Item {
             model: Math.max(0, root.hitCount() - 1)
             delegate: Item {
                 id: tile
+                required property int index
                 readonly property int idx: index + 1
                 readonly property int col: index % 3
                 readonly property int row: Math.floor(index / 3)
@@ -790,26 +808,35 @@ Item {
                     transformOrigin: Item.Center
                     Behavior on scale { NumberAnimation { duration: Motion.expandMillis; easing.type: Easing.OutBack; easing.overshoot: 1.22 } }
 
-                    // Image thumbnail: inset portrait, no effect layer.
+                    // Image thumbnail: the page path is filled with the image,
+                    // so the corners are round without an effect layer.
                     Item {
                         anchors.fill: parent
                         anchors.margins: 8
                         visible: root.isImage(tile.hit)
-                        Rectangle {
+
+                        Shape {
+                            id: tileThumb
                             anchors.fill: parent
-                            radius: 18
-                            color: Tokens.ink
-                            opacity: 0.06
-                            visible: tileImg.status !== Image.Ready
-                        }
-                        Image {
-                            id: tileImg
-                            anchors.fill: parent
-                            asynchronous: true
-                            source: tile.hit ? root.fileUrl(tile.hit) : ""
-                            sourceSize: Qt.size(220, 280)
-                            fillMode: Image.PreserveAspectCrop
-                            visible: status === Image.Ready
+                            ShapePath {
+                                fillColor: Qt.rgba(Tokens.ink.r, Tokens.ink.g, Tokens.ink.b, 0.35)
+                                strokeColor: "transparent"
+                                PathRectangle {
+                                    x: 0
+                                    y: 0
+                                    width: tileThumb.width
+                                    height: tileThumb.height
+                                    radius: 18
+                                }
+                                fillItem: Image {
+                                    width: tileThumb.width
+                                    height: tileThumb.height
+                                    asynchronous: root.thumbsAsync
+                                    source: tile.hit ? root.fileUrl(tile.hit) : ""
+                                    sourceSize: Qt.size(220, 280)
+                                    fillMode: Image.PreserveAspectCrop
+                                }
+                            }
                         }
                     }
 
@@ -824,7 +851,7 @@ Item {
                         Text {
                             id: tileBadge
                             anchors.centerIn: parent
-                            text: root.extOf(tile.hit).toUpperCase()
+                            text: root.extOf(tile.hit).toLowerCase()
                             color: Tokens.field
                             font.family: Tokens.fontFamily
                             font.pixelSize: 16
@@ -853,6 +880,7 @@ Item {
                     Repeater {
                         model: root.isImage(tile.hit) ? 0 : 3
                         delegate: Rectangle {
+                            required property int index
                             x: 20
                             y: 212 + index * 16
                             width: [120, 96, 108][index]
@@ -883,6 +911,7 @@ Item {
     Repeater {
         model: Math.max(0, root.hitCount() - 1)
         delegate: Text {
+            required property int index
             readonly property int idx: index + 1
             readonly property int col: index % 3
             readonly property int row: Math.floor(index / 3)

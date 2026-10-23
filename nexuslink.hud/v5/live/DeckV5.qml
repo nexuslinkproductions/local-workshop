@@ -131,6 +131,30 @@ Item {
         root.syncHostKeys()
     }
 
+    // ---- inactivity guard ------------------------------------------------
+    // Find holds the keyboard (focus grab plus the surface keyboard mode), so a
+    // forgotten overlay would eat every key. One timer, armed only while Find
+    // is open and restarted by every sign of life (open, query edit, filter,
+    // selection move), closes Find after 30 s without input.
+    readonly property int findIdleMillis: 30000
+    Timer {
+        id: findIdle
+        interval: root.findIdleMillis
+        repeat: false
+        running: root.findOpen && root.shown
+        onRunningChanged: if (running) restart()
+        onTriggered: {
+            console.log("v5 find: inactivity guard closed Find after " + interval + " ms")
+            deckView.findOpen = false
+        }
+    }
+    Connections {
+        target: deckView
+        function onFindQueryChanged() { findIdle.restart() }
+        function onFindFilterChanged() { findIdle.restart() }
+        function onFindSelectedChanged() { findIdle.restart() }
+    }
+
     // Typing needs the keyboard: the host surface is WlrKeyboardFocus.None.
     // Two independent asks, both derived from deckView.findOpen so they cannot
     // drift apart: (1) the hyprland focus grab (AppGrid/AppDial idiom) and

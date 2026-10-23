@@ -36,6 +36,8 @@ Item {
     property var findResults: []
     property bool findBusy: false
     property string findNote: ""
+    // selection index inside the Find overlay (DeckV5 restarts its idle guard on it)
+    readonly property alias findSelected: find.selected
 
     // ---- view state ------------------------------------------------------
     // "" rest, "crew" or "storage" expanded panel. Find opens through findOpen.

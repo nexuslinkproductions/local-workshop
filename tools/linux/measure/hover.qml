@@ -28,8 +28,13 @@ Item {
     property var latency: []
     property var cadence: ({})
     property var launcher: ({})
+    property var proximity: []
+    property var sweep: ({})
+    property var returnToRest: ({})
     property var frameTs: []
     property bool recording: false
+    property bool sweepRecording: false
+    property var sweepFrames: []
     property var driftSamples: []
 
     Loader {
@@ -82,7 +87,51 @@ Item {
     Connections {
         target: root.theWin
         ignoreUnknownSignals: true
-        function onFrameSwapped() { if (root.recording) root.frameTs.push(Date.now()) }
+        function onFrameSwapped() {
+            var t = Date.now()
+            if (root.recording) root.frameTs.push(t)
+            if (root.sweepRecording) {
+                var ci = root.crewIndex()
+                if (ci >= 0 && root.wlist[ci].hs)
+                    root.sweepFrames.push([t, root.wlist[ci].hs.scale])
+            }
+        }
+    }
+
+    function crewIndex() {
+        for (var i = 0; i < root.wlist.length; i++)
+            if (root.wlist[i].name === "CrewWidget")
+                return i
+        return -1
+    }
+    function namedIndex(n) {
+        for (var i = 0; i < root.wlist.length; i++)
+            if (root.wlist[i].name === n)
+                return i
+        return -1
+    }
+    function r3(v) { return Math.round(v * 1000) / 1000 }
+    function r4(v) { return Math.round(v * 10000) / 10000 }
+
+    // Topmost visible item chain at a deck point, for hit map failures.
+    function ownerAt(it, px, py, out) {
+        var kids = it.children
+        for (var i = kids.length - 1; i >= 0; i--) {
+            var c = kids[i]
+            if (!c.visible)
+                continue
+            var p = c.mapToItem(root, 0, 0)
+            if (px < p.x || py < p.y || px >= p.x + c.width || py >= p.y + c.height)
+                continue
+            out.push(root.typeName(c))
+            return root.ownerAt(c, px, py, out)
+        }
+        return out
+    }
+    function ownerOf(px, py) {
+        var out = []
+        root.ownerAt(deckLoader.item, px, py, out)
+        return out.join(">")
     }
 
     function typeName(o) {
@@ -192,6 +241,11 @@ Item {
             }
             var out = []
             for (var m = 0; m < n; m++) {
+                var own = []
+                for (var f = 0; f < Math.min(3, fails[m].length); f++) {
+                    var sp = fails[m][f].split(",")
+                    own.push(root.ownerOf(parseInt(sp[0], 10), parseInt(sp[1], 10)))
+                }
                 out.push({ name: root.wlist[m].name,
                            rect: [Math.round(root.wlist[m].x), Math.round(root.wlist[m].y),
                                   Math.round(root.wlist[m].w), Math.round(root.wlist[m].h)],
@@ -199,6 +253,7 @@ Item {
                            gridInside: inside[m], gridHoveredInside: hits[m],
                            hoverPct: inside[m] > 0 ? Math.round(1000 * hits[m] / inside[m]) / 10 : 0,
                            failPoints: fails[m].slice(0, 12),
+                           failOwners: own,
                            failCount: fails[m].length })
             }
             root.hitmap = out
@@ -207,7 +262,8 @@ Item {
                 var o = out[q]
                 console.log("MEASURE_HIT", o.name, "rect", o.rect.join("x"), "inside", o.gridInside,
                             "hovered", o.gridHoveredInside, "pct", o.hoverPct, "fails", o.failCount,
-                            (o.failPoints.length ? "e.g. " + o.failPoints.slice(0, 3).join(" ") : ""))
+                            (o.failPoints.length ? "e.g. " + o.failPoints.slice(0, 3).join(" ") : ""),
+                            (o.failOwners.length ? "owner " + o.failOwners.join(" | ") : ""))
             }
             verify(true)
         }
@@ -372,12 +428,208 @@ Item {
             verify(true)
         }
 
+        // ---- (b2) proximity path with real pointer events -----------------
+        function test_25_proximity() {
+            var deck = deckLoader.item
+            var ci = root.crewIndex()
+            verify(ci >= 0)
+            var crew = root.wlist[ci]
+            var cx = crew.x + crew.w / 2
+            var cy = crew.y + crew.h / 2
+            var R = 0.5 * Math.hypot(crew.w, crew.h)
+            var dcx = deck.knotCx !== undefined ? deck.knotCx : 1280
+            var dcy = deck.knotCy !== undefined ? deck.knotCy : 720
+            var vx = dcx - cx, vy = dcy - cy
+            var vl = Math.hypot(vx, vy)
+            var ux = vx / vl, uy = vy / vl
+            var ds = [2.0, 1.4, 1.2, 1.0, 0.8, 0.6, 0.4, 0.2, 0.0]
+            var rows = []
+            var delivered = 0, checks = 0, maxDx = 0, maxDy = 0
+            for (var k = 0; k < ds.length; k++) {
+                var d = ds[k] * R
+                var px = Math.round(cx + ux * d)
+                var py = Math.round(cy + uy * d)
+                mouseMove(root, px, py)
+                wait(700)
+                var t = (1.2 * R - d) / ((1.2 - 0.4) * R)
+                t = Math.max(0, Math.min(1, t))
+                var expect = t * t * (3 - 2 * t)
+                var inArea = px >= crew.x && px < crew.x + crew.w && py >= crew.y && py < crew.y + crew.h
+                var dx = Math.abs(deck.pointerX - px)
+                var dy = Math.abs(deck.pointerY - py)
+                checks++
+                if (deck.pointerInside === true && dx <= 2 && dy <= 2) delivered++
+                if (dx > maxDx) maxDx = dx
+                if (dy > maxDy) maxDy = dy
+                rows.push({ dR: ds[k], px: px, py: py, inMouseArea: inArea,
+                            expectProximity: root.r3(expect),
+                            proximity: root.r3(crew.it.proximity),
+                            grow: root.r3(crew.it.grow),
+                            holderScale: root.r3(crew.hs ? crew.hs.scale : 0),
+                            hovered: crew.it.hovered,
+                            pointerInside: deck.pointerInside === true,
+                            pointerX: Math.round(deck.pointerX),
+                            pointerY: Math.round(deck.pointerY) })
+                console.log("MEASURE_PROX dR", ds[k], "at", px, py, "inArea", inArea,
+                            "expect", root.r3(expect), "prox", root.r3(crew.it.proximity),
+                            "grow", root.r3(crew.it.grow), "scale", root.r3(crew.hs ? crew.hs.scale : 0),
+                            "hovered", crew.it.hovered, "inside", deck.pointerInside,
+                            "pointer", Math.round(deck.pointerX) + "," + Math.round(deck.pointerY))
+            }
+            // MAC push while CREW is fully grown (last park was the CREW centre)
+            var mi = root.namedIndex("MacWidget")
+            var li = root.namedIndex("LocalWidget")
+            var si = root.namedIndex("StorageWidget")
+            var mac = root.wlist[mi]
+            var push = { crewGrow: root.r3(crew.it.grow),
+                         macPushX: root.r3(mac.it.pushX), macPushY: root.r3(mac.it.pushY),
+                         macPushAnimX: root.r3(mac.it.pushAnimX), macPushAnimY: root.r3(mac.it.pushAnimY),
+                         localPushX: root.r3(root.wlist[li].it.pushX),
+                         localPushY: root.r3(root.wlist[li].it.pushY),
+                         storagePushX: root.r3(root.wlist[si].it.pushX),
+                         storagePushY: root.r3(root.wlist[si].it.pushY),
+                         macGrow: root.r3(mac.it.grow) }
+            console.log("MEASURE_PUSH crewGrow", push.crewGrow, "mac push", push.macPushX, push.macPushY,
+                        "mac anim", push.macPushAnimX, push.macPushAnimY,
+                        "macGrow", push.macGrow)
+            root.proximity = { crewCentre: [Math.round(cx), Math.round(cy)], R: root.r3(R),
+                               line: [root.r3(ux), root.r3(uy)], rows: rows,
+                               handler: { checks: checks, delivered: delivered,
+                                          maxDx: Math.round(maxDx), maxDy: Math.round(maxDy) },
+                               push: push }
+            console.log("MEASURE_PROX_HANDLER checks", checks, "delivered", delivered,
+                        "maxDx", Math.round(maxDx), "maxDy", Math.round(maxDy))
+            verify(true)
+        }
+
+        // ---- (b3) moving target: 1250 px/s across CREW in 16 ms steps ------
+        function test_26_sweep() {
+            var crew = root.wlist[root.crewIndex()]
+            var y = Math.round(crew.y + crew.h / 2)
+            var x0 = Math.round(crew.x - 60)
+            var x1 = Math.round(crew.x + crew.w + 60)
+            mouseMove(root, 30, 1400)
+            wait(800)
+            root.sweepFrames = []
+            root.sweepRecording = true
+            var t0 = Date.now()
+            var first = -1, last = -1
+            for (var x = x0; x <= x1; x += 20) {
+                mouseMove(root, x, y)
+                if (first < 0) first = Date.now()
+                last = Date.now()
+                wait(16)
+            }
+            wait(120)
+            root.sweepRecording = false
+            var f = root.sweepFrames.slice(0)
+            // skip the teleport in: frames in the first 60 ms after the first move
+            var jumps = [], dts = []
+            for (var i = 2; i < f.length; i++) {
+                var dt = f[i][0] - f[i - 1][0]
+                if (f[i][0] - first < 60)
+                    continue
+                jumps.push(Math.abs(f[i][1] - f[i - 1][1]))
+                dts.push(dt)
+            }
+            var mx = 0
+            for (var j = 0; j < jumps.length; j++) if (jumps[j] > mx) mx = jumps[j]
+            var sum = 0
+            for (var k = 0; k < jumps.length; k++) sum += jumps[k]
+            var spanPx = x1 - x0
+            var spanMs = last - first
+            var speed = spanMs > 0 ? Math.round(1000 * spanPx / spanMs) : -1
+            root.sweep = { y: y, fromX: x0, toX: x1, stepPx: 20, stepMs: 16,
+                           measuredSpeedPxPerSec: speed, frames: f.length,
+                           sampledJumps: jumps.length,
+                           maxScaleJump: root.r4(mx),
+                           medianScaleJump: root.r4(root.median(jumps.map(function (v) { return Math.round(v * 10000) })) / 10000),
+                           meanScaleJump: root.r4(jumps.length ? sum / jumps.length : 0),
+                           frameDtMedian: root.median(dts),
+                           frameDtP95: root.p95(dts) }
+            console.log("MEASURE_SWEEP speed", speed, "px/s frames", f.length,
+                        "maxScaleJump", root.r4(mx), "meanJump", root.r4(jumps.length ? sum / jumps.length : 0),
+                        "dtMedian", root.median(dts), "dtP95", root.p95(dts))
+            verify(true)
+        }
+
+        // ---- (b4) leave: everything returns to grow 0 and push 0 ----------
+        function test_27_return() {
+            var deck = deckLoader.item
+            var n = root.wlist.length
+            // real event: send the pointer far outside the window
+            mouseMove(root, -300, -300)
+            wait(40)
+                    // qmllint disable missing-property
+            var insideAfterReal = deck.pointerInside === true
+            var forced = false
+            var res = null
+            for (var pass = 0; pass < 2; pass++) {
+                if (pass === 1) {
+                    if (insideAfterReal === false)
+                        break
+                    // TestCase could not deliver a leave; emulate it through the
+                    // deck's own test hook so the return path can still be timed.
+                    // qmllint disable missing-property
+                    deck.pointerOverride = true
+                    // qmllint disable missing-property
+                    deck.pointerForcedInside = false
+                    forced = true
+                }
+                var t0 = Date.now()
+                var tAll = -1
+                var maxGrowAt800 = 0, maxPushAt800 = 0
+                while (Date.now() - t0 < 1000) {
+                    var ok = true
+                    for (var i = 0; i < n; i++) {
+                        var it = root.wlist[i].it
+                        if (Math.abs(it.grow) > 0.005 || Math.abs(it.pushX) > 0.01 || Math.abs(it.pushY) > 0.01)
+                            ok = false
+                    }
+                    var el = Date.now() - t0
+                    if (el <= 800 && el >= 760) {
+                        for (var m = 0; m < n; m++) {
+                            maxGrowAt800 = Math.max(maxGrowAt800, Math.abs(root.wlist[m].it.grow))
+                            maxPushAt800 = Math.max(maxPushAt800, Math.abs(root.wlist[m].it.pushX), Math.abs(root.wlist[m].it.pushY))
+                        }
+                    }
+                    if (ok && tAll < 0) { tAll = el; break }
+                    wait(5)
+                }
+                var at = []
+                for (var q = 0; q < n; q++) {
+                    var w = root.wlist[q].it
+                    at.push({ name: root.wlist[q].name, grow: root.r3(w.grow),
+                              pushX: root.r3(w.pushX), pushY: root.r3(w.pushY),
+                              proximity: root.r3(w.proximity) })
+                }
+                    // qmllint disable missing-property
+                res = { msToAllZero: tAll, pointerInsideAfterLeave: deck.pointerInside === true,
+                        forced: forced, at: at, maxGrowAt800: root.r3(maxGrowAt800),
+                        maxPushAt800: root.r3(maxPushAt800) }
+                if (pass === 1)
+                    // qmllint disable missing-property
+                    deck.pointerOverride = false
+                if (tAll >= 0)
+                    break
+            }
+            root.returnToRest = res || ({ msToAllZero: -1 })
+            console.log("MEASURE_RETURN msToAllZero", root.returnToRest.msToAllZero,
+                        "insideAfterLeave", root.returnToRest.pointerInsideAfterLeave,
+                        "forced", root.returnToRest.forced,
+                        "maxGrowAt800", root.returnToRest.maxGrowAt800,
+                        "maxPushAt800", root.returnToRest.maxPushAt800)
+            verify(true)
+        }
+
         function test_50_emit() {
             var res = { label: root.label, deckRoot: root.deckRoot,
                         scene: [root.width, root.height],
                         platform: Qt.platform.os,
                         hitmap: root.hitmap, latency: root.latency,
-                        cadence: root.cadence, launcher: root.launcher }
+                        cadence: root.cadence, launcher: root.launcher,
+                        proximity: root.proximity, sweep: root.sweep,
+                        returnToRest: root.returnToRest }
             console.log("MEASURE_JSON_BEGIN")
             console.log(JSON.stringify(res))
             console.log("MEASURE_JSON_END")
