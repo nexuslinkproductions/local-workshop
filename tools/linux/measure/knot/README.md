@@ -19,9 +19,9 @@ scale 2 percent, per lobe phase 0..0.07, no local terms).
 v2.1 in the port: lobe centres 34.0, 142.4, 266.4 degrees; slow FM on every
 lobe clock (0.06 cycles at 31, 38, 45 s); per point phase offset
 0.035 * (hash(pid) - 0.5) cycles; u everywhere on the strand; soft limiter on
-the summed local displacement, default `tanh` (the addendum form),
-`--limit exp` reproduces the `lim * (1 - exp(-dl / lim)) / dl` variant that
-the shader used in wave 1.
+the summed local displacement, default `exp` (`lim * (1 - exp(-dl / lim)) / dl`,
+what knot.vert ships, L = 0.10 R); `--limit tanh` is the original addendum form.
+Both pass M1 at the v4 amplitudes (1.979 and 2.358 px), see KNOT-SPEC-ADD.md item 4.
 
     python3 knot_port.py --t 1.5 --json
 
@@ -84,3 +84,14 @@ yuv420p). 144 frames give a 700x700, 24 fps, 1.79 MB six second loop.
 
 knot-scene-tmpl.qml in work2/K2 is work2/K1/knot-scene.qml with the t property
 set to TVALUE, so the same scene renders at any instant.
+
+## v4 additions (repair round 3)
+
+- knot_report.py: M8 (bulge peak px of the front term C, measured as full sum minus
+  sum without C, both after the limiter, >= 14 px) and M9 (ribbon width swing per
+  lobe over 6 s, >= 25 percent). M7 text now prints the band it gates on.
+- lobe_lum.py: mean and p95 luma and clipped fraction per lobe of a render.
+- crest_map.py: samples the render luminance at the port's projected points per arc
+  bin and frame; prints the crest bin per frame and the correlation with the port.
+- bulge_strip.py: render next to the same render with the port's bulge points ringed.
+- contact_sheet.py: SHEET_CELL=500 makes bigger tiles.

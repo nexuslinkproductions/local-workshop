@@ -62,7 +62,7 @@ def main():
     need = cols * rows
     if len(frames) > need:
         frames = frames[:need]
-    cell = 320
+    cell = int(os.environ.get("SHEET_CELL", "320"))
     gap = 10
     label_h = 26
     W = cols * cell + (cols + 1) * gap

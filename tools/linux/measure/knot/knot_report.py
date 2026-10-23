@@ -15,8 +15,17 @@ enters a local metric; it only enters M1.
 M1  max point jump per frame at 24 fps              < 2.5 px
 M2  max local displacement after the limiter        < --peak-limit percent of R
     (4.5 in v2.1; 10.0 since the v3 repair, which asks for 20 to 26 px peaks)
-M7  mean local displacement 9 to 12 px, peak 20 to 26 px (v3 repair target,
-    at 540 px knot); reported as M7_mean_px and M7_peak_px
+M7  mean local displacement 9.0 to 12.5 px, peak 19.0 to 27.0 px (v3 repair
+    target, at 540 px knot); reported as M7_mean_px and M7_peak_px. The band is a
+    default taken from the Marcel-facing brief BRIEF2 (20 to 26 px peak) with a
+    1 px tolerance each side, not a number from KNOT-SPEC.
+M8  bulge: the peristaltic front term C adds at least 14 px at its peak, measured as
+    the difference between the full sum and the sum without C, both after the
+    limiter (and the total stays under the M7 ceiling), 14 to 22 px push from the
+    v3 verifier finding F2
+M9  thickness breathing: the ribbon width (2 sqrt of the largest eigenvalue of the
+    dot covariance in 128 arc bins, screen px) of a lobe changes by at least 25
+    percent peak to peak over 6 s, for each of the three lobes
 M3  cv of the 32 arc bin means (time averaged)      > 0.15, and at least 8
     distinct bins hold the instantaneous maximum over 6 s
 M4  per bin std over time / bin mean                > 0.2 for >= 80 pct bins
@@ -118,7 +127,7 @@ def main():
     ap.add_argument("--tex", default=kp.DEFAULT_TEX)
     ap.add_argument("--tpp", type=int, default=5)
     ap.add_argument("--rows", type=int, default=11)
-    ap.add_argument("--limit", default="tanh", choices=("tanh", "exp", "none"))
+    ap.add_argument("--limit", default="exp", choices=("tanh", "exp", "none"))
     ap.add_argument("--prefix", default="final-")
     ap.add_argument("--peak-limit", type=float, default=10.0,
                     help="M2 limit, percent of R (4.5 in v2.1)")
@@ -152,6 +161,7 @@ def main():
     dP_len = np.zeros((nf_j, n))
     dP_raw_len = np.zeros((nf_j, n))
     dP_exp_len = np.zeros((nf_j, n))
+    c_peak_px = 0.0
     term_peak = {k: 0.0 for k in "BCDE"}
     term_px_mean = {k: 0.0 for k in "BCDE"}
     bright_min = 1e9
@@ -169,6 +179,7 @@ def main():
             dP_exp_len[i] = d["dP_exp_len"]
             for k, v in d["terms_px"].items():
                 term_px_mean[k] += float(np.linalg.norm(v, axis=1).mean())
+            c_peak_px = max(c_peak_px, float(d["bulge_px"].max()))
             for k, v in d["terms"].items():
                 term_peak[k] = max(term_peak[k],
                                    float(np.linalg.norm(v, axis=1).max()))
@@ -208,6 +219,34 @@ def main():
     jump_p99 = float(np.percentile(step, 99.0)) if nf_j > 1 else 0.0
     pose_step = np.linalg.norm(np.diff(pos_pose, axis=0), axis=2)
     pose_jump_max = float(pose_step.max()) if nf_j > 1 else 0.0
+
+    # ---- M9 thickness: ribbon width per arc bin and lobe over the 6 s window
+    NW = 128
+    wbin = np.floor(np.clip(port.u, 0.0, 0.999999) * NW).astype(np.int32)
+    width = np.full((nf_j, NW), np.nan)
+    for i in range(nf_j):
+        for b in range(NW):
+            m = rib & (wbin == b)
+            if m.sum() >= 6:
+                c = np.cov(pos_full[i][m].T)
+                width[i, b] = 2.0 * np.sqrt(max(np.linalg.eigvalsh(c)[-1], 0.0))
+    # lobe of a bin: strongest lobe weight at the bin mean angle
+    bin_ang = np.array([np.arctan2(np.sin(port.ang[rib & (wbin == b)]).mean(),
+                                   np.cos(port.ang[rib & (wbin == b)]).mean())
+                        if (rib & (wbin == b)).any() else 0.0 for b in range(NW)])
+    lobe_of = np.array([int(np.argmin([abs(kp.angdiff(bin_ang[b], ak))
+                                       for ak in port.LOBE_ANG])) for b in range(NW)])
+    lobe_swing = []
+    lobe_mean = []
+    for k in range(3):
+        sel = np.where((lobe_of == k))[0]
+        # tip bins only: within 0.35 rad of the lobe tip, where the weight is dominated by this lobe
+        sel = np.array([b for b in sel
+                        if abs(kp.angdiff(bin_ang[b], port.LOBE_ANG[k])) < 0.35] or sel)
+        ser = np.nanmean(width[:, sel], axis=1)
+        lobe_swing.append(float((ser.max() - ser.min()) / max(ser.mean(), 1e-9)))
+        lobe_mean.append(float(ser.mean()))
+    np.save(os.path.join(a.outdir, pre + "width-6s.npy"), width)
 
     # ---- M2 local limit --------------------------------------------------
     peak_pct = max(float(dP_len.max()), dP60_max) / kp.R_KNOT * 100.0
@@ -277,9 +316,15 @@ def main():
         f"{peak_exp_pct:.3f} pct")
     _lm, _lp = float(loc_len.mean()), float(loc_len.max())
     add("M7_mean_px", 9.0 <= _lm <= 12.5, round(_lm, 3),
-        "9 to 12 px mean local displacement (540 px knot)")
+        "9.0 to 12.5 px mean local displacement (540 px knot, BRIEF2 default)")
     add("M7_peak_px", 19.0 <= _lp <= 27.0, round(_lp, 3),
-        "20 to 26 px peak local displacement (540 px knot)")
+        "19.0 to 27.0 px peak local displacement (540 px knot, BRIEF2 default)")
+    add("M8_bulge_peak_px", c_peak_px >= 14.0, round(c_peak_px, 3),
+        ">= 14 px: what the front term C adds on top of the other terms after the limiter (F2: 14 to 22 px)")
+    add("M9_lobe_thickness_swing", min(lobe_swing) >= 0.25,
+        [round(x, 3) for x in lobe_swing],
+        ">= 0.25 peak to peak ribbon width change per lobe over 6 s",
+        "mean width px per lobe " + ", ".join("%.1f" % x for x in lobe_mean))
     add("M3_arc_cv", cv_space > 0.15, round(cv_space, 3),
         "> 0.15 coefficient of variation of the 32 bin means",
         f"literal time-averaged reading; ribbon only {cv_space_rib:.3f}; "

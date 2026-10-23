@@ -100,17 +100,23 @@ class KnotPort:
     LOBE_T = (5.0, 6.1, 7.0)
     LOBE_PH = (0.00, 0.37, 0.71)
     LOBE_W = 0.55            # angular width of the lobe weight, radians
-    LOBE_AMP = 0.034         # v3: local scale of the lobe about the knot centre (+-3 percent)
+    LOBE_AMP = 0.024         # v4: local scale of the lobe about the knot centre (+-2.4 percent)
+    LOBE_THICK = 0.80        # v4: lobe thickness, dots move along N3 by RR * 0.60 * lb
+    RR_RIBBON = 20.0         # tube radius in knot units (build_points3: 19.8 mean)
+    RR_RING = 5.5
     LOBE_FM = 0.06           # cycles, slow frequency modulation depth
     LOBE_FM_T = (31.0, 38.0, 45.0)   # 31 + 7k seconds
     LOBE_PT_AMP = 0.035      # cycles, per point phase offset, +- half
     # C ribbon fronts
-    C_T = (6.0, 8.5, 11.0)
-    C_DIR = (1.0, -1.0, 1.0)
-    C_OFF = (0.10, 0.55, 0.80)
-    C_W = 0.11
-    C_TROUGH = 0.12
-    C_AMP = 0.043            # fraction of R
+    C_T = (8.5, 11.5)
+    C_DIR = (1.0, -1.0)
+    C_OFF = (0.10, 0.60)
+    C_W = 0.065              # v4: gaussian window exp(-(d/0.065)^2), 0.13 u wide at 1/e
+    C_TROUGH = 0.09
+    C_TROUGH_K = 0.20
+    C_SW = 0.055             # v4: tube swell along N3, fraction of R
+    C_PUSH = 0.035           # v4: push along dirW, fraction of R
+    C_ENV_MIX = 0.6          # share of the strand envelope that reaches the front
     # C ring fronts (port choice: two fronts, half amplitude, own periods)
     CR_T = (9.5, 13.0)
     CR_DIR = (1.0, -1.0)
@@ -118,15 +124,16 @@ class KnotPort:
     # D curl noise
     D_SCALE = 55.0
     D_STEP = 0.05
-    D_GAIN = 0.048           # fraction of R times the strand envelope
+    D_GAIN = 0.054           # fraction of R times the strand envelope
     D_AMP = 0.062            # cap, fraction of R
     D_SWIRL = 0.0            # optional 0.35 rad twist around dirW, off
     # E local events
     E_L = (5.3, 8.1)
     E_OFF = (0.0, 2.9)
     E_SPEED = 0.05
-    E_W = 0.055
-    E_AMP = 0.065            # fraction of R
+    E_W = 0.07
+    E_SW = 0.040             # v4: swell along N3, fraction of R
+    E_PUSH = 0.030           # v4: push along dirW, fraction of R
     E_RING_AMP = 0.5
     # F sparks: laps, direction, class
     SPARK_LAP = (14.0, 19.0, 26.0, 18.0, 31.0)
@@ -144,7 +151,7 @@ class KnotPort:
     def __init__(self, tex=DEFAULT_TEX, n=4384, width=2048, rows=11,
                  texels_per_point=5, knot_px=540.0, w=700.0, h=700.0,
                  motion="v2", has_u=None, has_occl=None,
-                 soft_limit=True, local_limit_pct=9.5, limit_mode="tanh"):
+                 soft_limit=True, local_limit_pct=10.0, limit_mode="exp"):
         self.tex = tex
         self.n = int(n)
         self.width = int(width)
@@ -290,16 +297,19 @@ class KnotPort:
             # breath_at divides by 5.5, so feed 5.5 * phase in cycles
             bl += wgt * breath_at(5.5 * ph[k], 0.0)
         bl = bl / np.maximum(wsum, 1e-9)
-        sc = self.LOBE_AMP * (2.0 * bl - 1.0)
-        d = np.stack([self.P[:, 0] * sc, self.P[:, 1] * sc, np.zeros(self.n)], axis=1)
-        return d, (2.0 * bl - 1.0)
+        lb = 2.0 * bl - 1.0
+        sc = self.LOBE_AMP * lb
+        rr = np.where(self.ribbon, self.RR_RIBBON, self.RR_RING)
+        d = (np.stack([self.P[:, 0] * sc, self.P[:, 1] * sc, np.zeros(self.n)], axis=1)
+             + self.N3 * (rr * self.LOBE_THICK * lb)[:, None])
+        return d, lb
 
     # ---- C: peristaltic fronts ------------------------------------------
     def _front(self, t, T, dirn, off, uu):
         f = fract(off + dirn * t / T)
         d = fract(uu - f + 0.5) - 0.5
         return (np.exp(-(d / self.C_W) ** 2)
-                - 0.35 * np.exp(-((d + self.C_TROUGH * dirn) / self.C_W) ** 2))
+                - self.C_TROUGH_K * np.exp(-((d + self.C_TROUGH * dirn) / self.C_W) ** 2))
 
     def term_C(self, t):
         g = np.zeros(self.n)
@@ -309,9 +319,12 @@ class KnotPort:
             g = np.where(self.ribbon, g + gi, g)
         for T, dirn, off in zip(self.CR_T, self.CR_DIR, self.CR_OFF):
             g = np.where(ring, g + 0.5 * self._front(t, T, dirn, off, self.u), g)
-        g = g * self.env(t)
-        amp = R_KNOT * self.C_AMP
-        return self.dirW * (amp * g)[:, None], g
+        g = g * np.clip(1.0 + self.C_ENV_MIX * (self.env(t) - 1.0), 0.5, 1.5)
+        g = g / np.sqrt(1.0 + (g / 1.5) ** 2)     # soft saturation, same as the shader
+        ring_k = np.where(self.ribbon, 1.0, 0.5)
+        d = (self.N3 * (R_KNOT * self.C_SW * g * ring_k)[:, None]
+             + self.dirW * (R_KNOT * self.C_PUSH * g)[:, None])
+        return d, g
 
     # ---- D: curl noise ---------------------------------------------------
     @staticmethod
@@ -373,11 +386,13 @@ class KnotPort:
             front = age * self.E_SPEED
             d = np.abs(fract(self.u - s0 + 0.5) - 0.5)
             prof = (np.exp(-((d - front) / self.E_W) ** 2)
-                    * float(smoothstep(0.0, 0.8, age)) * math.exp(-age / 2.6))
-            prof = np.where(self.ribbon, prof, self.E_RING_AMP * prof)
+                    * float(smoothstep(0.0, 1.6, age)) * math.exp(-age / 3.0)
+                    * (1.0 - float(smoothstep(0.6 * L, L, age))))
             r = np.maximum(r, prof)
-        amp = R_KNOT * self.E_AMP
-        return self.dirW * (amp * r)[:, None], r
+        evk = np.where(self.ribbon, 1.0, self.E_RING_AMP)
+        d = (self.N3 * (R_KNOT * self.E_SW * r * evk)[:, None]
+             + self.dirW * (R_KNOT * self.E_PUSH * r * evk)[:, None])
+        return d, r
 
     # ---- F: sparks (brightness only, v2.1: tail strictly behind) ---------
     def term_F(self, t):
@@ -452,6 +467,10 @@ class KnotPort:
         pos_full = self.project(Q + dP, t)
         out["pos"] = pos
         out["pos_full"] = pos_full
+        # visible bulge: what the front term C adds on top of everything else,
+        # after the limiter (C removed from the sum, limiter re-applied)
+        dP_noC, _ = self._limit(dP_raw - dC)
+        out["bulge_px"] = np.linalg.norm(pos_full - self.project(Q + dP_noC, t), axis=1)
         out["local_px"] = pos_full - pos
         out["local_len"] = np.linalg.norm(out["local_px"], axis=1)
         out["dP"] = dP
@@ -465,11 +484,13 @@ class KnotPort:
         # shading factors of the local terms plus v2.1 occlusion and sparks
         sB = 2.0 * bl - 1.0
         sp, sp_head = self.term_F(t)
-        out["radius"] = (np.clip((1.0 + 0.14 * sB) * (1.0 + 0.32 * gC)
-                                 * (1.0 + 0.45 * rE), 0.70, 1.35)
+        crest = np.maximum(gC, 0.0)
+        evk = np.where(self.ribbon, 1.0, self.E_RING_AMP)
+        out["radius"] = (np.clip((1.0 + 0.10 * sB) * (1.0 + 0.35 * crest)
+                                 * (1.0 + 0.40 * rE * evk), 0.75, 1.50)
                          * self.occl_radius)
-        out["bright"] = (np.clip((1.0 + 0.20 * sB) * (1.0 + 0.42 * gC)
-                                 * (1.0 + 0.60 * rE), 0.55, 1.40)
+        out["bright"] = (np.clip((1.0 + 0.15 * sB) * (1.0 + 0.75 * gC)
+                                 * (1.0 + 0.60 * rE * evk), 0.60, 1.90)
                          * self.occl_bright * (1.0 + 1.5 * sp))
         out["lobe"] = bl
         out["front"] = gC
@@ -489,7 +510,7 @@ def main():
     ap.add_argument("--tpp", type=int, default=5,
                     help="texels per point: 5 for v2 (default), 4 for v1")
     ap.add_argument("--rows", type=int, default=11)
-    ap.add_argument("--limit", default="tanh", choices=("tanh", "exp", "none"))
+    ap.add_argument("--limit", default="exp", choices=("tanh", "exp", "none"))
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     p = KnotPort(tex=a.tex, motion=a.motion, texels_per_point=a.tpp,

@@ -18,9 +18,15 @@
 // v3 (repair K): a per strand activity envelope (static 3 lobe term plus two
 // slow drifting terms, periods 29 and 37 s) multiplies the strand terms C and D,
 // so different segments are more or less active over time; the local terms are
-// 2 to 3 times larger than v2 and soft limited at 9.5 percent of R (G); the
+// 2 to 3 times larger than v2 and soft limited at 10 percent of R (G, exp form, see KNOT-SPEC-ADD item 4); the
 // point set is even (knot-points3.png) and texel4.b carries a crowd weight that
 // keeps stacked depth layers from adding up to white blobs at the crossings.
+// v4 (repair round 3): the strand fronts are single travelling bulges (gaussian
+// window 0.075 u, tube swell along the point normal N3 plus a push along dirW,
+// brightness crest and bigger dots on the crest), the lobes breathe in
+// THICKNESS (dots move along N3, so the ribbon width changes, not only the
+// brightness), depth brightness is flattened and per dot alpha is capped so
+// no pixel group clips to white.
 
 layout(location = 0) in vec4 qt_Vertex;
 layout(location = 1) in vec4 qt_MultiTexCoord0;
@@ -58,6 +64,8 @@ const float PI = 3.141592653589793;
 const float TAU = 6.283185307179586;
 const float KNOT_H = 900.0;
 const float R = 450.0;            // knot radius in knot units
+const float DEPTH_K = 0.35;       // how much of the z depth cue survives (1 = old)
+const float ALPHA_CAP = 0.80;     // per dot alpha ceiling, acid sparks excepted
 
 vec4 texAt(float i) {
     float px = mod(i, TEX_WIDTH);
@@ -91,9 +99,9 @@ float angDiff(float a, float b) {
 float frontG(float uu, float o, float dir, float period, float tt) {
     float f = fract(o + dir * tt / period);
     float d = fract(uu - f + 0.5) - 0.5;
-    float a = exp(-(d / 0.11) * (d / 0.11));
-    float b = exp(-((d + 0.12 * dir) / 0.11) * ((d + 0.12 * dir) / 0.11));
-    return a - 0.35 * b;
+    float a = exp(-(d / 0.065) * (d / 0.065));
+    float b = exp(-((d + 0.09 * dir) / 0.065) * ((d + 0.09 * dir) / 0.065));
+    return a - 0.20 * b;
 }
 
 // per strand activity envelope, mean 1: a static 3 lobe term and two slow
@@ -205,19 +213,24 @@ void main() {
     // ---- C: peristaltic fronts along the strand (u) ---------------------
     float g;
     if (cls < 0.5) {
-        g = frontG(su, 0.10, 1.0, 6.0, t)
-          + frontG(su, 0.55, -1.0, 8.5, t)
-          + frontG(su, 0.80, 1.0, 11.0, t);
+        g = frontG(su, 0.10, 1.0, 8.5, t)
+          + frontG(su, 0.60, -1.0, 11.5, t);
     } else {
         g = 0.5 * (frontG(su, 0.20, 1.0, 9.5, t)
                  + frontG(su, 0.60, -1.0, 13.0, t));
     }
+    // the bulge keeps most of its height all the way round: only 60 percent of the
+    // strand envelope reaches the front, clamped to 0.5 .. 1.5
     float env = envU(su, t);
-    g *= env;
+    g *= clamp(mix(1.0, env, 0.6), 0.5, 1.5);
+    // two fronts meeting must not double the bulge (and its speed): soft saturation
+    g = g * inversesqrt(1.0 + (g / 1.5) * (g / 1.5));
+    // tube radius in knot units (ribbon 20, ring 5.5), used for the thickness terms
+    float rr = cls < 0.5 ? 20.0 : 5.5;
 
     // ---- D: curl-noise micro-currents -----------------------------------
     vec3 vel = curlA(P / 55.0, t);
-    vec3 dD = vel * (R * 0.048 * env);
+    vec3 dD = vel * (R * 0.054 * env);
     float dl0 = length(dD);
     float dlim = R * 0.062;
     dD *= dlim * (1.0 - exp(-dl0 / dlim)) / max(dl0, 1e-4);
@@ -233,26 +246,33 @@ void main() {
         float s0 = fract(sin(ei * 12.9898 + float(j) * 78.233) * 43758.5453);
         float d = abs(fract(su - s0 + 0.5) - 0.5);
         float front = age * 0.05;
-        float x = (d - front) / 0.055;
-        float r = exp(-x * x) * smoothstep(0.0, 0.8, age) * exp(-age / 2.6);
+        float x = (d - front) / 0.07;
+        float r = exp(-x * x) * smoothstep(0.0, 1.6, age) * exp(-age / 3.0)
+                * (1.0 - smoothstep(0.6 * L, L, age));   // gone before the slot restarts: no pop
         ev = max(ev, r);
     }
     float evK = cls < 0.5 ? 1.0 : 0.5;   // the ring moves at half amplitude
 
-    // ---- sum the local terms, soft limited to 4.5 percent of R ----------
-    vec3 dloc = vec3(P.x, P.y, 0.0) * (0.034 * lb)
-              + dirW * (R * 0.043 * g + R * 0.065 * ev * evK)
+    // ---- sum the local terms, soft limited at 10 percent of R ------------
+    // B: lobe scale about the centre plus lobe THICKNESS (dots along N3)
+    // C/E: bulge = tube swell along N3 + push along dirW
+    float ringK = cls < 0.5 ? 1.0 : 0.5;
+    vec3 dloc = vec3(P.x, P.y, 0.0) * (0.024 * lb)
+              + N3 * (rr * 0.80 * lb)
+              + N3 * (R * 0.055 * g * ringK + R * 0.040 * ev * evK)
+              + dirW * (R * 0.035 * g + R * 0.030 * ev * evK)
               + dD;
-    float lim = R * 0.095;
+    float lim = R * 0.10;
     float dl = length(dloc);
     dloc *= lim * (1.0 - exp(-dl / lim)) / max(dl, 1e-4);
     Q += dloc;
 
     // ---- brightness and size from the same local terms ------------------
-    float bfac = (1.0 + 0.20 * lb) * (1.0 + 0.42 * g) * (1.0 + 0.60 * ev * evK);
-    float rfac = (1.0 + 0.14 * lb) * (1.0 + 0.32 * g) * (1.0 + 0.45 * ev * evK);
-    bfac = clamp(bfac, 0.55, 1.40);
-    rfac = clamp(rfac, 0.70, 1.35);
+    float crest = max(g, 0.0);
+    float bfac = (1.0 + 0.15 * lb) * (1.0 + 0.75 * g) * (1.0 + 0.60 * ev * evK);
+    float rfac = (1.0 + 0.10 * lb) * (1.0 + 0.35 * crest) * (1.0 + 0.40 * ev * evK);
+    bfac = clamp(bfac, 0.60, 1.90);
+    rfac = clamp(rfac, 0.75, 1.50);
 
     // v2 under strand dimming: the weave reads at the three crossings
     // (addendum item 3: radius shrinks, alpha dims further down)
@@ -310,21 +330,29 @@ void main() {
     vec3 cWhite = vec3(244.0, 248.0, 251.0) / 255.0;
     vec3 cAcid = vec3(200.0, 243.0, 29.0) / 255.0;
 
-    vec3 col = mix(cAzure, cIce, clamp(0.55 * d + 0.45 * f, 0.0, 1.0));
+    // depth cue flattened: the three lobes sit at different z, and the full range
+    // made the near lobe 3 to 5 times brighter than the far one (v3 hotspot)
+    float dd = mix(0.5, d, DEPTH_K);
+    vec3 col = mix(cAzure, cIce, clamp(0.55 * dd + 0.45 * f, 0.0, 1.0));
     col = mix(col, cWhite, 0.35 * step(0.5, cls));
-    col *= bfac;
+    // the crest of a travelling bulge turns toward white-ice so it reads against the azure
+    col = mix(col, cWhite, 0.25 * clamp(g, 0.0, 1.0));
+    col *= min(bfac, 1.15);   // the rest of the crest goes into alpha and radius: no channel clips
     col = mix(col, cAcid, spark);
 
     // depth and facing
-    float alpha = (0.16 + 0.74 * d) * (0.26 + 0.74 * f) * (0.86 + 0.14 * br0)
-                * vis * mix(0.85, 1.15, clamp(bfac - 0.55, 0.0, 0.75));
+    float alpha = (0.34 + 0.56 * dd) * (0.40 + 0.60 * f) * (0.86 + 0.14 * br0)
+                * vis * mix(0.80, 1.55, clamp((bfac - 0.60) / 1.10, 0.0, 1.0));
     // v2: alpha dims on the strand that passes under a crossing
     alpha *= (1.0 - 0.75 * occl2) * mix(1.0, crowd, 0.9);
+    // cap per dot so overlapping dots cannot add up to a clipped white patch;
+    // the ring (cls 1) is a thin sparse circle, kept at 70 percent of the ribbon
+    alpha = min(alpha, ALPHA_CAP) * (cls < 0.5 ? 1.0 : 0.70);
     alpha = mix(alpha, 1.0, spark * 0.85 * (0.4 + 0.6 * f));
     if (vis < 0.01) alpha = 0.0;
 
-    float rpx = 1.85 * (knotPx / 540.0) * mix(0.6, 1.22, d) * rfac;
-    rpx = clamp(rpx, 1.0, 5.0);
+    float rpx = 1.75 * (knotPx / 540.0) * mix(0.82, 1.12, dd) * rfac;
+    rpx = clamp(rpx, 1.0, 3.4);
     float hh = rpx + 1.5;
 
     vec2 centre = vec2(uW, uH) * 0.5;
