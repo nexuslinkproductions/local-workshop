@@ -4,14 +4,14 @@
 #   sh nexuslink.hud/v5/feeds/run-self-checks.sh
 #
 # Each reader prints one PASS/FAIL line per assertion and a summary line; this
-# runner prints the exit code it saw for each one. Exit 0 means all four passed.
+# runner prints the exit code it saw for each one. Exit 0 means all five passed.
 set -u
 
 here=$(cd "$(dirname "$0")" && pwd)
 python=${PYTHON:-python3}
 status=0
 
-for reader in sessions link apps metrics; do
+for reader in sessions link apps metrics find; do
     echo "== ${reader}.py --self-check"
     "$python" "$here/${reader}.py" --self-check
     code=$?
