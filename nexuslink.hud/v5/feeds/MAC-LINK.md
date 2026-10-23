@@ -224,4 +224,6 @@ stub logs are asserted free of any state-changing command.
 Every execution in the self-check goes through `RecordingRuntime`, which records
 the argv and spawns nothing: `list-dir` on a temporary directory is planned and
 recorded, never run as a real `ls`, and the run asserts no runner was touched.
-No process is spawned by either self-check.
+The only processes either self-check spawns are its own `python3` CLI runs and
+the one `/bin/sh` that runs `STATUS_SCRIPT` against a stub PATH; no collector
+command and no action command reaches the Mac.
