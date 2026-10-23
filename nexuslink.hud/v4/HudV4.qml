@@ -659,7 +659,6 @@ Item {
             required property var modelData
             screen: modelData
             // NEXUS: confirm this output to nexuslink.background (readiness marker).
-            Component.onCompleted: hud.markScreenReady(win.screen ? String(win.screen.name) : "")
 
             readonly property string screenName: String(modelData.name)
             // role from EDID identity (ScreenRoles.js); connector names are
@@ -1164,6 +1163,7 @@ Item {
                 function onPersistLoadedChanged() { win.ensureLayout() }
             }
             Component.onCompleted: {
+                hud.markScreenReady(win.screen ? String(win.screen.name) : "")
                 win.delegatesReady = true
                 win.ensureLayout()
                 win.logGeometry("completed")
