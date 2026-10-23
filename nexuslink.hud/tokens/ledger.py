@@ -767,7 +767,7 @@ def build(led, now):
         m = {"label": entry["label"], "kind": entry["kind"]}
         for k in ("ready", "tier", "status", "today_tokens", "today_prompts",
                   "today_sessions", "limits", "limits_as_of", "today_by_model",
-                  "sessions_db"):
+                  "sessions_db", "gauge"):
             if meta.get(k) not in (None, "", [], {}):
                 m[k] = meta[k]
         if meta.get("upstreams"):
