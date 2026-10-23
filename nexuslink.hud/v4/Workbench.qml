@@ -748,17 +748,16 @@ Item {
 
     // ------------------------------------------------------------ clock
     property date now: new Date()
-    // Sole wall-clock tick in this screen: 1 Hz UI clock, off while hidden.
-    // Nothing here animates on it — the knot is a static lit frame, every
-    // card is a plain Rectangle, and GlassPane's busy rim is never armed
-    // here. The tick exists only so the masthead can show HH:mm:ss.
+    // Sole wall-clock tick in this screen: 1 Hz, off while hidden. The
+    // masthead clock is gone (dedupe map v2 row 14: CH owns the clock);
+    // the tick survives because minuteTick below quantises it for the
+    // token ledger's age/burn bindings.
     Timer {
         interval: 1000
         running: root.visible
         repeat: true
         onTriggered: root.now = new Date()
     }
-    readonly property string clockText: Qt.formatTime(root.now, "HH:mm:ss")
     // Ledger age and burn pace read a minute-quantised stamp instead of the
     // 1 Hz clock, so those two bindings (and the token model behind them)
     // re-evaluate once a minute instead of once a second. Still no new
@@ -1147,23 +1146,7 @@ Item {
                         elide: Text.ElideRight
                         // "PROC 3/6" is a slot fill count, not a process count —
                         // the collector only fills a slot above 0.5% of a core
-                        text: root.cnt(root.wsCount) + " WS · " + root.cnt(root.winCount) + " WINDOWS · PROC " + root.procCount + "/" + root.procSlots
-                    }
-                    Rectangle {
-                        id: mastRule
-                        anchors.verticalCenter: mastStats.verticalCenter
-                        width: 1
-                        height: 14
-                        color: pal.edge
-                    }
-                    Text {
-                        id: mastClock
-                        anchors.verticalCenter: mastStats.verticalCenter
-                        font.family: pal.fDisp
-                        font.pixelSize: 16
-                        font.letterSpacing: 1.5
-                        color: pal.accent2
-                        text: root.clockText
+                        text: "PROC " + root.procCount + "/" + root.procSlots
                     }
                 }
             }
