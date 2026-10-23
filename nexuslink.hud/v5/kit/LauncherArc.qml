@@ -14,10 +14,12 @@ import NexusHud.V5 1.0
 //                                                      // only while expanded is true
 //       expanded: false                                // opens the arc to the full set
 //       selectedIndex: -1                              // keyboard index into apps
-//       hoverIndex: -1                                 // pointer index into the drawn order
+//       hoverIndex: -1                                 // drawn-order index: apps, then
+//                                                      // the expanded extras, then the hero
 //       onLaunch: (slug) => ...                        // click, Enter or activate()
 //   }
 //   Extra helpers for the integrator: step(delta), activate(), launch(slug).
+//   The keyboard walks apps only; the hero tile is pointer-only this round.
 //
 // Shapes and numbers: hud-candidates/comp-r1/s2/src/build.py launcher() (pitch 122,
 // tile radius 47, glyph 52, ARC 1.3x, hero gap 40, smile arc rise 80, count ring,
@@ -32,10 +34,14 @@ import NexusHud.V5 1.0
 // dotted arch. Interface request for W4 is in the PR body: a bare Item with
 // implicitWidth/Height (24 px grid), no required properties.
 //
-// Motion: expansion uses Motion.expand (5 percent overshoot, 347 ms), collapsing
-// uses Motion.return (no overshoot, 444 ms), tiles stagger by Motion.staggerTight
-// (30 ms, inside the approved 30 to 60 ms band). Hover and selection use scale and
-// dim only: no box, no outline, no glow.
+// Motion: Motion.qml states the intent as a continuous zeta/omega pair (5.00
+// percent overshoot and 347 ms for expand, no overshoot and 444 ms for return).
+// Qt 6.12's SpringAnimation does not implement that pair: it integrates in fixed
+// 16 ms substeps, applies the spring term without a dt factor and clamps damping
+// to 1.0 (qtdeclarative/src/quick/util/qquickspringanimation.cpp,
+// updateCurrentTime). The measured discrete equivalents live in the springs
+// section below; tiles keep the 30 ms Motion.staggerTight stagger. Hover and
+// selection use scale and dim only: no box, no outline, no glow.
 //
 // Kit rules: imports QtQuick only, Tokens and Motion for every shared number,
 // local readonly properties for values the tokens do not carry yet (token request
@@ -72,6 +78,23 @@ Item {
     readonly property real dimOthers: 0.42         // hover/selection dims the rest
     readonly property real restGlyphOpacity: 0.88
     readonly property color restInk: "#d9eef5"     // s2 build.py: glyph at rest
+
+    // ---- springs for Qt 6.12 SpringAnimation ------------------------------
+    // Motion's zeta/omega describe a continuous-time system. Qt's SpringAnimation
+    // is a fixed 16 ms integrator that clamps damping to [0, 1] and applies the
+    // spring term without a dt factor, so feeding 2 * zeta * omega (23.05 for
+    // expand) into damping pins it at 1.0 and the response diverges. These are the
+    // measured equivalents on Qt 6.12.0 (probe_spring, probe_return,
+    // probe_component; numbers in the PR body):
+    //   expand 3.1 / 0.285    peak 1.0490 (+4.90 percent) at 274 ms, inside
+    //                         2 percent at 390 ms (Motion: 5 percent, 347 ms)
+    //   return 1.84 / 0.305   no overshoot, inside 2 percent at 450 to 460 ms
+    //                         (Motion: 444 ms)
+    // Damping stays inside Qt's clamp, and mass 1.0 is Qt's no-division path.
+    readonly property real expandSpring: 3.1
+    readonly property real expandDamping: 0.285
+    readonly property real returnSpring: 1.84
+    readonly property real returnDamping: 0.305
 
     // ---- drawn order ------------------------------------------------------
     // apps left to right, then the expanded-only entries, then the hero tile.
@@ -261,16 +284,16 @@ Item {
 
             Behavior on scale {
                 SpringAnimation {
-                    spring: Motion.expandOmega * Motion.expandOmega
-                    damping: 2 * Motion.expandZeta * Motion.expandOmega
+                    spring: root.expandSpring
+                    damping: root.expandDamping
                     mass: 1.0
                     epsilon: 0.001
                 }
             }
             Behavior on opacity {
                 SpringAnimation {
-                    spring: Motion.returnOmega * Motion.returnOmega
-                    damping: 2 * Motion.returnZeta * Motion.returnOmega
+                    spring: root.returnSpring
+                    damping: root.returnDamping
                     mass: 1.0
                     epsilon: 0.001
                 }
@@ -300,8 +323,8 @@ Item {
                     target: tile
                     property: "open"
                     to: 1
-                    spring: Motion.expandOmega * Motion.expandOmega
-                    damping: 2 * Motion.expandZeta * Motion.expandOmega
+                    spring: root.expandSpring
+                    damping: root.expandDamping
                     mass: 1.0
                     epsilon: 0.0005
                 }
@@ -315,8 +338,8 @@ Item {
                     target: tile
                     property: "open"
                     to: 0
-                    spring: Motion.returnOmega * Motion.returnOmega
-                    damping: 2 * Motion.returnZeta * Motion.returnOmega
+                    spring: root.returnSpring
+                    damping: root.returnDamping
                     mass: 1.0
                     epsilon: 0.0005
                 }
@@ -397,7 +420,21 @@ Item {
             Text {
                 id: nameLabel
 
-                x: (tile.width - width) / 2
+                // Centred under the tile, then pulled back inside the component.
+                // The tile scales about its centre when hovered, so the clamp is
+                // solved in component coordinates with that scale applied: the
+                // hero tile sits at the right edge and its label would otherwise
+                // cross the 1400 px box when the tile grows.
+                readonly property real labelX: {
+                    var s = tile.scale > 0 ? tile.scale : 1
+                    var centre = tile.x + tile.width / 2
+                    var half = width * s / 2
+                    var lo = 4 + half
+                    var hi = root.width - 4 - half
+                    var c = Math.max(lo, Math.min(hi, centre))
+                    return (c - centre) / s + (tile.width - width) / 2
+                }
+                x: labelX
                 y: tile.height / 2 + tile.ringRadius + root.labelDrop
                 text: tile.modelData.label.toUpperCase()
                 color: Tokens.white
@@ -410,8 +447,8 @@ Item {
 
                 Behavior on opacity {
                     SpringAnimation {
-                        spring: Motion.returnOmega * Motion.returnOmega
-                        damping: 2 * Motion.returnZeta * Motion.returnOmega
+                        spring: root.returnSpring
+                        damping: root.returnDamping
                         mass: 1.0
                         epsilon: 0.001
                     }

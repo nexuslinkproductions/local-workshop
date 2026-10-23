@@ -1,4 +1,5 @@
 {
+  "_note": "Synthetic sample launch counts for the v5 state matrix; no usage data behind them.",
   "default": [
     { "slug": "hermes", "label": "Hermes", "launchCount": 34, "kind": "app" },
     { "slug": "devin", "label": "Devin", "launchCount": 21, "kind": "app" },
@@ -23,5 +24,5 @@
     { "slug": "x", "label": "X", "launchCount": 9 },
     { "slug": "obsidian", "label": "Obsidian", "launchCount": 7 }
   ],
-  "arcRaiders": { "launchCount": 6 }
+  "arcRaiders": { "slug": "arc-raiders", "label": "Arc Raiders", "launchCount": 6 }
 }
