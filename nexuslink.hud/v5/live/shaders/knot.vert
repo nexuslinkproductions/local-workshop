@@ -177,6 +177,8 @@ vec3 curlA(vec3 p, float tt) {
 }
 
 void main() {
+    // CALM (Marcel 2026-10-23): slower clock, local motion 35 percent, brightness deviation 45 percent
+    float t = t * 0.55;
     // uN is the slice size, uOffset the first point of this slice (round 5)
     float c = floor(qt_MultiTexCoord0.x * (2.0 * uN) + 0.5);
     float pidLocal = floor(c * 0.5);
@@ -394,6 +396,7 @@ void main() {
     float lim = R * 0.04;
     float dl = length(dloc);
     dloc *= lim * (1.0 - exp(-dl / lim)) / max(dl, 1e-4);
+    dloc *= 0.35;
     Q += dloc;
 
     // ---- brightness and size from the same local terms ------------------
@@ -402,6 +405,8 @@ void main() {
     float rfac = (1.0 + 0.05 * lb) * (1.0 + 0.18 * crest) * (1.0 + 0.20 * ev * evK);
     bfac = clamp(bfac, 0.60, 1.90);
     rfac = clamp(rfac, 0.75, 1.50);
+    bfac = 1.0 + (bfac - 1.0) * 0.45;
+    rfac = 1.0 + (rfac - 1.0) * 0.45;
 
     // round 5: the knockout no longer dims the radius, it cuts the alpha below
 
