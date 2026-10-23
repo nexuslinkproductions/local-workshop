@@ -1,0 +1,6 @@
+{
+  "kern_boottime": "{ sec = 1792620000, usec = 0 } Wed Oct 21 22:00:00 2026",
+  "uptime_text": " 0:00  up 1 day,  2:00, 3 users, load averages: 3.42 3.10 2.87",
+  "vm_loadavg": "{ 3.42 3.10 2.87 }",
+  "ncpu": 12
+}

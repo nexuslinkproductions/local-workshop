@@ -1,0 +1,66 @@
+{
+  "note": "Illustrative snapshot for nexuslink.hud/v5/feeds/recent.py. Hand-written, not a copy of a live listing: names are plausible Mac files, times are anchored to the C1 data snapshot (2026-10-22T21:07:02Z). The fixture records the tree as it was, so reading it needs no host filesystem. home is the ~ this snapshot stands in for, so the paths it prints are the same on any machine.",
+  "home": "/Users/marcel",
+  "snapshot_at": "2026-10-22T21:07:02Z",
+  "config": {
+    "limit": 8,
+    "downloads": ["~/Downloads"],
+    "screenshots": ["~/Pictures/Screenshots"],
+    "recent_files": ["~/Desktop", { "path": "~/Documents", "depth": 2 }, "~/Documents/Quarterly"],
+    "pinned": [
+      { "name": "HUD project", "path": "~/NEXUS_AI_CENTER/04_PROJECTS/HUD" },
+      { "name": "Worktrees", "path": "~/NEXUS_AI_CENTER/04_PROJECTS/HUD/plugins/.worktrees" },
+      { "name": "Screenshots", "path": "~/Pictures/Screenshots" },
+      { "name": "Quarterly", "path": "~/Documents/Quarterly" }
+    ]
+  },
+  "roots": {
+    "~/Downloads": {
+      "exists": true,
+      "kind": "dir",
+      "files": [
+        { "name": "Satoshi_Complete.zip", "size": 2168134, "mtime": 1792703522, "mtime_iso": "2026-10-22T21:12:02Z" },
+        { "name": "Arc Raiders - Update Notes.pdf", "size": 412330, "mtime": 1792703462, "mtime_iso": "2026-10-22T21:11:02Z" },
+        { "name": "hud-review.mp4", "size": 18440221, "mtime": 1792703402, "mtime_iso": "2026-10-22T21:10:02Z" },
+        { "name": "invoice-2026-10.pdf", "size": 88210, "mtime": 1792703342, "mtime_iso": "2026-10-22T21:09:02Z" },
+        { "name": "hud-tokens.tar.gz", "size": 15422, "mtime": 1792703282, "mtime_iso": "2026-10-22T21:08:02Z" },
+        { "name": "export.sh", "size": 2210, "mtime": 1792703222, "mtime_iso": "2026-10-22T21:07:02Z" },
+        { "name": "voice-memo.m4a", "size": 4401233, "mtime": 1792703162, "mtime_iso": "2026-10-22T21:06:02Z" },
+        { "name": "hud-swatches.sketch", "size": 991230, "mtime": 1792703102, "mtime_iso": "2026-10-22T21:05:02Z" },
+        { "name": "logo-final.PNG", "size": 512004, "mtime": 1792703042, "mtime_iso": "2026-10-22T21:04:02Z" },
+        { "name": "mystery.bin", "size": 12000, "mtime": 1792702982, "mtime_iso": "2026-10-22T21:03:02Z" }
+      ]
+    },
+    "~/Pictures/Screenshots": {
+      "exists": true,
+      "kind": "dir",
+      "files": [
+        { "name": "Screenshot 2026-10-22 at 21.03.11.png", "size": 2411552, "mtime": 1792702991, "mtime_iso": "2026-10-22T21:03:11Z" },
+        { "name": "Screenshot 2026-10-21 at 20.48.12.png", "size": 3102441, "mtime": 1792702092, "mtime_iso": "2026-10-22T20:48:12Z" },
+        { "name": "CleanShot 2026-10-22 at 20.40.10.png", "size": 1880002, "mtime": 1792701610, "mtime_iso": "2026-10-22T20:40:10Z" },
+        { "name": "old-shot.png", "link": "~/Pictures/Screenshots/gone/old-shot.png", "broken": true }
+      ]
+    },
+    "~/Desktop": {
+      "exists": true,
+      "kind": "dir",
+      "files": [
+        { "name": "MAIN-SCREEN-BUILD.md", "size": 31220, "mtime": 1792703282, "mtime_iso": "2026-10-22T21:08:02Z" },
+        { "name": "hud-review.mp4", "link": "~/Downloads/hud-review.mp4", "mtime": 1792703402, "mtime_iso": "2026-10-22T21:10:02Z" },
+        { "name": "external-note.md", "link": "/Volumes/Archive/notes.md", "mtime": 1792703000, "mtime_iso": "2026-10-22T21:03:20Z" }
+      ]
+    },
+    "~/Documents": {
+      "exists": true,
+      "kind": "dir",
+      "files": [
+        { "name": "hud-brief-v5.md", "size": 8120, "mtime": 1792703162, "mtime_iso": "2026-10-22T21:06:02Z" },
+        { "name": "2025-summary.pdf", "size": 1204004, "mtime": 1792702802, "mtime_iso": "2026-10-22T21:00:02Z" },
+        { "name": "receipt-2025.pdf", "size": 40218, "mtime": 1792698700, "mtime_iso": "2026-10-22T19:51:40Z" }
+      ]
+    },
+    "~/NEXUS_AI_CENTER/04_PROJECTS/HUD": { "exists": true, "kind": "dir" },
+    "~/NEXUS_AI_CENTER/04_PROJECTS/HUD/plugins/.worktrees": { "exists": true, "kind": "dir" },
+    "~/Documents/Quarterly": { "exists": false, "kind": null }
+  }
+}

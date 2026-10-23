@@ -5,10 +5,11 @@
 // brightness. One draw, no vertex geometry, no per-frame JS.
 //
 // The tube SDF is baked as a 2D centre-line distance texture (R: thick tube,
-// G: ring) because an analytic distance to the 233 traced segments costs too
-// much per pixel. The march evaluates sqrt(d2^2 + z^2) - r, which is the exact
-// distance to a circular tube around a planar curve. The orb uses the analytic
-// sphere length(p) - 1, selected by u_shape.
+// G: ring, B: distance to the scattered cloud the assembly starts from) because
+// an analytic distance to the 233 traced segments costs too much per pixel. The
+// march evaluates sqrt(d2^2 + z^2) - r, which is the exact distance to a
+// circular tube around a planar curve. The orb uses the analytic sphere
+// length(p) - 1, selected by u_shape.
 //
 // The SDF texture is RGB8 with alpha 255 (Qt premultiplies image textures, so a
 // byte survives only when alpha is opaque). Screen space is y-down, object space
@@ -38,9 +39,17 @@ layout(std140, binding = 0) uniform buf {
     float u_focus;
     float u_activity;
     float u_stipple;
+    float u_assemble;       // 1 = rest shape, 0 = fully scattered
+    float u_brightFloor;    // dot brightness at depth 0 (W1: Knot dims the field)
+    float u_brightTop;      // dot brightness at depth 1
 };
 
 layout(binding = 1) uniform sampler2D u_sdf;
+
+// Radius of one scattered dot at assembleProgress 0, in units: 0.010 * 231.16 =
+// 2.3 px at a 540 Knot, the same size as a settled dot (u_dotR 0.0086 * 231.16
+// = 2.0 px), so the cloud reads as the same points, just scattered.
+const float R_SCATTER = 0.010;
 
 mat3 rotMat(float yaw, float tilt)
 {
@@ -74,11 +83,25 @@ float centreDist(vec3 p)
     if (u_shape > 0.5)
         return length(p) - 1.0;
     vec2 uv = (p.xy - u_sdfLo) / u_sdfSpan;
-    vec2 d = texture(u_sdf, uv).rg * u_sdfRange;
+    vec4 t = texture(u_sdf, uv);
+    vec2 d = t.rg * u_sdfRange;
     float z = p.z;
     float a = sqrt(d.x * d.x + z * z) - u_rTube;
     float b = sqrt(d.y * d.y + z * z) - u_rRing;
-    return min(a, b);
+    float dist = min(a, b);
+    // Assembly (W1 KNOT): B holds the distance to the nearest dot of the
+    // scattered cloud. Below 1 the two distance fields are blended, so the
+    // surface starts as that cloud of small spheres and walks into the tube as
+    // progress rises. A blend of two 1-Lipschitz fields is 1-Lipschitz, so the
+    // sphere trace stays valid; displacing dots per fragment cannot work,
+    // because a displaced fragment has no surface left to draw it. At 1 the
+    // branch is skipped, so the rest frame is byte-identical.
+    if (u_assemble < 0.999) {
+        float ds = t.b * u_sdfRange;
+        float scat = sqrt(ds * ds + z * z) - R_SCATTER;
+        dist = mix(scat, dist, u_assemble);
+    }
+    return dist;
 }
 
 void main()
@@ -162,8 +185,10 @@ void main()
     // A 0.55 floor keeps the far side of the tube visible as a dim dot field
     // while the near side still reads brighter; the old 0.30 floor put the far
     // dots under any sane threshold, which is why the field had to be tiled to
-    // score.
-    float bright = mix(0.55, 1.0, pow(depth, 1.6)) * mix(0.82, 1.10, hash13(cell + 31.0));
+    // score. Both ends are uniforms so a caller can dim the field without
+    // touching the dot geometry: the shipped defaults (0.55 / 1.0) reproduce the
+    // C2 frame exactly, and W1's Knot passes a lower pair for the s2 brightness.
+    float bright = mix(u_brightFloor, u_brightTop, pow(depth, 1.6)) * mix(0.82, 1.10, hash13(cell + 31.0));
     bright *= mix(1.0, 1.12, u_activity) * (1.0 - 0.55 * u_focus) * u_gain;
     vec3 col = mix(u_accent.rgb * 0.72, u_accent.rgb, depth);
     col = mix(col, vec3(1.0), pow(depth, 3.0) * 0.26);
