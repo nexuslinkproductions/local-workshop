@@ -80,7 +80,7 @@ Item {
         // side to white (rest bright-pixel V 0.831 against s2's 0.609). The
         // field now runs between brightFloor 0.72 and brightTop 0.86 at gain
         // 1.0, which is the s2 range: measured rest bright-pixel mean RGB
-        // (108,150,161), V 0.632, against s2's (93,137,151) and V 0.609.
+        // (109,151,161), V 0.632, against s2's (93,137,152) and V 0.609.
         // dotRadius carries the 0.35-luminance core that the dimmer dots lose
         // to the shader's anti-aliasing ramp: 0.0092 unit = 2.13 px against a
         // 4.41 px lattice pitch, so the disc still sits inside its cell. See
