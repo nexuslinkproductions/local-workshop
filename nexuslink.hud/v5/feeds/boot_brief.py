@@ -231,6 +231,15 @@ def utc_now():
     return int(datetime.datetime.now(datetime.timezone.utc).timestamp())
 
 
+PROC_STAT = "/proc/stat"
+PROC_UPTIME = "/proc/uptime"
+
+
+def compact_json(obj):
+    """The --json stdout contract: exactly one compact line."""
+    return json.dumps(obj, separators=(",", ":")) + "\n"
+
+
 def iso(epoch):
     """Epoch seconds -> ``2026-10-22T21:07:02Z``; anything unusable -> None."""
     if epoch is None or isinstance(epoch, bool):
@@ -548,15 +557,34 @@ def anchor_notes(record):
 
 
 # -------------------------------------------------------------- board sources
-def boot_epoch():
-    """kern.boottime seconds on Darwin; None anywhere else or on failure."""
-    try:
-        out = subprocess.run(["sysctl", "-n", "kern.boottime"],
-                             capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+def boot_epoch(stat_path=PROC_STAT, uptime_path=PROC_UPTIME):
+    """Boot time in epoch seconds, or None when the host does not say.
+
+    Darwin: kern.boottime from sysctl (the macOS branch, unchanged). Linux: the
+    btime line of /proc/stat, else now minus /proc/uptime. Anywhere else: None.
+    """
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["sysctl", "-n", "kern.boottime"],
+                                 capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        match = re.search(r"sec\s*=\s*([0-9]+)", out.stdout or "")
+        return int(match.group(1)) if match else None
+    if not sys.platform.startswith("linux"):
         return None
-    match = re.search(r"sec\s*=\s*([0-9]+)", out.stdout or "")
-    return int(match.group(1)) if match else None
+    try:
+        with open(stat_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("btime "):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    try:  # no btime line: the same instant, from the uptime counter
+        with open(uptime_path, "r", encoding="utf-8") as handle:
+            return int(utc_now() - float(handle.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def normalise_card(card):
@@ -1161,6 +1189,21 @@ def self_check():
     report = []
     scratch = tempfile.mkdtemp(prefix="bb-check-")
 
+    # Boot time on Linux: /proc/stat btime, then /proc/uptime, else None.
+    if sys.platform.startswith("linux"):
+        stat_probe = os.path.join(scratch, "proc-stat")
+        write_atomic(stat_probe, "cpu  1 2 3\nbtime 1700000000\n")
+        check("linux btime read from /proc/stat",
+              boot_epoch(stat_probe) == 1700000000, repr(boot_epoch(stat_probe)), report)
+        uptime_probe = os.path.join(scratch, "uptime")
+        write_atomic(uptime_probe, "100.25 1.0\n")
+        got = boot_epoch(os.path.join(scratch, "no-stat"), uptime_probe)
+        check("linux uptime fallback when btime is absent",
+              got is not None and abs(got - (utc_now() - 100)) <= 5, repr(got), report)
+        check("linux with no boot source gives None",
+              boot_epoch(os.path.join(scratch, "no-stat"), os.path.join(scratch, "no-uptime")) is None,
+              "", report)
+
     # 1. Golden: fixture board + fixture digest + fixed clock.
     payload = golden_payload()
     text_body = "\n".join(render_lines(payload)) + "\n"
@@ -1493,8 +1536,8 @@ def self_check():
         ["--fixture", board_only_dir, "--out", cache_out, "--json"])
     check("fixture mode never returns the host cache",
           cache_rc == EXIT_OK and "brief cached" not in cache_stderr
-          and '"finished": 999' not in cache_stdout
-          and '"source": "fixture"' in cache_stdout,
+          and '"finished":999' not in cache_stdout
+          and '"source":"fixture"' in cache_stdout,
           "rc=%r stderr=%r" % (cache_rc, cache_stderr.strip()[:120]), report)
 
     # 17. Named missing paths and an empty fixture directory are exit 2, and
@@ -1754,7 +1797,7 @@ def self_check():
     finally:
         globals()["DEFAULT_OUT"] = saved_default_out
     check("a fixture run with no --out writes nothing",
-          no_out_rc == EXIT_OK and '"source": "fixture"' in no_out_stdout
+          no_out_rc == EXIT_OK and '"source":"fixture"' in no_out_stdout
           and not no_out_written, repr((no_out_rc, no_out_written)), report)
 
     live_out = os.path.join(scratch, "live-cache-out")
@@ -1774,9 +1817,9 @@ def self_check():
         globals()["board_from_cli"] = saved_cli
     check("a live run does not serve a fixture brief as its cache",
           live_cache_rc == EXIT_OK and "brief cached" not in live_cache_stderr
-          and '"finished": 999' not in live_cache_stdout
-          and '"source": "live"' in live_cache_stdout
-          and '"since_source": "boot"' in live_cache_stdout,
+          and '"finished":999' not in live_cache_stdout
+          and '"source":"live"' in live_cache_stdout
+          and '"since_source":"boot"' in live_cache_stdout,
           "rc=%r stderr=%r" % (live_cache_rc, live_cache_stderr.strip()[:140]),
           report)
 
@@ -1803,7 +1846,7 @@ def self_check():
         globals()["board_from_cli"] = saved_cli
     check("a live run does not anchor on an unreadable brief",
           anchor_rc == EXIT_OK and "brief cached" not in anchor_stderr
-          and '"since_source": "boot"' in anchor_stdout,
+          and '"since_source":"boot"' in anchor_stdout,
           "rc=%r stderr=%r" % (anchor_rc, anchor_stderr.strip()[:140]), report)
 
     # 25. The brief's own anchor (brief_anchor.json): the round-3 repro, the
@@ -2155,7 +2198,7 @@ def main(argv=None):
                     print("brief cached: %ds old, nothing re-read" % int(age),
                           file=sys.stderr)
                     if args.json:
-                        sys.stdout.write(json.dumps(cached, indent=2) + "\n")
+                        sys.stdout.write(compact_json(cached))
                     else:
                         sys.stdout.write("\n".join(render_lines(cached)) + "\n")
                     return EXIT_OK
@@ -2192,7 +2235,7 @@ def main(argv=None):
                     print("anchor: advanced to %s, %d new pair(s), %d in the set"
                           % (iso(record["anchor"]), record["new"],
                              len(record["reported"])), file=sys.stderr)
-        sys.stdout.write(json_body if args.json else text_body)
+        sys.stdout.write(compact_json(payload) if args.json else text_body)
         return EXIT_OK
     except ArgError as exc:
         print("boot_brief: %s" % exc, file=sys.stderr)

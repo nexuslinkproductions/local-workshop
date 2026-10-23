@@ -8,7 +8,7 @@ directory of their own.
 |---|---|---|
 | `sessions.py` | `~/.hermes/state.db`, opened read-only | `v5/fixtures/sessions.json` |
 | `link.py` | tailscale (`status --json`, `ping`), the tunnel unit, one ssh for battery and load | `v5/fixtures/link.json` |
-| `apps.py` | `~/.local/state/nexuslink/apps.json` | `v5/fixtures/apps.json` |
+| `apps.py` | `~/.local/state/nexuslink/apps.json` | `v5/fixtures/apps-list.json` |
 | `metrics.py` | `~/.local/state/nexuslink/metrics.json` | `v5/fixtures/metrics.json` |
 
 `_common.py` is the shared plumbing (envelope, UTC stamps, JSON io, exit-code
@@ -198,7 +198,10 @@ partial list still works.
 Linux-only state files `/run/user/1000/chief/metrics.json` and
 `~/.cache/ptt-toggle.state` are theirs to read. This folder does not stub them
 and does not fake their values. `v5/fixtures/apps.json` is the launcher card's
-file: `apps.py` only reads and ranks it.
+state matrix (`default`, `all`, `arcRaiders`) that DeckMain's FileView reads.
+`apps.py` takes an array of app entries, so it answers that matrix with
+`ok: false, kind: malformed`; its own fixture is `v5/fixtures/apps-list.json`,
+and its self-check runs on that file.
 
 ---
 

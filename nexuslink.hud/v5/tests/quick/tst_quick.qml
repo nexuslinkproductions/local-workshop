@@ -11,6 +11,10 @@ TestCase {
     name: "QuickActions"
     width: 640
     height: 360
+    // QQuickItem.visible reports effective visibility, and the TestCase item
+    // itself reads visible=false under qmltestrunner. Every child then reads
+    // hidden and gets no pointer hover, so the scene must be visible.
+    visible: true
     when: windowShown
 
     // Design space is 2560 x 1440. The stage is scaled to 1/4 so the whole row
@@ -88,13 +92,14 @@ TestCase {
         mouseMove(a, -20, -20)
         compare(g.hovered, false, "not hovered before the move")
         var rest = g.ink
+        var restLuma = luma(rest)
         compare(rest, Tokens.ice, "rest ink is ice")
         mouseMove(a, 28, 28)
         wait(50)
         verify(a.containsMouse, "pointer over the apps target")
         compare(g.hovered, true)
         compare(g.ink, Tokens.white, "hover ink is white")
-        verify(luma(g.ink) > luma(rest), "hover is brighter than rest")
+        verify(luma(g.ink) > restLuma, "hover is brighter than rest")
         compare(findChild(qa, "glyph-apps").scale, qa.hoverScale, "hover lift")
         mouseMove(a, -20, -20)
         compare(findChild(qa, "glyph-apps").scale, 1, "lift released")

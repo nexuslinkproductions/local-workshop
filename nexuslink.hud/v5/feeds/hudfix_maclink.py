@@ -203,6 +203,30 @@ MAX_JSON_DEPTH = 64
 # not the real launchctl). It sets this for its own run; an explicit platform
 # argument is still honoured by host_is_mac.
 SELF_CHECK_ASSUME_MAC = False
+# The self-check also pins the launchd uid. Its fake launchctl table is keyed on
+# gui/501, so the fake uid is 501 on any host. None means the real uid (production).
+SELF_CHECK_UID = None
+SELF_CHECK_FAKE_UID = 501
+_CLI_BOOT = None  # set by self_check: child loader that pins the fake uid and mac gate
+
+
+def current_uid():
+    return SELF_CHECK_UID if SELF_CHECK_UID is not None else os.getuid()
+
+
+_CLI_BOOT_SOURCE = (
+    "import importlib.util, sys\n"
+    "spec = importlib.util.spec_from_file_location('hudfix_maclink_pinned', sys.argv[1])\n"
+    "mod = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(mod)\n"
+    "mod.SELF_CHECK_ASSUME_MAC = True\n"
+    "mod.SELF_CHECK_UID = %d\n"
+    "try:\n"
+    "    sys.exit(mod.main(sys.argv[2:]))\n"
+    "except mod.Refused as exc:\n"
+    "    sys.stderr.write('hudfix_maclink: %%s\\n' %% exc)\n"
+    "    sys.exit(mod.EXIT_REFUSED)\n"
+) % SELF_CHECK_FAKE_UID
 
 
 def host_is_mac(platform=None):
@@ -273,6 +297,10 @@ def positive_int(value, default):
     return number if number > 0 else default
 
 
+# 2**22 is the Linux pid_max ceiling. macOS pids stay below 99999.
+PID_MAX = 4194304
+
+
 def pid_from_cell(value):
     """The pid as an int, or None when the value is not a pid.
 
@@ -284,17 +312,18 @@ def pid_from_cell(value):
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, float):
+        number = value
+    elif isinstance(value, float):
         if not value.is_integer():
             return None
         number = int(value)
-        return number if number > 0 else None
-    text = str(value).strip()
-    if not re.fullmatch(r"[0-9]{1,12}", text):
-        return None
-    number = int(text)
-    return number if number > 0 else None
+    else:
+        text = str(value).strip()
+        if not re.fullmatch(r"[0-9]{1,12}", text):
+            return None
+        number = int(text)
+    # 0 is "this process group" and 1 is launchd: neither is ever a worker.
+    return number if 1 < number <= PID_MAX else None
 
 
 def json_cell(value):
@@ -532,14 +561,21 @@ class Runtime(object):
         rows = []
         for line in out.splitlines():
             parts = line.strip().split(None, 2)
-            if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            # ASCII digits only. str.isdigit() also accepts superscript two, which
+            # int() refuses, so such a row used to crash the reader.
+            if len(parts) < 2 or not re.fullmatch(r"[0-9]{1,12}", parts[0]) \
+                    or not re.fullmatch(r"[0-9]{1,12}", parts[1]):
                 continue
             rows.append((int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else ""))
         return rows
 
     def alive(self, pid):
+        # Only a strict pid reaches os.kill: 0, 1, negatives and text stop here.
+        pid_int = pid_from_cell(pid)
+        if pid_int is None:
+            return False
         try:
-            os.kill(int(pid), 0)
+            os.kill(pid_int, 0)
         except ProcessLookupError:
             return False
         except PermissionError:
@@ -602,7 +638,7 @@ def parse_launchctl(text):
 
 
 def launchd_unit(label, runtime, domain=None):
-    uid = os.getuid()
+    uid = current_uid()
     domain = domain or "gui/%d" % uid
     unit = "%s/%s" % (domain, label)
     out, err, code = runtime.run(["launchctl", "print", unit], timeout=10.0)
@@ -899,7 +935,7 @@ def classify_worker(cmdline, profile, card_id, pid, self_pids, self_card=None):
         return False, "pid %s has no command line, so it is gone or unreadable" % pid
     pid_int = pid_from_cell(pid)
     if pid_int is None:
-        return False, "pid %r is not a number" % (pid,)
+        return False, "pid %r is not a number or a usable pid (2 to %d)" % (pid, PID_MAX)
     if pid_int <= 1:
         return False, "pid %d is launchd or invalid" % pid_int
     assignee = "" if profile is None else str(profile).strip()
@@ -1106,7 +1142,7 @@ def plan_status(ctx=None, runtime=None):
     items = [
         {
             "kind": "read",
-            "target": "launchctl print gui/%d/%s" % (os.getuid(), RELAY_LABEL),
+            "target": "launchctl print gui/%d/%s" % (current_uid(), RELAY_LABEL),
             "changes": False,
         },
         {
@@ -1434,11 +1470,10 @@ def pid_file_state(path):
         pid = record.get("pid")
     else:
         pid = raw
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        raise Malformed("%s does not hold a pid" % tilde(path))
-    if pid <= 0:
+    # Strict: a whole pid as text or a JSON integer. A bool, a float (12.7 must
+    # not become 12), 0, 1 or a negative value is not a pid.
+    pid = pid_from_cell(pid)
+    if pid is None:
         raise Malformed("%s does not hold a pid" % tilde(path))
     return {"present": True, "pid": pid, "raw": raw}
 
@@ -2019,6 +2054,13 @@ def run_kick_bot(ctx=None, confirm=None, runtime=None):
         return _plan_failure("maclink.kick-bot", plan, "no stale worker")
     item = plan["items"][0]
     pid = item["pid"]
+    # Strict gate before any ps, signal or wait: only a plain int that
+    # pid_from_cell accepts (no bool, float, text, 0, 1 or negative) gets through.
+    if type(pid) is not int or pid_from_cell(pid) != pid:
+        return _refused(
+            "maclink.kick-bot",
+            "pid %r was not parsed as a strict pid; refusing to signal" % (pid,),
+        )
     fresh = runtime.ps(pid)
     self_pids = self_process_chain(runtime)
     ok, reason = classify_worker(
@@ -2430,8 +2472,13 @@ def _write_stub(directory, name, body):
 
 
 def _cli(argv, env):
+    # Self-check children load the module through the boot file, which pins the
+    # fake uid and the mac gate for that child only. Production never sees it.
+    target = [sys.executable, os.path.abspath(__file__)]
+    if _CLI_BOOT:
+        target = [sys.executable, _CLI_BOOT, os.path.abspath(__file__)]
     proc = subprocess.run(
-        [sys.executable, os.path.abspath(__file__)] + list(argv),
+        target + list(argv),
         capture_output=True,
         text=True,
         env=env,
@@ -2440,9 +2487,168 @@ def _cli(argv, env):
     return proc.returncode, proc.stdout, proc.stderr
 
 
+class _FakeRuntime(Runtime):
+    """In-process fake for the F8c cases: records every call, runs nothing.
+
+    run() answers only the ps table from a canned string and fails every other
+    command with 127. ps() records and returns no command line. No ps, kill,
+    launchctl or ssh ever executes.
+    """
+
+    def __init__(self, table_text=""):
+        self.table_text = table_text
+        self.calls = []
+
+    def run(self, argv, timeout=DEFAULT_TIMEOUT_S, strict_text=False):
+        self.calls.append(list(argv))
+        if list(argv[:2]) == ["ps", "-ww"] and "-Ao" in argv:
+            return self.table_text, "", 0
+        return "", "fake runtime: %s not run" % argv[0], 127
+
+    def ps(self, pid):
+        self.calls.append(["ps", pid])
+        return ""
+
+    def alive(self, pid):
+        self.calls.append(["alive", pid])
+        return False
+
+
+def _f8c_try(fn):
+    """(value, None), or (None, "ErrorName: text") so a crash is a failed case."""
+    try:
+        return fn(), None
+    except Exception as exc:
+        return None, "%s: %s" % (type(exc).__name__, exc)
+
+
+def _f8c_kick(pid):
+    """Run the real run_kick_bot with a canned plan carrying `pid`. Returns (result, calls)."""
+    runtime = _FakeRuntime()
+    plan = {
+        "ok": True,
+        "items": [{
+            "pid": pid, "profile": "kakashi", "card": "t_f8c",
+            "command": "kill -TERM %s" % (pid,), "argv": ["kill", "-TERM", str(pid)],
+            "command_sha256": "0" * 64,
+        }],
+        "blast_radius": "fake",
+    }
+    saved = globals()["plan_kick_bot"]
+    globals()["plan_kick_bot"] = lambda ctx=None, runtime=None: plan
+    try:
+        result = run_kick_bot({}, confirm="maclink.kick-bot", runtime=runtime)
+    finally:
+        globals()["plan_kick_bot"] = saved
+    return result, runtime.calls
+
+
+def f8c_cases(check):
+    """Named F8c cases: strict pid parse, ps rows, pid file, status cache, kick gate."""
+    bad_pids = [
+        ("f8c-pid-zero-refused", 0),
+        ("f8c-pid-one-refused", 1),
+        ("f8c-pid-negative-refused", -5),
+        ("f8c-pid-text-refused", "abc"),
+        ("f8c-pid-text-tail-refused", "12x"),
+        ("f8c-pid-empty-refused", ""),
+        ("f8c-pid-float-fraction-refused", 12.5),
+        ("f8c-pid-bool-refused", True),
+        ("f8c-pid-huge-refused", 10 ** 12),
+        ("f8c-pid-above-ceiling-refused", PID_MAX + 1),
+        ("f8c-pid-none-refused", None),
+    ]
+    for name, value in bad_pids:
+        check(name, pid_from_cell(value) is None, "accepted %r" % (value,))
+    value, error = _f8c_try(lambda: (pid_from_cell("4242"), pid_from_cell(PID_MAX)))
+    check("f8c-pid-good-accepted", error is None and value == (4242, PID_MAX), "%r %r" % (value, error))
+
+    ps_cases = [
+        ("f8c-ps-row-missing-columns-skipped", "7\n", []),
+        ("f8c-ps-row-nonnumeric-pid-skipped", "abc 1 cmd\n-5 1 cmd\n", []),
+        ("f8c-ps-row-superscript-pid-skipped", "\u00b2 1 cmd\n", []),
+        ("f8c-ps-row-good-kept-after-bad", "abc 1 x\n4242 1 /usr/bin/hermes\n", [(4242, 1, "/usr/bin/hermes")]),
+    ]
+    for name, table, expected in ps_cases:
+        value, error = _f8c_try(lambda: _FakeRuntime(table).ps_table())
+        check(name, error is None and value == expected, "%r %r" % (value, error))
+
+    tmp = tempfile.mkdtemp(prefix="hudfix-f8c-", dir=os.environ.get("TMPDIR"))
+    pid_files = [
+        ("f8c-pidfile-zero-malformed", "0\n"),
+        ("f8c-pidfile-one-malformed", "1\n"),
+        ("f8c-pidfile-negative-malformed", "-7\n"),
+        ("f8c-pidfile-text-malformed", "abc\n"),
+        ("f8c-pidfile-empty-malformed", ""),
+        ("f8c-pidfile-json-float-malformed", '{"pid": 12.7}'),
+        ("f8c-pidfile-json-bool-malformed", '{"pid": true}'),
+        ("f8c-pidfile-json-truncated-malformed", '{"pid": 42'),
+    ]
+    for name, text in pid_files:
+        path = os.path.join(tmp, name + ".pid")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        value, error = _f8c_try(lambda: pid_file_state(path))
+        check(name, error is not None and error.startswith("Malformed"), "%r %r" % (value, error))
+    good = os.path.join(tmp, "good.pid")
+    with open(good, "w", encoding="utf-8") as handle:
+        handle.write("4242\n")
+    value, error = _f8c_try(lambda: pid_file_state(good))
+    check("f8c-pidfile-good-accepted", error is None and (value or {}).get("pid") == 4242, "%r %r" % (value, error))
+
+    state = os.path.join(tmp, "state")
+    os.makedirs(state, exist_ok=True)
+    cache = os.path.join(state, "maclink-status.json")
+    cache_cases = [
+        ("f8c-status-cache-truncated-malformed", '{"source": "hudfix_maclink", "payload": {"ok": tr'),
+        ("f8c-status-cache-non-json-malformed", "relay is up, not json\n"),
+        ("f8c-status-cache-empty-malformed", ""),
+        ("f8c-status-cache-wrong-types-malformed", '{"payload": "ok", "cached_epoch": "soon"}'),
+    ]
+    for name, text in cache_cases:
+        with open(cache, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        value, error = _f8c_try(lambda: status_cache_read({"state_dir": state}))
+        check(name, error is not None and error.startswith("Malformed"), "%r %r" % (value, error))
+    # The kick path never reads the status cache: with a truncated cache on disk
+    # and no board, the plan refuses and no kill is ever recorded.
+    runtime = _FakeRuntime()
+    with open(cache, "w", encoding="utf-8") as handle:
+        handle.write('{"payload": {"ok": tr')
+    value, error = _f8c_try(lambda: plan_kick_bot(
+        {"state_dir": state, "db_path": os.path.join(tmp, "absent.db")}, runtime=runtime))
+    kills = [call for call in runtime.calls if call and call[0] == "kill"]
+    check(
+        "f8c-status-cache-never-kicks",
+        error is None and (value or {}).get("ok") is False and kills == [],
+        "%r %r kills=%r" % ((value or {}).get("ok"), error, kills),
+    )
+
+    for name, pid in [
+        ("f8c-kick-pid-zero-no-signal", 0),
+        ("f8c-kick-pid-one-no-signal", 1),
+        ("f8c-kick-pid-negative-no-signal", -1),
+        ("f8c-kick-pid-text-no-signal", "4242"),
+        ("f8c-kick-pid-float-no-signal", 4242.0),
+        ("f8c-kick-pid-bool-no-signal", True),
+        ("f8c-kick-pid-none-no-signal", None),
+    ]:
+        result, calls = _f8c_kick(pid)
+        check(name, result.get("ok") is False and calls == [], "ok=%r calls=%r" % (result.get("ok"), calls))
+    result, calls = _f8c_kick(4242)
+    check(
+        "f8c-kick-strict-pid-reaches-ps-only",
+        result.get("ok") is False and ["ps", 4242] in calls and not any(c[:1] == ["kill"] for c in calls),
+        "ok=%r calls=%r" % (result.get("ok"), calls),
+    )
+    for name, pid in [("f8c-alive-zero-refused", 0), ("f8c-alive-one-refused", 1), ("f8c-alive-negative-refused", -1)]:
+        check(name, Runtime().alive(pid) is False, "alive(%r) not refused" % (pid,))
+
+
 def self_check():
-    global SELF_CHECK_ASSUME_MAC
+    global SELF_CHECK_ASSUME_MAC, SELF_CHECK_UID, _CLI_BOOT
     SELF_CHECK_ASSUME_MAC = True
+    SELF_CHECK_UID = SELF_CHECK_FAKE_UID
     print("hudfix_maclink self-check (python %s on %s)" % (sys.version.split()[0], sys.platform))
     passed = []
     failed = []
@@ -2464,6 +2670,9 @@ def self_check():
     for path in (stub_dir, fix_dir, temp_home, temp_tmp, work_dir):
         os.makedirs(path, exist_ok=True)
     log_file = os.path.join(root, "stub-commands.log")
+    _CLI_BOOT = os.path.join(root, "boot.py")
+    with open(_CLI_BOOT, "w", encoding="utf-8") as handle:
+        handle.write(_CLI_BOOT_SOURCE)
 
     relay_text = (
         "gui/501/com.nexuslink.bridge-relay = {\n"
@@ -3098,7 +3307,7 @@ def self_check():
             cache_first.get("cached") is False and cache_first.get("cached_at") is None,
             str(cache_first.get("cached")),
         )
-        check("cache-first-probes", len(first_runtime.runs) == 3, str(first_runtime.runs))
+        check("cache-first-probes", len(first_runtime.runs) == 4, str(first_runtime.runs))
         check("cache-file-written", os.path.isfile(cache_file), cache_file)
         second_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
         cache_second = run_status({"state_dir": cache_dir}, None, second_runtime)
@@ -3141,7 +3350,7 @@ def self_check():
         cache_late = run_status({"state_dir": cache_dir}, None, late_runtime)
         check(
             "cache-10.5s-expired",
-            cache_late.get("cached") is False and len(late_runtime.runs) == 3,
+            cache_late.get("cached") is False and len(late_runtime.runs) == 4,
             "cached=%s runs=%s" % (cache_late.get("cached"), len(late_runtime.runs)),
         )
         real_runtime = RecordingRuntime(outputs=cache_outputs, now=cache_now)
@@ -3159,7 +3368,7 @@ def self_check():
         cache_real_late = run_status({"state_dir": cache_dir}, None, real_late_runtime)
         check(
             "cache-real-10.3s-miss",
-            cache_real_late.get("cached") is False and len(real_late_runtime.runs) == 3,
+            cache_real_late.get("cached") is False and len(real_late_runtime.runs) == 4,
             "cached=%s runs=%s" % (cache_real_late.get("cached"), len(real_late_runtime.runs)),
         )
     finally:
@@ -3705,6 +3914,7 @@ def self_check():
     code, stdout, stderr = _cli(["list"], env)
     check("list-without-json-flag", code == 0 and json.loads(stdout).get("ok") is True, repr(stdout[:80]))
 
+    f8c_cases(check)
     print("")
     print("%d passed, %d failed" % (len(passed), len(failed)))
     if failed:

@@ -127,8 +127,9 @@ def read_pid_file(path):
     try:
         with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
             raw = handle.read().strip()
-    except OSError as exc:
-        raise Refusal("cannot read %s: %s" % (shown, exc.strerror or exc))
+    except (OSError, ValueError) as exc:
+        # ValueError covers UnicodeDecodeError: a non-UTF-8 pid file is a refusal.
+        raise Refusal("cannot read %s: %s" % (shown, getattr(exc, "strerror", None) or exc))
     if not raw:
         raise Refusal("%s is empty" % shown)
     if raw.startswith("{"):
@@ -138,11 +139,16 @@ def read_pid_file(path):
             raise Refusal("%s is not valid JSON" % shown)
     else:
         pid = raw
+    # Strict, as in hudfix_maclink.pid_from_cell: a whole pid as text or a JSON
+    # integer. A bool or a float is refused (12.7 must not become 12), and so are
+    # 0, 1 (launchd) and negative values.
+    if isinstance(pid, (bool, float)):
+        raise Refusal("%s does not hold a PID" % shown)
     try:
         value = int(pid)
     except (TypeError, ValueError):
         raise Refusal("%s does not hold a PID" % shown)
-    if value <= 0:
+    if value <= 1 or value > 4194304:
         raise Refusal("%s does not hold a PID" % shown)
     return value
 

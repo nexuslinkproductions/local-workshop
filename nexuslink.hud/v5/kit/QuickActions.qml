@@ -44,6 +44,9 @@ Item {
     readonly property real gridScale: glyphSize / 24
     readonly property real strokeWeight: 1.6   // grid units, about 2.3 px on screen
     readonly property real dotRadius: 1.6      // apps grid dot, grid units
+    // Visualizer ring radius, grid units. 9.5 drew about 47 px outer on screen;
+    // 7.05 gives about 36 px outer at glyphSize 55 (design e-rest: about 36 px).
+    readonly property real ringRadius: 7.05
     readonly property real hoverScale: 1.08
     // Visualizer with no media player: dimmed, a little brighter on hover.
     readonly property real dimOpacity: 0.28
@@ -177,8 +180,8 @@ Item {
                     PathAngleArc {
                         centerX: 12
                         centerY: 12
-                        radiusX: 9.5
-                        radiusY: 9.5
+                        radiusX: root.ringRadius
+                        radiusY: root.ringRadius
                         startAngle: 0
                         sweepAngle: 360
                     }

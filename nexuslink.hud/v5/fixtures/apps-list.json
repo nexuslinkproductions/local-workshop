@@ -1,0 +1,12 @@
+[
+  { "id": "browser", "name": "Chromium", "desktop": "chromium.desktop", "launches": 40, "running": false, "slot": 0 },
+  { "id": "devin", "name": "Devin", "launches": 8, "running": false, "slot": 1 },
+  { "id": "hermes", "name": "Hermes", "launches": 4, "running": true, "slot": 2 },
+  { "id": "spotify", "name": "Spotify", "launches": 3, "running": true, "slot": 3 },
+  { "id": "discord", "name": "Discord", "launches": 5, "running": false, "slot": 4 },
+  { "id": "october", "name": "October", "launches": 4, "running": false, "slot": 5 },
+  { "id": "files", "name": "Files", "launches": 3, "running": false, "slot": 6 },
+  { "id": "obs", "name": "OBS", "launches": 2, "running": false, "slot": 7 },
+  { "id": "terminal", "name": "Terminal", "launches": 1, "running": false, "slot": 8 },
+  { "id": "arc-raiders", "name": "Arc Raiders", "launches": 6, "running": false, "slot": 9, "size": "feature" }
+]

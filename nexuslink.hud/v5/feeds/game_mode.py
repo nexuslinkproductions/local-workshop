@@ -1582,7 +1582,8 @@ def run_self_check(script):
               toggled.get("pause_heavy", {}).get("since"), fixture_since_value)
 
     # 13. toggle on a Mac with no ptt-toggle and no fixture refuses, exit 0
-    rc, refused, out_r, err_r = ok_json(["--toggle"] + common)
+    # host pinned to mac: an unpinned --toggle on Linux runs the live ptt-toggle
+    rc, refused, out_r, err_r = ok_json(["--toggle", "--host", "mac"] + common)
     checks.eq("mac toggle exit", rc, 0)
     checks.eq("mac toggle ok", refused.get("ok"), False)
     checks.true("mac toggle reason", "Linux-only" in str(refused.get("reason")))
@@ -1680,7 +1681,7 @@ def run_self_check(script):
     checks.eq("probe malformed kind", (probe_kind or {}).get("kind"), "malformed")
     rc, toggle_kind, _, _ = ok_json(["--toggle", "--fixture", str(tmp / "nope.json")] + common)
     checks.eq("toggle missing fixture kind", (toggle_kind or {}).get("kind"), "missing")
-    rc, refuse_kind, _, _ = ok_json(["--toggle"] + common)
+    rc, refuse_kind, _, _ = ok_json(["--toggle", "--host", "mac"] + common)
     checks.eq("refusal kind", (refuse_kind or {}).get("kind"), "unavailable")
 
     # 19. a fixture status neither writes nor reads host state without named paths

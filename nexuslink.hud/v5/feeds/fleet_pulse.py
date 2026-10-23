@@ -6,6 +6,15 @@ Emits the Mac Kanban pulse as one JSON object: card counts per status, the
 since this machine booted. The deck reads the cached file; a Quickshell
 Process/FileView never waits on a 1.5 s CLI read.
 
+Cadence and cost (measured with tools/linux/feed-cost.py on the worktree, 10
+runs each): a live read costs about 705 ms CPU and 5 processes per run, of
+which about 625 ms is the `hermes kanban list --json` child. At a 10 s cadence
+that is 7.0 percent of one core; the deck should run the live read every 30 s
+or more (2.3 percent at 30 s). Between live reads the deck runs `--cache-only`:
+it serves the last snapshot with `cached_age_s`, reads no board and spawns
+nothing (about 39 ms CPU per run, 1 process, 0.13 percent at 30 s). With no
+snapshot yet it answers `ok: false, kind: missing`.
+
     {"ok": true, "generated_at": "...", "source": "live",
      "counts": {"running": N, "blocked": N, "ready": N, "review": N,
                 "todo": N, "triage": N, "done_since_boot": N, "other": N, ...},
@@ -801,6 +810,8 @@ def build_parser():
                         help="override boot time (epoch seconds or ISO-8601)")
     parser.add_argument("--cache-path", metavar="PATH",
                         help="cache file (default %s)" % tilde(DEFAULT_CACHE))
+    parser.add_argument("--cache-only", action="store_true",
+                        help="serve the last cached snapshot with its age; never read the board")
     parser.add_argument("--no-cache", action="store_true",
                         help="neither read nor write the cache")
     parser.add_argument("--hermes", metavar="PATH", default="hermes",
@@ -846,6 +857,26 @@ def _caller_error(reason, mode="fixture"):
     return EXIT_PROGRAMMING
 
 
+def cache_only(cache_path):
+    """--cache-only: serve the last snapshot with its true age; never reads the board."""
+    path = os.path.expanduser(cache_path or DEFAULT_CACHE)
+    now = int(time.time())
+    base = {"ok": False, "source": "live", "generated_at": iso(now), "cache_only": True}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            cached = json.load(handle)
+    except FileNotFoundError:
+        return dict(base, reason="no cached snapshot yet", kind="missing"), EXIT_OK
+    except (OSError, ValueError):
+        return dict(base, reason="cached snapshot is not readable JSON", kind="malformed"), EXIT_OK
+    if not isinstance(cached, dict) or not cached.get("ok"):
+        return dict(base, reason="cached snapshot is not an ok payload", kind="malformed"), EXIT_OK
+    generated = epoch_from_iso(cached.get("generated_at"))
+    cached.update({"cached": True, "cache_only": True,
+                   "cached_age_s": None if generated is None else now - generated})
+    return cached, EXIT_OK
+
+
 def main(argv=None):
     global _ACTIVE_MODE
     parser = build_parser()
@@ -853,6 +884,11 @@ def main(argv=None):
 
     if args.self_check:
         return self_check()
+
+    if args.cache_only:
+        payload, code = cache_only(args.cache_path)
+        emit(payload, compact=bool(args.json))
+        return code
 
     mode, ref = "live", None
     if args.fixture:

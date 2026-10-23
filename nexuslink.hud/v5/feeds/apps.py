@@ -170,10 +170,13 @@ def rank(tiles):
 
 
 def load_source(args):
-    if args.fixture:
-        root = common.read_json(args.fixture, "apps fixture")
-    else:
-        root = common.read_json(args.apps, "apps state file")
+    try:
+        if args.fixture:
+            root = common.read_json(args.fixture, "apps fixture")
+        else:
+            root = common.read_json(args.apps, "apps state file")
+    except UnicodeDecodeError:
+        raise common.Malformed("apps input is not UTF-8 text")
     if isinstance(root, dict):
         for key in ("apps", "items", "entries"):
             if isinstance(root.get(key), list):
@@ -260,7 +263,7 @@ def self_check(args):
             print("FAIL %s %s" % (name, detail))
 
     shipped = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "fixtures", "apps.json")
+        os.path.join(os.path.dirname(__file__), "..", "fixtures", "apps-list.json")
     )
     with open(shipped, "r", encoding="utf-8") as handle:
         snapshot = json.load(handle)
@@ -287,11 +290,13 @@ def self_check(args):
         all(ranked[i]["rank_score"] >= ranked[i + 1]["rank_score"] for i in range(len(ranked) - 1)),
         str([tile["rank_score"] for tile in ranked]),
     )
-    check("devin-top", ranked[0]["id"] == "devin" and ranked[0]["launches"] == 8, str(ranked[0]))
+    top = ranked[0] if ranked else {}
+    second = ranked[1] if len(ranked) > 1 else {}
+    check("devin-top", top.get("id") == "devin" and top.get("launches") == 8, str(top))
     check(
         "running-bonus",
-        ranked[1]["id"] == "hermes" and ranked[1].get("recency_bonus") == 0.0,
-        str(ranked[1]),
+        second.get("id") == "hermes" and second.get("recency_bonus") == 0.0,
+        str(second),
     )
     check("spotify-running", next(t for t in apps if t["id"] == "spotify")["running"] is True, "")
 

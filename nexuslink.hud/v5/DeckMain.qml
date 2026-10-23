@@ -260,12 +260,14 @@ Item {
     }
 
     function setClock(d) {
+        hud.nowSec = d.getTime() / 1000
         var days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
         var months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                       "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
         hud.clockText = pad2(d.getHours()) + ":" + pad2(d.getMinutes())
         hud.dayText = days[d.getDay()]
         hud.dateText = d.getDate() + " " + months[d.getMonth()]
+        hud.freshnessTick()
     }
 
     // ---------------------------------------------------------------- feeds
@@ -285,14 +287,27 @@ Item {
     // sessions: crew sessions from the Hermes state db (read-only in the reader).
     Process {
         id: sessionsProc
-        command: ["python3", hud.feedsDir + "/sessions.py"]
+        command: hud.feedCmd.sessions
         running: false
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
+                if (hud.feedRuns.sessions.killed)
+                    return
                 var v = hud.readJson(text, null)
+                // The reader prints an envelope with the rows under "sessions",
+                // or a bare list; both are accepted.
+                var rows = null
                 if (v !== null && v.length !== undefined)
-                    hud.sessions = v
+                    rows = v
+                else if (v !== null && v.sessions !== undefined)
+                    rows = v.sessions
+                if (rows !== null && rows.length !== undefined) {
+                    hud.sessions = rows
+                    hud.feedLive("sessions", v)
+                } else {
+                    hud.feedFail("sessions", v === null ? "no json" : "bad shape")
+                }
             }
         }
     }
@@ -300,14 +315,19 @@ Item {
     // link: tunnel state, RTT median, Mac battery and load.
     Process {
         id: linkProc
-        command: ["python3", hud.feedsDir + "/link.py"]
+        command: hud.feedCmd.link
         running: false
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
-                var v = hud.readJson(text, null)
-                if (v === null || v.ok === false)
+                if (hud.feedRuns.link.killed)
                     return
+                var v = hud.readJson(text, null)
+                if (v === null || v.ok === false) {
+                    hud.feedFail("link", v === null ? "no json" : String(v.reason || "ok false"))
+                    return
+                }
+                hud.feedLive("link", v)
                 if (v.rtt_ms !== undefined)
                     hud.rttMs = Number(v.rtt_ms.median !== undefined ? v.rtt_ms.median : v.rtt_ms)
                 if (v.mac !== undefined) {
@@ -323,14 +343,19 @@ Item {
     // metrics: host load and the local AI model size/activity.
     Process {
         id: metricsProc
-        command: ["python3", hud.feedsDir + "/metrics.py"]
+        command: hud.feedCmd.metrics
         running: false
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
-                var v = hud.readJson(text, null)
-                if (v === null)
+                if (hud.feedRuns.metrics.killed)
                     return
+                var v = hud.readJson(text, null)
+                if (v === null) {
+                    hud.feedFail("metrics", "no json")
+                    return
+                }
+                hud.feedLive("metrics", v)
                 // The `load` bar on the deck is the Mac's load (link.py); the
                 // metrics reader's host load belongs to the box running the
                 // shell, which is a different machine, so it is not bound here.
@@ -347,14 +372,19 @@ Item {
     // apps: the launcher ranking (default set, all set, and the Arc hero).
     Process {
         id: appsProc
-        command: ["python3", hud.feedsDir + "/apps.py"]
+        command: hud.feedCmd.apps
         running: false
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
-                var v = hud.readJson(text, null)
-                if (v === null)
+                if (hud.feedRuns.apps.killed)
                     return
+                var v = hud.readJson(text, null)
+                if (v === null) {
+                    hud.feedFail("apps", "no json")
+                    return
+                }
+                hud.feedLive("apps", v)
                 if (v.default !== undefined)
                     hud.apps = v.default
                 if (v.all !== undefined)
@@ -370,12 +400,13 @@ Item {
     // stays data-free.
     Process {
         id: disksProc
-        command: ["df", "-B1", "--output=source,used,size,target",
-                  "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs", "-x", "overlay"]
+        command: hud.feedCmd.disks
         running: false
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: {
+                if (hud.feedRuns.disks.killed)
+                    return
                 var rows = String(text).split("\n")
                 var out = []
                 for (var i = 1; i < rows.length; ++i) {
@@ -394,8 +425,12 @@ Item {
                         "sizeGb": Math.round(size / 1e9)
                     })
                 }
-                if (out.length > 0)
+                if (out.length > 0) {
                     hud.disks = out
+                    hud.feedLive("disks", null)
+                } else {
+                    hud.feedFail("disks", "no rows")
+                }
             }
         }
     }
@@ -407,7 +442,7 @@ Item {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: { sessionsProc.running = true; linkProc.running = true; metricsProc.running = true }
+        onTriggered: { hud.armFeed("sessions", sessionsProc); hud.armFeed("link", linkProc); hud.armFeed("metrics", metricsProc) }
     }
 
     Timer {
@@ -415,8 +450,192 @@ Item {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: { appsProc.running = true; disksProc.running = true }
+        onTriggered: { hud.armFeed("apps", appsProc); hud.armFeed("disks", disksProc) }
     }
+
+    // ---- freshness (OWNER S2; SHARED3 FRESHNESS CONTRACT) ---------------
+    // nowSec is set by setClock on the 1 Hz clock. Every feed is judged against
+    // it once a second, so a feed goes stale when nothing new arrives and when
+    // its reader hangs. The bookkeeping is plain JS (no bindings); the surface
+    // reads only feedStaleMap and feedAgeMap, and they are replaced only when
+    // their contents change.
+    property real nowSec: Date.now() / 1000
+    readonly property var deckView: surface
+
+    // cadence: the reader timer period. ttl: the largest age of the reader's own
+    // clock (generated_at) before the data is stale. sourceTtl: the same for
+    // source_as_of, when a reader has one. timeout: a reader that has run longer
+    // is killed by the watchdog. Replaceable (the test scenario shortens ttl).
+    property var feedSpecs: ({
+        "sessions": { "cadence": 10, "ttl": 30, "sourceTtl": 30, "timeout": 8 },
+        "link":     { "cadence": 10, "ttl": 30, "sourceTtl": 30, "timeout": 8 },
+        "metrics":  { "cadence": 10, "ttl": 30, "sourceTtl": 30, "timeout": 8 },
+        "apps":     { "cadence": 60, "ttl": 180, "sourceTtl": 180, "timeout": 20 },
+        "disks":    { "cadence": 60, "ttl": 180, "sourceTtl": 180, "timeout": 20 }
+    })
+
+    // Reader commands. Replaceable: the test scenario points a feed at a stub.
+    property var feedCmd: ({
+        "sessions": ["python3", hud.feedsDir + "/sessions.py"],
+        "link": ["python3", hud.feedsDir + "/link.py"],
+        "metrics": ["python3", hud.feedsDir + "/metrics.py"],
+        "apps": ["python3", hud.feedsDir + "/apps.py"],
+        "disks": ["df", "-B1", "--output=source,used,size,target",
+                  "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs", "-x", "overlay"]
+    })
+
+    // Per feed run bookkeeping. origin: none (no answer yet), fixture (the
+    // fallback file is showing), live (a reader answered). lastOk: the latest
+    // attempt was good. killed: the watchdog ended the current run.
+    property var feedRuns: makeRuns()
+    function makeRuns() {
+        var ids = ["sessions", "link", "metrics", "apps", "disks"]
+        var runs = {}
+        for (var i = 0; i < ids.length; ++i)
+            runs[ids[i]] = { seq: 0, startSec: 0, killed: false, origin: "none",
+                             lastOk: true, reason: "", genAtSec: 0, sourceAtSec: 0 }
+        return runs
+    }
+
+    // Outputs the surface reads (see feedStale and feedAgeText).
+    property var feedStaleMap: ({})
+    property var feedAgeMap: ({})
+    property var staleIds: []
+    property var feedState: ({})
+    property string feedSig: ""
+
+    function feedStale(id) { return hud.feedStaleMap[id] === true }
+    function feedAgeText(id) { return String(hud.feedAgeMap[id] || "") }
+
+    function procFor(id) {
+        switch (id) {
+        case "sessions": return sessionsProc
+        case "link": return linkProc
+        case "metrics": return metricsProc
+        case "apps": return appsProc
+        case "disks": return disksProc
+        }
+        return null
+    }
+
+    // Cadence timers call this. A reader still running is left alone: the
+    // watchdog ends it at its timeout, and the next tick starts a new run.
+    function armFeed(id, proc) {
+        var r = hud.feedRuns[id]
+        if (proc.running)
+            return
+        r.seq += 1
+        r.startSec = hud.nowSec
+        r.killed = false
+        proc.running = true
+    }
+
+    function isoSec(s) {
+        var t = Date.parse(String(s))
+        return isNaN(t) ? 0 : t / 1000
+    }
+
+    // The reader's own clock in epoch seconds: generated_at (contract), else the
+    // ts_iso or ts fields that link.py and metrics.py write today. 0 if none.
+    function payloadSec(v) {
+        if (v === null || v === undefined || typeof v !== "object")
+            return 0
+        if (v.generated_at !== undefined) return isoSec(v.generated_at)
+        if (v.ts_iso !== undefined) return isoSec(v.ts_iso)
+        if (v.ts !== undefined) return Number(v.ts)
+        return 0
+    }
+
+    // A good answer from a reader. No clock in the payload (df, a bare list)
+    // means the age is counted from this moment.
+    function feedLive(id, v) {
+        var r = hud.feedRuns[id]
+        var gen = payloadSec(v)
+        r.genAtSec = gen > 0 ? gen : hud.nowSec
+        r.sourceAtSec = (v !== null && typeof v === "object" && v.source_as_of !== undefined)
+                        ? isoSec(v.source_as_of) : 0
+        r.origin = "live"
+        r.lastOk = true
+        r.reason = ""
+    }
+
+    function feedFail(id, why) {
+        var r = hud.feedRuns[id]
+        r.lastOk = false
+        r.reason = String(why)
+    }
+
+    // A fixture file shows only while no reader has answered. Fixture values
+    // keep today's look and carry the state "fixture" (no age judgement).
+    function feedFixtureLoaded(id) {
+        var r = hud.feedRuns[id]
+        if (r.origin === "none")
+            r.origin = "fixture"
+    }
+
+    function judgeFeed(id, now) {
+        var s = hud.feedSpecs[id]
+        var r = hud.feedRuns[id]
+        if (r.origin === "none")
+            return { state: r.lastOk ? "never" : "error", ageSec: 0 }
+        if (r.origin === "fixture")
+            return { state: r.lastOk ? "fixture" : "error", ageSec: 0 }
+        var age = now - r.genAtSec
+        var srcAge = r.sourceAtSec > 0 ? now - r.sourceAtSec : 0
+        if (age > s.ttl || srcAge > s.sourceTtl)
+            return { state: "stale", ageSec: Math.max(age, srcAge) }
+        return { state: r.lastOk ? "live" : "error", ageSec: Math.max(0, age) }
+    }
+
+    // Numbers are hidden (rule c) when stale, never answered, or failing with
+    // no live data. A failing reader keeps its last live data until the ttl.
+    function feedHidden(state, origin) {
+        return state === "stale" || state === "never" || (state === "error" && origin !== "live")
+    }
+
+    function ageText(sec) {
+        if (sec < 60)
+            return Math.floor(sec) + "s"
+        return Math.floor(sec / 60) + "m"
+    }
+
+    // Once a second, from setClock. Runs the watchdog, judges every feed and
+    // publishes the maps. The maps are replaced only when their contents change.
+    function freshnessTick() {
+        var now = hud.nowSec
+        var states = {}
+        var hidden = {}
+        var ages = {}
+        var stale = []
+        for (var id in hud.feedSpecs) {
+            var s = hud.feedSpecs[id]
+            var r = hud.feedRuns[id]
+            var proc = hud.procFor(id)
+            if (proc.running && now - r.startSec > s.timeout) {
+                proc.running = false
+                r.killed = true
+                r.lastOk = false
+                r.reason = "timeout"
+            }
+            var j = hud.judgeFeed(id, now)
+            states[id] = { state: j.state, ageSec: Math.floor(j.ageSec), genAtSec: r.genAtSec,
+                           sourceAtSec: r.sourceAtSec, ttlSec: s.ttl, reason: r.reason,
+                           origin: r.origin, running: proc.running }
+            hidden[id] = hud.feedHidden(j.state, r.origin)
+            ages[id] = j.state === "stale" ? hud.ageText(j.ageSec) : ""
+            if (j.state === "stale")
+                stale.push(id)
+        }
+        hud.feedState = states
+        var sig = JSON.stringify(hidden) + JSON.stringify(ages)
+        if (sig !== hud.feedSig) {
+            hud.feedSig = sig
+            hud.feedStaleMap = hidden
+            hud.feedAgeMap = ages
+            hud.staleIds = stale
+        }
+    }
+
 
     // ---- fixtures --------------------------------------------------------
     // Two jobs: the fallback when a reader is missing (this Mac has no Hermes
@@ -428,7 +647,7 @@ Item {
         path: hud.fixturesDir + "/sessions.json"
         watchChanges: false
         printErrors: false
-        onLoaded: if (hud.sessions.length === 0) hud.sessions = hud.readJson(text(), [])
+        onLoaded: if (hud.sessions.length === 0 && hud.feedRuns.sessions.origin === "none") { hud.sessions = hud.readJson(text(), []); hud.feedFixtureLoaded("sessions") }
     }
 
     FileView {
@@ -440,6 +659,7 @@ Item {
             var v = hud.readJson(text(), null)
             if (v === null)
                 return
+            if (hud.feedRuns.apps.origin === "none") hud.feedFixtureLoaded("apps")
             if (v["default"] !== undefined && hud.apps.length === 0)
                 hud.apps = v["default"]
             if (v.all !== undefined && hud.allApps.length === 0)
@@ -458,6 +678,7 @@ Item {
             var v = hud.readJson(text(), null)
             if (v === null)
                 return
+            if (hud.feedRuns.metrics.origin === "none") hud.feedFixtureLoaded("metrics")
             if (v.local_ai !== undefined && hud.modelGb === 0)
                 hud.modelGb = Number(v.local_ai.size_gb)
             if (v.host !== undefined && v.host.load1_frac !== undefined && hud.loadLevel === 0)
@@ -472,8 +693,9 @@ Item {
         printErrors: false
         onLoaded: {
             var v = hud.readJson(text(), null)
-            if (v === null || hud.rttMs > 0)
+            if (v === null || hud.rttMs > 0 || hud.feedRuns.link.origin !== "none")
                 return
+            hud.feedFixtureLoaded("link")
             if (v.rtt_ms !== undefined)
                 hud.rttMs = Number(v.rtt_ms.median !== undefined ? v.rtt_ms.median : v.rtt_ms)
             if (v.mac !== undefined && v.mac.batt !== undefined)
@@ -540,6 +762,8 @@ Item {
             modelGb: hud.modelGb
             modelActivity: hud.modelActivity
             disks: hud.disks
+            feedStale: hud.feedStaleMap
+            feedAge: hud.feedAgeMap
             focusRequest: hud.focusId
             assembling: hud.assembling
             assembleProgress: hud.assembleProgress
@@ -551,7 +775,7 @@ Item {
 
             // The deck owns focus while a pointer or the keyboard is driving it;
             // the shell keeps its own copy so IPC stays in step.
-            onFocusChanged: function (id) { hud.focusId = id }
+            onDeckFocusChanged: function (id) { hud.focusId = id }
             onLaunchRequested: function (slug) { hud.launch(slug) }
             onSessionActivated: function (sessionId) { hud.focusId = "" }
             onQuickActionRequested: function (actionId) { hud.runQuickAction(actionId) }

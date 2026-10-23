@@ -92,6 +92,22 @@ Item {
     property real modelGb: 0
     property real modelActivity: 0
     property var disks: []
+    // Feed freshness (s2, SHARED3 rule c). feedStale[id] true means the readout
+    // must not show a number (it shows "--" and dims). feedAge[id] is "3m" or
+    // "45s" while the feed is stale, and "" otherwise.
+    property var feedStale: ({})
+    property var feedAge: ({})
+    function isStale(id) { return feedStale[id] === true }
+    function staleText(id) { return String(feedAge[id] || "") }
+
+    // Readout probe (s2, for the stale scenario and tests): what each feed
+    // readout shows now. text is the numeral, label the STALE mark ("" if none).
+    readonly property var readoutProbe: ({
+        "sessions": { "text": crewValue.text, "opacity": crewGroup.opacity, "label": staleCrew.visible ? staleCrew.label : "" },
+        "metrics": { "text": localValue.text, "opacity": localGroup.opacity, "label": staleLocal.visible ? staleLocal.label : "" },
+        "link": { "text": macValue.text, "opacity": macGroup.opacity, "label": staleMac.visible ? staleMac.label : "" },
+        "disks": { "text": storageValue.text, "opacity": storageGroup.opacity, "label": staleStorage.visible ? staleStorage.label : "" }
+    })
     property bool assembling: false
     property real assembleProgress: 1
 
@@ -115,10 +131,10 @@ Item {
     // shell binds (IPC, keybinding, session activation) and `focusId` is the
     // deck's own state, set by a click or a key. Binding one property and also
     // assigning it locally would drop the shell's binding on the first click, so
-    // the shell writes the request and listens to `focusChanged` for the rest.
+    // the shell writes the request and listens to `deckFocusChanged` for the rest.
     property string focusRequest: ""
     property string focusId: ""
-    signal focusChanged(string id)
+    signal deckFocusChanged(string id)
 
     // Bench hook for nexuslink.hud/v5/spike/timing/swarm-bench.cpp, which cycles
     // this property every frame so the frame time is not measured on a cached
@@ -214,14 +230,14 @@ Item {
 
     function toggleFocus(target) {
         focusId = (focusId === target) ? "" : target
-        focusChanged(focusId)
+        deckFocusChanged(focusId)
     }
 
     function clearFocus() {
         if (focusId === "")
             return
         focusId = ""
-        focusChanged("")
+        deckFocusChanged("")
     }
 
     onFocusRequestChanged: {
@@ -341,6 +357,7 @@ Item {
             // ------------------------------------------------------------ crew
             Item {
                 id: crewGroup
+                opacity: deck.isStale("sessions") ? 0.45 : 1
 
                 x: deck.marginX - deck.crewSize / 2
                 y: deck.bandY - deck.crewSize / 2
@@ -362,7 +379,7 @@ Item {
                     size: deck.crewSize
                     focusLevel: 0
                     expanded: deck.focusId === "crew"
-                    sessions: deck.sessions
+                    sessions: deck.isStale("sessions") ? [] : deck.sessions
                     animate: deck.animate
 
                     onSessionActivated: function (sessionId) { deck.sessionActivated(sessionId) }
@@ -376,8 +393,15 @@ Item {
 
                     DeckLabel { anchors.horizontalCenter: parent.horizontalCenter; text: "CREW" }
                     DeckValue {
+                        id: crewValue
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: deck.sessions.length > 0 ? String(deck.sessions.length) : ""
+                        text: deck.isStale("sessions") ? "--" : (deck.sessions.length > 0 ? String(deck.sessions.length) : "")
+                    }
+                    StaleMark {
+                        id: staleCrew
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: String(deck.feedAge.sessions || "") !== ""
+                        label: "STALE " + String(deck.feedAge.sessions || "")
                     }
                 }
             }
@@ -388,6 +412,7 @@ Item {
             // fill from the bottom like a level.
             Item {
                 id: localGroup
+                opacity: deck.isStale("metrics") ? 0.45 : 1
 
                 x: deck.rightX - deck.barWidth / 2
                 y: deck.bandY - deck.barWidth / 2
@@ -422,8 +447,15 @@ Item {
 
                     DeckLabel { anchors.horizontalCenter: parent.horizontalCenter; text: "LOCAL" }
                     DeckValue {
+                        id: localValue
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: deck.modelGb > 0 ? deck.modelGb.toFixed(1) + " GB" : ""
+                        text: deck.isStale("metrics") ? "--" : (deck.modelGb > 0 ? deck.modelGb.toFixed(1) + " GB" : "")
+                    }
+                    StaleMark {
+                        id: staleLocal
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: String(deck.feedAge.metrics || "") !== ""
+                        label: "STALE " + String(deck.feedAge.metrics || "")
                     }
                 }
             }
@@ -433,6 +465,7 @@ Item {
             // stacked dot-bars: the tunnel RTT on top, the Mac's load under it.
             Item {
                 id: macGroup
+                opacity: deck.isStale("link") ? 0.45 : 1
 
                 x: deck.marginX - deck.barWidth / 2
                 y: deck.lowerY - deck.barHeight - Tokens.sp2
@@ -477,8 +510,15 @@ Item {
 
                     DeckLabel { anchors.horizontalCenter: parent.horizontalCenter; text: "MAC" }
                     DeckValue {
+                        id: macValue
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: deck.rttMs > 0 ? Math.round(deck.rttMs) + " ms" : ""
+                        text: deck.isStale("link") ? "--" : (deck.rttMs > 0 ? Math.round(deck.rttMs) + " ms" : "")
+                    }
+                    StaleMark {
+                        id: staleMac
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: String(deck.feedAge.link || "") !== ""
+                        label: "STALE " + String(deck.feedAge.link || "")
                     }
                 }
             }
@@ -488,6 +528,7 @@ Item {
             // One bar per disk; the cell grid is what two rows read as.
             Item {
                 id: storageGroup
+                opacity: deck.isStale("disks") ? 0.45 : 1
 
                 x: deck.rightX - deck.barWidth / 2
                 y: deck.lowerY - deck.barHeight - Tokens.sp2
@@ -530,8 +571,15 @@ Item {
 
                     DeckLabel { anchors.horizontalCenter: parent.horizontalCenter; text: "STORAGE" }
                     DeckValue {
+                        id: storageValue
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: deck.disks.length > 0 ? deck.disks[0].usedGb + " GB" : ""
+                        text: deck.isStale("disks") ? "--" : (deck.disks.length > 0 ? deck.disks[0].usedGb + " GB" : "")
+                    }
+                    StaleMark {
+                        id: staleStorage
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: String(deck.feedAge.disks || "") !== ""
+                        label: "STALE " + String(deck.feedAge.disks || "")
                     }
                 }
             }
@@ -539,7 +587,7 @@ Item {
 
         // ------------------------------------------------------- launcher, find
         // The right-hand chrome drifts too, on its own phase and the *minimum*
-        // amplitude: "nothing on the deck is ever fully still". The 96 px clock
+        // amplitude: "nothing on the deck is ever fully still". The 100 px clock
         // is the one exception - a wobble on type that large reads as broken
         // typography, not as life.
         Item {
