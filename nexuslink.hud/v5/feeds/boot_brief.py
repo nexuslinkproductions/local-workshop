@@ -2,7 +2,7 @@
 """Boot briefing for the v5 HUD: facts first, phrasing second.
 
 Runs at boot on the box that owns the deck and answers one question: *what
-happened while the screen was off, and does anything need me?* It writes two
+happened while the screen was off, and does anything need me?* It writes its
 files into the run directory (default ``~/.local/state/nexuslink``, override
 with ``--out DIR``), atomically:
 
@@ -12,7 +12,7 @@ with ``--out DIR``), atomically:
 
         {"ok": true, "generated_at": "<UTC ISO>", "source": "fixture|live",
          "since": "<UTC ISO>",
-         "since_source": "boot|brief|both|none",
+         "since_source": "stored|boot|override|fixture|none",
          "fleet": {"finished": N, "blocked": N, "failed": N, "still_running": N},
          "highlights": [{"id", "title", "status", "assignee", "at"}],
          "needs_me": [{"id", "title", "status"}],
@@ -24,6 +24,11 @@ with ``--out DIR``), atomically:
 ``brief.txt``
     The same facts as five short plain lines for the deck to show and for chief
     to read aloud. No numbers that are not in ``brief.json``.
+
+``brief_anchor.json``
+    The window this brief ended at, plus the completion pairs it already
+    reported (see **Since** and **Dedupe** below). Written only by a live run
+    that produced a brief from a readable board; ``--reset-anchor`` removes it.
 
 When the board cannot be read at all (CLI failed and the database is missing or
 unreadable, or the board fixture is malformed), ``ok`` is false, the ``fleet``
@@ -46,17 +51,34 @@ Facts, and what is honest about each one
   unreadable, not an empty board. ``board.source`` says which path answered
   and ``board.reason`` says why the CLI did not. When neither path answers,
   ``ok`` is false with that reason and no counts.
-* **Since.** ``max(kern.boottime, previous brief.json generated_at)``: the brief
-  covers what happened since the machine was last up *or* since the last brief,
-  whichever is later. ``--since`` overrides it (tests). ``since_source`` says
-  which of the two won: ``boot``, ``brief``, ``both``, ``override`` or ``none``.
-  In fixture mode neither the host boot time nor a previous brief is read: only
-  ``--boot`` / ``--since`` supply the anchor, otherwise ``since`` is null.
-  A previous brief is an anchor only when it is ``ok: true`` with
-  ``source: "live"``: a fixture brief or a run that could not read the board
-  never moves the window.
+* **Since — the brief's own anchor.** The window starts where the last good
+  brief ended, kept in ``brief_anchor.json`` in the run directory
+  (``~/.local/state/nexuslink`` by default, ``--out`` elsewhere)::
+
+      {"anchor": "<UTC ISO>",
+       "reported": ["<task_id>@<completed_at>", ...],
+       "written_at": "<UTC ISO>",
+       "schema": 1}
+
+  Resolution order, live mode: the stored anchor when that file exists and
+  parses; otherwise ``kern.boottime`` (first ever run on this host); otherwise
+  null with a reason in ``finished_reason``. Boot time is a *first-run fallback
+  only*: it is never consulted once a stored anchor exists, because a boot time
+  would silently re-open a window the last good run had already closed. The
+  file is written *only* by a live run that produced a brief from readable
+  inputs (``ok: true``, atomic replace); an unreadable run writes nothing and
+  advances nothing. ``since_source`` says which source won: ``stored``,
+  ``boot``, ``override``, ``fixture`` or ``none``. ``brief.json`` is the deck's
+  cache, not an anchor. ``--reset-anchor`` removes the file -- anchor and
+  reported set -- prints what it removed, and does nothing else.
+* **Dedupe.** A completion counts only when ``completed_at`` is strictly after
+  the anchor *and* its pair ``<task_id>@<completed_at>`` is not already in
+  ``reported`` (the epoch as the board carries it, e.g. ``t_early@1792650000``).
+  A successful run appends the pairs it reported and keeps the newest
+  ``REPORTED_CAP`` (200), so a re-anchor cannot resurrect a card already shown.
+  Pairs already in the set are named on stderr as previously reported.
 * **Buckets.** ``fleet.finished`` is *windowed*: cards ``done`` whose
-  ``completed_at`` is at or after ``since``. A card marked ``done`` with no
+  ``completed_at`` is strictly after ``since``. A card marked ``done`` with no
   ``completed_at`` is never counted as finished. When there is no window start
   at all, ``since`` is null, ``fleet.finished`` is null (never ``0``) and
   ``finished_reason`` says what was missing. ``blocked``, ``failed`` and
@@ -96,11 +118,16 @@ Fixture mode
 ------------
 ``--fixture PATH`` reads from a fixture file or directory instead of the live
 host, with no host state: no board CLI, no database, no cache, no ``sysctl``
-boot time, no host digest, no Slack probe. A directory must hold ``board.json``;
-``digest.json`` and ``slack.json`` are optional, and the specific
-``--board-fixture`` / ``--digest-fixture`` / ``--slack-fixture`` flags win over
-what the directory supplies. ``--fixture`` on a missing path, or on a directory
-without ``board.json``, is a bad argument, not a data problem.
+boot time, no host digest, no Slack probe, and **no anchor file** -- it is
+neither read nor written, because a fixture is not evidence about this host's
+window. The anchor comes from ``--since``, else ``--boot``, else the board
+fixture's own ``"anchor"`` field (a fixture may be ``{"cards": [...],
+"anchor": "..."}``); a fixture anchor that does not parse is treated as absent.
+A directory must hold ``board.json``; ``digest.json`` and ``slack.json`` are
+optional, and the specific ``--board-fixture`` / ``--digest-fixture`` /
+``--slack-fixture`` flags win over what the directory supplies. ``--fixture`` on
+a missing path, or on a directory without ``board.json``, is a bad argument, not
+a data problem.
 
 Exit codes follow the feed contract: ``0`` for data and for honest absence
 (``ok:false`` plus a reason), ``2`` for a programming error such as a bad
@@ -135,6 +162,12 @@ CACHE_MIN_SECONDS = 10        # never re-read the board faster than this
 HIGHLIGHT_LIMIT = 5
 NEEDS_ME_SHOWN = 3            # names printed in brief.txt, not in the JSON
 CLI_TIMEOUT = 25
+
+# The brief's own anchor: the window it ended at plus the completion pairs it
+# already reported. Written only by a live ok run, atomically, in the run dir.
+ANCHOR_NAME = "brief_anchor.json"
+ANCHOR_SCHEMA = 1
+REPORTED_CAP = 200            # newest pairs kept; a longer list loses the oldest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE_BOARD = os.path.normpath(os.path.join(HERE, "..", "fixtures", "boot-brief-board.json"))
@@ -494,6 +527,152 @@ def slack_from_fixture(path, reason_default):
     }
 
 
+# ----------------------------------------------------------------- anchor file
+class Brief(dict):
+    """The fact object, plus the bookkeeping ``main`` persists. Never JSON."""
+
+    anchor_record: dict | None = None
+
+
+def anchor_path(out_dir):
+    """The anchor file lives beside the brief it belongs to."""
+    return os.path.join(out_dir, ANCHOR_NAME)
+
+
+def pair_key(card):
+    """``<task_id>@<completed_at>``: one completion, as the board carries it."""
+    return "%s@%d" % (card["id"], card["completed_at"])
+
+
+def pair_epoch(pair):
+    """The ``completed_at`` inside a pair; None when the pair is not ours."""
+    _, _, raw = str(pair).rpartition("@")
+    return integer(raw)
+
+
+def read_anchor_file(path):
+    """Stored anchor facts as ``(state, problem)``; never raises.
+
+    ``state`` is ``{"anchor": float|None, "anchor_text": str|None,
+    "reported": [pair, ...]}``, or None when the file is absent or is not a
+    JSON object. ``problem`` is None only when an anchor was actually usable:
+    ``missing``, ``unreadable: <Error>``, ``not a JSON object``, or a named
+    fault in the anchor field. A file that parses but carries no usable anchor
+    still lends its ``reported`` set: what a past brief already said is good
+    evidence even when the anchor itself is junk.
+    """
+    payload, problem = read_json_file(path)
+    if problem == "missing":
+        return None, "missing"
+    if problem:
+        return None, problem
+    if not isinstance(payload, dict):
+        return None, "not a JSON object"
+    raw_anchor = payload.get("anchor")
+    anchor = parse_epoch(raw_anchor)
+    reported = []
+    raw_reported = payload.get("reported")
+    if isinstance(raw_reported, list):
+        for item in raw_reported:
+            if isinstance(item, str) and item.strip() and item.strip() not in reported:
+                reported.append(item.strip())
+    state = {
+        "anchor": anchor,
+        "anchor_text": raw_anchor if isinstance(raw_anchor, str) else None,
+        "reported": reported,
+    }
+    if anchor is None:
+        if raw_anchor is None:
+            return state, "anchor field missing"
+        return state, "anchor field %r is not a timestamp" % (raw_anchor,)
+    return state, None
+
+
+def merge_reported(previous, pairs):
+    """Previous pairs plus ``(completed_at, pair)``, oldest first, newest kept.
+
+    ``REPORTED_CAP`` is a ceiling: on overflow the oldest entries go, so the set
+    always holds the most recent completions. A pair already present keeps its
+    first position and is never duplicated.
+    """
+    entries = {}
+    position = 0
+    for pair in previous:
+        if not isinstance(pair, str) or not pair or pair in entries:
+            continue
+        entries[pair] = (pair_epoch(pair), position)
+        position += 1
+    for completed_at, pair in pairs:
+        if pair in entries:
+            continue
+        entries[pair] = (completed_at, position)
+        position += 1
+    ordered = sorted(
+        entries.items(),
+        key=lambda item: (-1.0 if item[1][0] is None else float(item[1][0]),
+                          item[1][1]))
+    return [pair for pair, _ in ordered[-REPORTED_CAP:]]
+
+
+def write_anchor_file(path, anchor_epoch, reported, now_epoch):
+    """Atomic write of anchor + reported set. Raises OSError like any write."""
+    body = json.dumps({
+        "anchor": iso(anchor_epoch),
+        "reported": list(reported),
+        "written_at": iso(now_epoch),
+        "schema": ANCHOR_SCHEMA,
+    }, indent=2) + "\n"
+    write_atomic(path, body)
+    return body
+
+
+def reset_anchor(path):
+    """``--reset-anchor``: drop the stored anchor and reported set, nothing else."""
+    shown = display_path(path)
+    state, problem = read_anchor_file(path)
+    if state is None and problem == "missing":
+        print("anchor: nothing to remove at %s" % shown, file=sys.stderr)
+        return EXIT_OK
+    if state is None:
+        print("anchor: removed %s (was %s)" % (shown, problem), file=sys.stderr)
+    else:
+        print("anchor: removed %s (anchor %s, %d reported pair(s) dropped)"
+              % (shown, state["anchor_text"] or "none", len(state["reported"])),
+              file=sys.stderr)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print("anchor: could not remove %s (%s: %s)"
+              % (shown, type(exc).__name__, exc), file=sys.stderr)
+        return EXIT_PROGRAMMING
+    return EXIT_OK
+
+
+def anchor_notes(record):
+    """The stderr lines that say where the window came from and what was held back."""
+    shown = display_path(record["path"])
+    notes = []
+    problem = record.get("problem")
+    if problem == "missing":
+        notes.append("anchor: no stored anchor at %s" % shown)
+    elif problem:
+        notes.append("anchor: %s unusable (%s)" % (shown, problem))
+    if record.get("since") is None:
+        notes.append("anchor: none (%s)" % (record.get("reason") or "unknown"))
+    else:
+        notes.append("anchor: %s %s" % (record["source"], iso(record["since"])))
+    already = record.get("already") or []
+    if already:
+        notes.append("anchor: %d completion(s) previously reported, held back: %s%s"
+                     % (len(already), ", ".join(already[:5]),
+                        " ..." if len(already) > 5 else ""))
+    else:
+        notes.append("anchor: 0 completions previously reported")
+    return notes
+
+
 # -------------------------------------------------------------- board sources
 def boot_epoch():
     """kern.boottime seconds on Darwin; None anywhere else or on failure."""
@@ -594,14 +773,22 @@ def board_from_db(path=None):
 
 
 def board_from_fixture(path):
+    """``(cards, anchor, problem)``: a fixture board and its own anchor field.
+
+    A fixture may be a bare list or ``{"cards": [...], "anchor": "<stamp>"}``.
+    The anchor is the fixture's window start; it is never host state, and one
+    that does not parse is treated as absent rather than failing the run.
+    """
     payload, problem = read_json_file(path)
     if problem:
-        return None, "board fixture %s" % problem
+        return None, None, "board fixture %s" % problem
+    fixture_anchor = None
     if isinstance(payload, dict):  # tolerate {"cards": [...]} as well as a bare list
+        fixture_anchor = parse_epoch(payload.get("anchor"))
         payload = payload.get("cards")
     if not isinstance(payload, list):
-        return None, "board fixture is not a list"
-    return payload, None
+        return None, None, "board fixture is not a list"
+    return payload, fixture_anchor, None
 
 
 # ------------------------------------------------------------------- bucketing
@@ -610,14 +797,17 @@ def bucket(cards, since_epoch):
 
     ``finished`` is ``None`` when ``since_epoch`` is ``None``: a window with no
     start has no measured finished count, and a zero would be a claim the run
-    cannot make. The other three buckets are present tense and always count.
+    cannot make. A completion counts only when it is *strictly after* the
+    window start: the start is the moment the last good brief ended, and that
+    brief already spoke for it. The other three buckets are present tense and
+    always count.
     """
     finished, blocked, failed, running, needs_me = [], [], [], [], []
     for card in cards:
         status = card["status"]
         if status == "done":
             completed = card["completed_at"]
-            if completed is not None and since_epoch is not None and completed >= since_epoch:
+            if completed is not None and since_epoch is not None and completed > since_epoch:
                 finished.append(card)
             continue
         if status == "blocked":
@@ -853,8 +1043,9 @@ def generate(args):
         raise ArgError("--now is not a timestamp")
 
     # Board.
+    fixture_anchor = None
     if args.board_fixture:
-        raw_cards, board_problem = board_from_fixture(args.board_fixture)
+        raw_cards, fixture_anchor, board_problem = board_from_fixture(args.board_fixture)
         board_source = "fixture"
     else:
         raw_cards, board_problem = board_from_cli()
@@ -876,49 +1067,53 @@ def generate(args):
             board_problem = ("board has %d row(s) and none is a card (no row "
                              "carries an id)" % len(raw_cards))
 
-    # Since: boot time or the previous brief, whichever is later. Fixture mode
-    # reads neither of them unless the caller supplied --boot / --since. Only a
-    # brief the live path wrote and could stand behind (ok true, source live) is
-    # an anchor: a fixture brief or an unreadable run is not evidence of time
-    # passing, and taking its stamp would drop cards from the window.
+    # Anchor: where the window starts. Live mode reads the brief's own anchor
+    # file and nothing else -- brief.json is the deck's cache, not evidence of
+    # time passing. Boot time is the first-run fallback only: once a stored
+    # anchor exists, kern.boottime is never consulted, or a run that could not
+    # read the board would re-open a window the last good run had closed.
+    # Fixture mode never reads or writes that file (fixture purity).
+    local_out = os.path.abspath(os.path.expanduser(
+        getattr(args, "out", None) or DEFAULT_OUT))
+    stored_path = anchor_path(local_out)
+    stored = None                 # the parsed anchor file, when there is one
+    stored_problem = None         # why it could not supply an anchor
+    reported = []                 # pairs already reported, oldest first
+    anchor_epoch = None
     since_reason = None
+
     if args.since is not None:
         since_epoch = parse_epoch(args.since)
         if since_epoch is None:
             raise ArgError("--since is not a timestamp")
         since_source = "override"
+    elif fixtures_only:
+        boot_hint = parse_epoch(args.boot) if args.boot is not None else None
+        if boot_hint is not None:
+            anchor_epoch, since_source = boot_hint, "boot"
+        elif fixture_anchor is not None:
+            anchor_epoch, since_source = fixture_anchor, "fixture"
+        else:
+            anchor_epoch, since_source = None, "none"
+            since_reason = ("fixture mode: no --since, no --boot and no anchor "
+                            "field in the board fixture")
+        since_epoch = anchor_epoch
     else:
-        if args.boot is not None:
-            boot = parse_epoch(args.boot)
-        elif fixtures_only:
-            boot = None
+        stored, stored_problem = read_anchor_file(stored_path)
+        if stored is not None:
+            reported = stored["reported"]
+            anchor_epoch = stored["anchor"]
+        if anchor_epoch is not None:
+            since_source = "stored"
         else:
-            boot = boot_epoch()
-        previous = None
-        if not fixtures_only:
-            previous_payload, _ = read_json_file(os.path.join(args.out, "brief.json"))
-            if (isinstance(previous_payload, dict)
-                    and previous_payload.get("ok") is True
-                    and previous_payload.get("source") == "live"):
-                previous = parse_epoch(previous_payload.get("generated_at"))
-        candidates = [value for value in (boot, previous) if value is not None]
-        since_epoch = max(candidates) if candidates else None
-        if boot is not None and previous is not None:
-            since_source = "both" if boot == previous else (
-                "boot" if boot > previous else "brief")
-        elif boot is not None:
-            since_source = "boot"
-        elif previous is not None:
-            since_source = "brief"
-        else:
-            since_source = "none"
-        if since_epoch is None:
-            if fixtures_only:
-                since_reason = ("fixture mode read no boot time and no previous "
-                                "brief, and neither --boot nor --since was given")
+            boot = parse_epoch(args.boot) if args.boot is not None else boot_epoch()
+            if boot is not None:
+                anchor_epoch, since_source = boot, "boot"
             else:
-                since_reason = ("no readable boot time, no previous live brief "
-                                "and no --since")
+                anchor_epoch, since_source = None, "none"
+                since_reason = ("no stored anchor at %s, no readable boot time "
+                                "and no --since" % display_path(stored_path))
+        since_epoch = anchor_epoch
 
     # Digest: fixture mode never reads the host digest.
     if args.digest_fixture:
@@ -970,6 +1165,21 @@ def generate(args):
         if not any(existing["id"] == entry["id"] for existing in needs_me):
             needs_me.append(entry)
 
+    # Dedupe against the pairs a past brief already reported. The set is
+    # consulted over the whole board, not only over this window: a card the last
+    # good brief named stays named after the anchor has moved past it, so a
+    # re-anchor can never quietly report it a second time.
+    reported_set = set(reported)
+    already = []
+    if reported_set:
+        for card in cards:
+            if (card["status"] == "done" and card["completed_at"] is not None
+                    and pair_key(card) in reported_set):
+                already.append(pair_key(card))
+        already.sort(key=lambda pair: (-(pair_epoch(pair) or 0), pair))
+    if finished is not None:
+        finished = [card for card in finished if pair_key(card) not in reported_set]
+
     finished_count = None if finished is None else len(finished)
     payload = {
         "ok": True,
@@ -997,7 +1207,26 @@ def generate(args):
     })
     if board_problem:
         payload["board"]["reason"] = text(board_problem, limit=200)
-    return payload
+
+    # What main() persists: the window this brief ended at (the run's own clock,
+    # so the next good run never has to ask the boot time again) and the pairs
+    # it just reported. A readable board with an unknown window still advances
+    # the anchor -- nothing was counted, but the next run then has a start.
+    brief = Brief(payload)
+    if not fixtures_only:
+        fresh = [(card["completed_at"], pair_key(card)) for card in (finished or [])]
+        brief.anchor_record = {
+            "path": stored_path,
+            "anchor": now,
+            "since": since_epoch,
+            "reported": merge_reported(reported, fresh),
+            "new": len(fresh),
+            "source": since_source,
+            "problem": stored_problem,
+            "already": already,
+            "reason": since_reason,
+        }
+    return brief
 
 
 def write_outputs(payload, out_dir):
@@ -1712,12 +1941,16 @@ def self_check():
                   "still_running": None},
         "board": {"source": "db", "cards": None},
     })
-    write_atomic(os.path.join(live_out, "brief.json"),
+    # Its own directory: the check above advanced the anchor in live_out, and
+    # this one must prove a stale unreadable brief.json is not an anchor.
+    failed_out = os.path.join(scratch, "failed-cache-out")
+    os.makedirs(failed_out, exist_ok=True)
+    write_atomic(os.path.join(failed_out, "brief.json"),
                  json.dumps(failed_cache) + "\n")
     globals()["board_from_cli"] = lambda: ([], None)
     try:
         anchor_rc, anchor_stdout, anchor_stderr = quiet_main([
-            "--out", live_out, "--no-slack", "--json",
+            "--out", failed_out, "--no-slack", "--json",
             "--now", str(GOLDEN_NOW), "--boot", str(GOLDEN_BOOT)])
     finally:
         globals()["board_from_cli"] = saved_cli
@@ -1726,7 +1959,241 @@ def self_check():
           and '"since_source": "boot"' in anchor_stdout,
           "rc=%r stderr=%r" % (anchor_rc, anchor_stderr.strip()[:140]), report)
 
-    # 25. A digest file that exists but does not parse is named, not called a
+    # 25. The brief's own anchor (brief_anchor.json): the round-3 repro, the
+    #     resolution order, dedupe across a re-anchor, --reset-anchor, a corrupt
+    #     file, the 200-pair cap, the exclusive window edge and fixture purity.
+    def read_bytes(path):
+        try:
+            with open(path, "rb") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    anchor_board = [
+        {"id": "t_early", "title": "early finish", "status": "done",
+         "assignee": "yamato", "completed_at": 1792650000},
+        {"id": "t_run1", "title": "still running card", "status": "running",
+         "assignee": "levi", "completed_at": None},
+    ]
+    saved_db = globals()["board_from_db"]
+    anchor_out = os.path.join(scratch, "anchor-out")
+    anchor_file = anchor_path(anchor_out)
+    boot_stamp, good_one, good_two = 1792600000, 1792700000, 1792707200
+
+    globals()["board_from_cli"] = lambda: (list(anchor_board), None)
+    try:
+        run1_rc, run1_stdout, run1_stderr = quiet_main([
+            "--out", anchor_out, "--no-slack", "--json", "--force",
+            "--now", str(good_one), "--boot", str(boot_stamp)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+    run1 = json.loads(run1_stdout) if run1_stdout.strip() else {}
+    run1_raw, run1_problem = read_json_file(anchor_file)
+    if not isinstance(run1_raw, dict):
+        run1_raw = {}
+    check("first live run falls back to the boot time and writes the anchor",
+          run1_rc == EXIT_OK and run1.get("ok") is True
+          and run1.get("since_source") == "boot"
+          and run1.get("since") == iso(boot_stamp)
+          and run1.get("fleet", {}).get("finished") == 1
+          and run1_problem is None
+          and run1_raw.get("anchor") == iso(good_one)
+          and run1_raw.get("reported") == ["t_early@1792650000"]
+          and parse_epoch(run1_raw.get("written_at")) is not None
+          and run1_raw.get("schema") == ANCHOR_SCHEMA,
+          "rc=%r since=%r anchor_file=%r" % (
+              run1_rc, run1.get("since"), run1_raw), report)
+
+    before_bytes = read_bytes(anchor_file)
+    globals()["board_from_cli"] = lambda: (None, "simulated list failure")
+    globals()["board_from_db"] = lambda path=None: (None, "no board db")
+    try:
+        run2_rc, run2_stdout, run2_stderr = quiet_main([
+            "--out", anchor_out, "--no-slack", "--json", "--force",
+            "--now", str(good_one + 3600), "--boot", str(boot_stamp)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+        globals()["board_from_db"] = saved_db
+    run2 = json.loads(run2_stdout) if run2_stdout.strip() else {}
+    check("an unreadable live run writes nothing and moves nothing",
+          run2_rc == EXIT_OK and run2.get("ok") is False
+          and read_bytes(anchor_file) == before_bytes
+          and "not advanced" in run2_stderr,
+          "rc=%r changed=%r stderr=%r" % (
+              run2_rc, read_bytes(anchor_file) != before_bytes,
+              run2_stderr.strip()[:160]), report)
+
+    globals()["board_from_cli"] = lambda: (list(anchor_board), None)
+    try:
+        run3_rc, run3_stdout, run3_stderr = quiet_main([
+            "--out", anchor_out, "--no-slack", "--json", "--force",
+            "--now", str(good_two), "--boot", str(boot_stamp)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+    run3 = json.loads(run3_stdout) if run3_stdout.strip() else {}
+    check("the next good run keeps the stored anchor and does not re-count",
+          run3_rc == EXIT_OK and run3.get("ok") is True
+          and run3.get("since_source") == "stored"
+          and run3.get("since") == iso(good_one)
+          and run3.get("fleet", {}).get("finished") == 0
+          and run3.get("highlights") == []
+          and "1 completion(s) previously reported" in run3_stderr
+          and "t_early@1792650000" in run3_stderr,
+          "rc=%r since=%r fleet=%r stderr=%r" % (
+              run3_rc, run3.get("since"), run3.get("fleet"),
+              run3_stderr.strip()[:200]), report)
+    stored_three, stored_problem = read_anchor_file(anchor_file)
+    check("a good run advances the anchor to its own clock",
+          stored_problem is None and stored_three is not None
+          and stored_three["anchor"] == float(good_two)
+          and stored_three["reported"] == ["t_early@1792650000"],
+          repr((stored_problem, stored_three)), report)
+
+    # A stored anchor is never overruled by a later boot time.
+    precedence_out = os.path.join(scratch, "precedence-out")
+    write_anchor_file(anchor_path(precedence_out), good_one,
+                      ["t_early@1792650000"], good_one)
+    globals()["board_from_cli"] = lambda: (list(anchor_board), None)
+    try:
+        prec_rc, prec_stdout, _ = quiet_main([
+            "--out", precedence_out, "--no-slack", "--json", "--force",
+            "--now", str(good_two), "--boot", str(good_one + 100000)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+    prec = json.loads(prec_stdout) if prec_stdout.strip() else {}
+    check("a stored anchor beats a later boot time",
+          prec_rc == EXIT_OK and prec.get("since_source") == "stored"
+          and prec.get("since") == iso(good_one),
+          "rc=%r since=%r source=%r" % (
+              prec_rc, prec.get("since"), prec.get("since_source")), report)
+
+    # The window would include t_early again, but the pair is already reported.
+    reanchor_out = os.path.join(scratch, "reanchor-out")
+    write_anchor_file(anchor_path(reanchor_out), 1792640000,
+                      ["t_early@1792650000"], 1792640000)
+    globals()["board_from_cli"] = lambda: (list(anchor_board), None)
+    try:
+        re_rc, re_stdout, re_stderr = quiet_main([
+            "--out", reanchor_out, "--no-slack", "--json", "--force",
+            "--now", str(good_two)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+    re_payload = json.loads(re_stdout) if re_stdout.strip() else {}
+    check("a pair already reported is not counted in a re-opened window",
+          re_rc == EXIT_OK and re_payload.get("since") == iso(1792640000)
+          and re_payload.get("fleet", {}).get("finished") == 0
+          and "1 completion(s) previously reported" in re_stderr,
+          "rc=%r fleet=%r stderr=%r" % (
+              re_rc, re_payload.get("fleet"), re_stderr.strip()[:180]), report)
+
+    # --reset-anchor: anchor and set gone, brief.json untouched, and the report
+    # says what it removed.
+    brief_before = read_bytes(os.path.join(anchor_out, "brief.json"))
+    reset_rc, _, reset_stderr = quiet_main(["--out", anchor_out, "--reset-anchor"])
+    check("--reset-anchor removes the anchor and the reported set",
+          reset_rc == EXIT_OK and not os.path.exists(anchor_file)
+          and (iso(good_two) or "?") in reset_stderr
+          and "1 reported pair(s) dropped" in reset_stderr
+          and read_bytes(os.path.join(anchor_out, "brief.json")) == brief_before,
+          "rc=%r exists=%r stderr=%r" % (
+              reset_rc, os.path.exists(anchor_file), reset_stderr.strip()[:200]),
+          report)
+    again_rc, _, again_stderr = quiet_main(["--out", anchor_out, "--reset-anchor"])
+    check("--reset-anchor on a missing file says so and exits 0",
+          again_rc == EXIT_OK and "nothing to remove" in again_stderr,
+          "rc=%r stderr=%r" % (again_rc, again_stderr.strip()[:160]), report)
+
+    # A corrupt anchor file is absent with a reason, never a crash.
+    corrupt_out = os.path.join(scratch, "corrupt-out")
+    os.makedirs(corrupt_out, exist_ok=True)
+    write_atomic(anchor_path(corrupt_out), "{not json\n")
+    globals()["board_from_cli"] = lambda: (list(anchor_board), None)
+    try:
+        corrupt_rc, corrupt_stdout, corrupt_stderr = quiet_main([
+            "--out", corrupt_out, "--no-slack", "--json", "--force",
+            "--now", str(good_two), "--boot", str(boot_stamp)])
+    finally:
+        globals()["board_from_cli"] = saved_cli
+    corrupt = json.loads(corrupt_stdout) if corrupt_stdout.strip() else {}
+    check("a corrupt anchor file is absent with a reason, not a crash",
+          corrupt_rc == EXIT_OK and corrupt.get("ok") is True
+          and corrupt.get("since_source") == "boot"
+          and "unusable" in corrupt_stderr
+          and "JSONDecodeError" in corrupt_stderr,
+          "rc=%r source=%r stderr=%r" % (
+              corrupt_rc, corrupt.get("since_source"),
+              corrupt_stderr.strip()[:200]), report)
+    corrupt_state, corrupt_problem = read_anchor_file(anchor_path(corrupt_out))
+    check("a good run replaces a corrupt anchor file",
+          corrupt_problem is None and corrupt_state is not None
+          and corrupt_state["anchor"] == float(good_two),
+          repr((corrupt_problem, corrupt_state)), report)
+
+    # Fixture mode: the planted anchor is neither read nor written.
+    fixture_anchor_out = os.path.join(scratch, "fixture-anchor-out")
+    write_anchor_file(anchor_path(fixture_anchor_out), 1792640000,
+                      ["t_early@1792650000"], 1792640000)
+    planted_bytes = read_bytes(anchor_path(fixture_anchor_out))
+    fixture_rc, fixture_stdout, fixture_stderr = quiet_main([
+        "--fixture", board_only_dir, "--out", fixture_anchor_out, "--json",
+        "--now", str(GOLDEN_NOW)])
+    fixture_payload = json.loads(fixture_stdout) if fixture_stdout.strip() else {}
+    check("fixture mode neither reads nor writes the anchor file",
+          fixture_rc == EXIT_OK and fixture_payload.get("since") is None
+          and fixture_payload.get("since_source") == "none"
+          and read_bytes(anchor_path(fixture_anchor_out)) == planted_bytes
+          and "anchor:" not in fixture_stderr,
+          "rc=%r since=%r changed=%r" % (
+              fixture_rc, fixture_payload.get("since"),
+              read_bytes(anchor_path(fixture_anchor_out)) != planted_bytes),
+          report)
+
+    # A fixture may carry its own anchor field.
+    anchor_fixture = os.path.join(scratch, "anchor-board.json")
+    write_atomic(anchor_fixture, json.dumps({
+        "anchor": iso(GOLDEN_BOOT),
+        "cards": [{"id": "t_fx", "title": "fixture done", "status": "done",
+                   "completed_at": GOLDEN_BOOT + 60}]}) + "\n")
+    fixture_field = generate(argparse.Namespace(
+        board_fixture=anchor_fixture, digest_fixture=None, slack_fixture=None,
+        digest=None, now=str(GOLDEN_NOW), boot=None, since=None,
+        out=os.path.join(scratch, "anchor-fixture-out"), no_slack=True,
+        slack_env=DEFAULT_SLACK_ENV))
+    check("a fixture's own anchor field starts the window",
+          fixture_field["since"] == iso(GOLDEN_BOOT)
+          and fixture_field["since_source"] == "fixture"
+          and fixture_field["fleet"]["finished"] == 1,
+          repr((fixture_field["since"], fixture_field["since_source"],
+                fixture_field["fleet"])), report)
+
+    # The cap keeps the newest pairs.
+    many_pairs = ["t_%03d@%d" % (index, 1792000000 + index) for index in range(250)]
+    capped = merge_reported(many_pairs, [])
+    check("the reported set keeps the newest 200 pairs",
+          len(capped) == REPORTED_CAP and capped[-1] == many_pairs[-1]
+          and many_pairs[0] not in capped and capped[0] == many_pairs[50],
+          repr((len(capped), capped[0], capped[-1])), report)
+
+    # The window edge is exclusive: a completion exactly at the start is the
+    # previous brief's to have reported.
+    edge_path = os.path.join(scratch, "edge-board.json")
+    write_atomic(edge_path, json.dumps([
+        {"id": "t_edge", "title": "at the edge", "status": "done",
+         "completed_at": GOLDEN_BOOT},
+        {"id": "t_after", "title": "one second after", "status": "done",
+         "completed_at": GOLDEN_BOOT + 1}]) + "\n")
+    edge = generate(argparse.Namespace(
+        board_fixture=edge_path, digest_fixture=None, slack_fixture=None,
+        digest=None, now=str(GOLDEN_NOW), boot=str(GOLDEN_BOOT), since=None,
+        out=os.path.join(scratch, "edge-out"), no_slack=True,
+        slack_env=DEFAULT_SLACK_ENV))
+    check("a completion exactly at the window start is not counted",
+          edge["fleet"]["finished"] == 1
+          and [card["id"] for card in edge["highlights"]] == ["t_after"],
+          repr((edge["fleet"], [card["id"] for card in edge["highlights"]])),
+          report)
+
+    # 26. A digest file that exists but does not parse is named, not called a
     #     missing tool.
     broken_digest = os.path.join(scratch, "broken-digest.json")
     write_atomic(broken_digest, "{not json\n")
@@ -1787,6 +2254,10 @@ def build_parser():
                         help="override kern.boottime for tests")
     parser.add_argument("--since", metavar="STAMP", default=None,
                         help="override the since timestamp for tests")
+    parser.add_argument("--reset-anchor", action="store_true",
+                        help="remove the stored anchor and reported set "
+                             "(brief_anchor.json in the run directory), print what "
+                             "was removed, and exit; nothing else is touched")
     parser.add_argument("--self-check", action="store_true",
                         help="run the built-in checks and the golden comparison")
     parser.add_argument("--write-golden", action="store_true",
@@ -1812,6 +2283,17 @@ def main(argv=None):
         out_given = args.out is not None
         out_dir = os.path.abspath(os.path.expanduser(args.out or DEFAULT_OUT))
         args.out = out_dir
+
+        if args.reset_anchor:
+            # Maintenance, not a brief: this prints and exits without touching
+            # brief.json, brief.txt or anything else. A fixture run has no
+            # anchor file to reset (it never reads or writes one).
+            if fixture_mode(args):
+                raise ArgError("--reset-anchor has nothing to reset in fixture "
+                               "mode: a fixture run never reads or writes the "
+                               "anchor file")
+            return reset_anchor(anchor_path(out_dir))
+
         if not args.force and not fixture_mode(args):
             cached, problem = read_json_file(os.path.join(out_dir, "brief.json"))
             if problem is None and isinstance(cached, dict):
@@ -1832,6 +2314,15 @@ def main(argv=None):
                     return EXIT_OK
 
         payload = generate(args)
+        record = getattr(payload, "anchor_record", None)
+        if record is not None:
+            for note in anchor_notes(record):
+                print(note, file=sys.stderr)
+        elif not fixture_mode(args):
+            # The board could not be read: this run says so and leaves the
+            # stored anchor exactly where the last good run put it.
+            print("anchor: not advanced (no readable board this run)",
+                  file=sys.stderr)
         if fixture_mode(args) and not out_given:
             # A fixture run writes nothing unless --out names a directory: the
             # live cache is not a fixture's to overwrite.
@@ -1839,6 +2330,21 @@ def main(argv=None):
             text_body = "\n".join(render_lines(payload)) + "\n"
         else:
             json_body, text_body = write_outputs(payload, out_dir)
+            if record is not None:
+                # Only a live ok brief gets here: generate() hands back an
+                # anchor record only for a readable board, so an unreadable run
+                # writes nothing and advances nothing.
+                try:
+                    write_anchor_file(record["path"], record["anchor"],
+                                      record["reported"], utc_now())
+                except OSError as exc:
+                    print("anchor: NOT written (%s: %s); the next run falls back "
+                          "to the boot time" % (type(exc).__name__, exc),
+                          file=sys.stderr)
+                else:
+                    print("anchor: advanced to %s, %d new pair(s), %d in the set"
+                          % (iso(record["anchor"]), record["new"],
+                             len(record["reported"])), file=sys.stderr)
         sys.stdout.write(json_body if args.json else text_body)
         return EXIT_OK
     except ArgError as exc:
