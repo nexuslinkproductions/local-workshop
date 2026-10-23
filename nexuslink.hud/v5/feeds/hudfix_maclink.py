@@ -199,7 +199,15 @@ MAX_JSON_DEPTH = 64
 # --------------------------------------------------------------- small helpers
 
 
+# The self-check drives the Mac action branch on any host (its plans use stubs,
+# not the real launchctl). It sets this for its own run; an explicit platform
+# argument is still honoured by host_is_mac.
+SELF_CHECK_ASSUME_MAC = False
+
+
 def host_is_mac(platform=None):
+    if platform is None and SELF_CHECK_ASSUME_MAC:
+        return True
     return (platform if platform is not None else sys.platform) == "darwin"
 
 
@@ -2433,6 +2441,8 @@ def _cli(argv, env):
 
 
 def self_check():
+    global SELF_CHECK_ASSUME_MAC
+    SELF_CHECK_ASSUME_MAC = True
     print("hudfix_maclink self-check (python %s on %s)" % (sys.version.split()[0], sys.platform))
     passed = []
     failed = []
@@ -2685,14 +2695,14 @@ def self_check():
     relay_plan = plans.get("maclink.restart-relay") or {}
     check(
         "plan-relay-unit",
-        relay_plan.get("items", [{}])[0].get("unit") == "gui/501/com.nexuslink.bridge-relay",
+        (relay_plan.get("items") or [{}])[0].get("unit") == "gui/501/com.nexuslink.bridge-relay",
         str(relay_plan.get("items")),
     )
     check(
         "plan-relay-command",
-        relay_plan.get("items", [{}])[0].get("command")
+        ((relay_plan.get("items")) or [{}])[0].get("command")
         == "launchctl kickstart -k gui/501/com.nexuslink.bridge-relay",
-        str(relay_plan.get("items", [{}])[0].get("command")),
+        str(((relay_plan.get("items")) or [{}])[0].get("command")),
     )
     check(
         "plan-relay-blast-radius",

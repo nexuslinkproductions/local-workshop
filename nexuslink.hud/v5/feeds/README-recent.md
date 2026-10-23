@@ -1,4 +1,4 @@
-# recent.py — F6 RECENT AND PINNED feed
+# recent.py - F6 RECENT AND PINNED feed
 
 One JSON object for the deck's Recent and Pinned widget: the newest downloads,
 screenshots and recent files, the pinned folders, and a census by file type.
@@ -73,7 +73,7 @@ is reported as `ok: false`, not a crash.
 * `mtime` is UTC ISO-8601 with a `Z`, seconds resolution. Lists are newest
   first; equal mtimes sort by lowercased name, then name, so a tie is stable.
 * `size` is bytes, or `null` when a fixture did not measure it.
-* `path` is absolute — a path is the content here, the widget has to open it.
+* `path` is absolute - a path is the content here, the widget has to open it.
   In a fixture file it is absolute under the `home` that fixture declares (`~`
   expands to it), or the `~` form itself when the fixture declares no home; it
   never embeds the running user's home. `roots[].path` is display-only and
@@ -108,7 +108,7 @@ is pretty-printed for a human. `source` is `live` or `fixture`.
 
 Case-insensitive, by extension. The table lives in `EXTENSIONS` at the top of
 `recent.py`; two-part extensions win over the last part alone. An extension
-that is not listed is `other` — nothing is guessed from a name, a size or a
+that is not listed is `other` - nothing is guessed from a name, a size or a
 magic number.
 
 | Bucket | Extensions |
@@ -136,7 +136,7 @@ live payload nor leave one behind. The file is written atomically: a temp file
 in the same directory then `os.replace`, so a reader never sees half a payload.
 
 * A hit under 10.0 s re-serves the stored payload with `"cached": true` and
-  `"age_s"` since it was built. `generated_at` stays the original build time —
+  `"age_s"` since it was built. `generated_at` stays the original build time -
   it is when the data was true, not when it was printed.
 * The key covers the limit, the schema string and the config path plus its
   mtime, size and inode. Edit the config and the next call rebuilds.
@@ -227,7 +227,7 @@ held:
   outside target. `os.path.realpath` is deliberately not used on a candidate:
   on Python 3.9 it `lstat`s every component it resolves, including the
   components of the outside target, which is a host read. `DIR` itself is
-  resolved once — it is the boundary, not a candidate — and a target that
+  resolved once - it is the boundary, not a candidate - and a target that
   spells it through the resolved prefix (`/private/var` for `/var`) is matched
   by string comparison, so that difference cannot make an inside path look
   outside. A symlink that sits inside `DIR` but points at the host therefore
@@ -288,11 +288,15 @@ into a hard failure, and a probe first shows the guard fires, so a refusal that
 still touched the host would fail the check. A walk link inside an admitted root
 that escapes `DIR` is held to the same rule. The run prints its check
 count.
-Error paths run through the real CLI (named missing config → 2, malformed
-config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
-2, absent default config → 0). It never reads `~/Downloads` or any real root,
+Error paths run through the real CLI (named missing config -> 2, malformed
+config -> 0 with `ok: false`, empty config -> 0, missing fixture -> 2, bad flag ->
+2, absent default config -> 0). It never reads `~/Downloads` or any real root,
 and it never writes to `~/.config`. Exit 0 when every check passes, 1 with the
 failed labels otherwise.
 
 Linux owns the live-data check; this file proves the fixture and temp-tree
 behaviour on a Mac that must not read Marcel's real folders.
+
+## F6: symlinked fixture inputs (fixture mode)
+
+`--fixture PATH` never follows a symlink. A fixture path that is itself a symlink (a file or a directory), or a `hud_paths.json` inside a fixture directory that is a symlink, is refused: the answer is `{"ok": false, "kind": "malformed"}` with exit 0 and no file behind the link is read. A symlinked root or pin inside the directory that resolves outside it is still refused and counted, as before. Covered by the F6 cases in `recent.py --self-check`.

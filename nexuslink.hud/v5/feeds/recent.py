@@ -1119,6 +1119,10 @@ def run(args):
         # Fixture reasons print the path exactly as given: expanding a host ~
         # here would put this machine's home into otherwise pure output.
         shown = given
+        if os.path.islink(target):
+            # F6: a symlinked input leaves the fixture directory by definition;
+            # fixture mode refuses it instead of following it to the host.
+            raise Malformed("fixture %s is a symlink; fixture mode does not follow links" % shown)
         if not os.path.exists(target):
             raise CallerError("no fixture at %s" % shown)
         if os.path.isdir(target):
@@ -1129,6 +1133,8 @@ def run(args):
             root_dir = os.path.abspath(target)
             config_path = os.path.join(root_dir, "hud_paths.json")
             shown_config = os.path.join(shown, "hud_paths.json")
+            if os.path.islink(config_path):
+                raise Malformed("fixture config %s is a symlink; fixture mode does not follow links" % shown_config)
             if not os.path.isfile(config_path):
                 raise CallerError("fixture dir %s has no hud_paths.json" % shown)
             raw = read_json_file(config_path, "fixture config", shown_config)
@@ -1537,6 +1543,33 @@ def self_check():
             "DIR output depends on HOME",
         )
         check("dir fixture writes no state", not os.path.exists(dir_state_a) and not os.path.exists(dir_state_b))
+        # --- F6: a symlinked fixture input is refused, never followed out of DIR ---
+        f6_outside = os.path.join(tmp, "f6-outside")
+        _touch(os.path.join(f6_outside, "Downloads", "host-secret.png"), 800)
+        _write(
+            os.path.join(f6_outside, "hud_paths.json"),
+            '{"limit": 8, "downloads": ["~/Downloads"], "screenshots": [], "pinned": []}',
+        )
+        f6_link = os.path.join(tmp, "f6-link")
+        os.symlink(f6_outside, f6_link)
+        f6_dir = run_cli(["--fixture", f6_link, "--json"], home=os.path.join(tmp, "dir-home-a"), state_path=os.path.join(tmp, "f6-state"))
+        f6_payload = as_json(f6_dir)
+        check(
+            "F6 symlinked fixture dir refused as malformed",
+            f6_dir.returncode == 0 and isinstance(f6_payload, dict) and f6_payload.get("ok") is False and f6_payload.get("kind") == "malformed",
+            [f6_dir.returncode, str(f6_payload)[:200]],
+        )
+        check("F6 symlinked fixture dir reads no host file", "host-secret" not in f6_dir.stdout, f6_dir.stdout[:200])
+        f6_cfg = os.path.join(tmp, "f6-cfg")
+        os.makedirs(f6_cfg)
+        os.symlink(os.path.join(f6_outside, "hud_paths.json"), os.path.join(f6_cfg, "hud_paths.json"))
+        f6_cfg_run = run_cli(["--fixture", f6_cfg, "--json"], home=os.path.join(tmp, "dir-home-a"), state_path=os.path.join(tmp, "f6-state"))
+        f6_cfg_payload = as_json(f6_cfg_run)
+        check(
+            "F6 symlinked config refused as malformed",
+            f6_cfg_run.returncode == 0 and isinstance(f6_cfg_payload, dict) and f6_cfg_payload.get("ok") is False and f6_cfg_payload.get("kind") == "malformed",
+            f6_cfg_run.stdout[:200],
+        )
         _touch(os.path.join(tmp, "dir-home-a", "Downloads", "host-only.png"), 700)
         dir_touched = as_json(
             run_cli(["--fixture", dir_fixture, "--json"], home=os.path.join(tmp, "dir-home-a"), state_path=os.path.join(tmp, "dir-state-c"))

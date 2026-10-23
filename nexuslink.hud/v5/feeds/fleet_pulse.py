@@ -384,6 +384,16 @@ def read_board_file(path):
 _BOARD_COLUMNS = "id, title, assignee, status, created_at, started_at, completed_at"
 
 
+def _wal_without_shm(target):
+    """True when the header marks the file WAL (bytes 18 and 19 are 2) and no -shm sits beside it."""
+    try:
+        with open(target, "rb") as handle:
+            head = handle.read(20)
+    except OSError:
+        return False
+    return len(head) == 20 and head[18] == 2 and not os.path.exists(target + "-shm")
+
+
 def _read_board_sqlite(target):
     """(rows, readonly_mode). ``mode=ro`` first; ``immutable=1`` as a fallback.
 
@@ -394,6 +404,10 @@ def _read_board_sqlite(target):
     """
     quoted = _quote_sqlite_path(os.path.abspath(target))
     attempts = (("ro", "?mode=ro"), ("immutable", "?mode=ro&immutable=1"))
+    if _wal_without_shm(target):
+        # Linux: a mode=ro open of a WAL file with no -shm succeeds by creating
+        # -shm and -wal beside the board, so go straight to immutable.
+        attempts = attempts[1:]
     last_error = None
     for readonly, query in attempts:
         conn = None
