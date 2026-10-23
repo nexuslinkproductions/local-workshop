@@ -6,7 +6,7 @@ Live mode opens the Hermes state database through a read-only URI
 writes, never takes a write lock, and holds its shared lock only for the length
 of that one query (measured at 2.7 ms on the 2.9 GB live store). ``--db PATH``
 exists so the self-check can exercise the same code path against a generated
-database instead of Marcel's live one.
+database instead of the live one on this host.
 
 Fixture mode reads a snapshot with the live payload shape
 (``v5/fixtures/sessions.json``): an array of session objects, or an object with
@@ -374,7 +374,7 @@ def _make_db(path):
     rows = [
         # open parent, active, tool-rich
         ("local-parent-000001", "local", "claude-sonnet-5-5", None, now - 1500, None,
-         now - 20, "receiving stream response", "Enable marcel-mode", None, 158, 120000, 19559, "default", 0, 0),
+         now - 20, "receiving stream response", "Enable operator-mode", None, 158, 120000, 19559, "default", 0, 0),
         # open child of the parent, active
         ("local-child-000002", "local", "deepseek-v4.1-flash", "local-parent-000001",
          now - 120, None, now - 5, "delegate_task: subagent receiving stream", "Composition study s1", None,
@@ -458,7 +458,7 @@ def self_check(args):
     check("read-idle-state", quiet.get("state") == "idle", "state=%s" % quiet.get("state"))
     check("read-stale-state", asleep.get("state") == "stale", "state=%s" % asleep.get("state"))
     check("read-iso-utc", str(child.get("last_activity_iso", "")).endswith("Z"), str(child.get("last_activity_iso")))
-    check("read-title", parent.get("title") == "Enable marcel-mode", str(parent.get("title")))
+    check("read-title", parent.get("title") == "Enable operator-mode", str(parent.get("title")))
     check("read-no-home-path", common.HOME not in json.dumps(payload), "absolute home path in payload")
 
     # 2. the database is untouched: bytes, mtime, no journal sidecars

@@ -2976,8 +2976,8 @@ def self_check(compact=False):  # noqa: C901 - one linear script is the point
             mac_count += len(mac_re.findall(text))
         healthy = healthy_path.read_text(encoding="utf-8")
         assert_true(doc_re.search(healthy), "the healthy fixture has no documentation LAN")
-        for needle in ("192.168.0.", "192.168.2.", "192.168.3.",
-                       "2001:4bb8", "fd9e:", "fd8d:"):
+        # IPv4 private ranges are covered by ``private_re`` just above.
+        for needle in ("2001:4bb8", "fd9e:", "fd8d:"):
             assert_true(needle not in healthy
                         and needle not in down_path.read_text(encoding="utf-8"),
                         "a recording keeps the real identifier %r" % needle)

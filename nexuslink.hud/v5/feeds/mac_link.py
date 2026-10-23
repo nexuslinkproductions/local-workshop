@@ -38,7 +38,7 @@ and every ``kanban.items[].age_s`` null, each with a reason, so two runs of the
 same fixture are byte-identical minus ``generated_at``. A live collector that
 reports no clock falls back to the reader's clock and says so in ``reasons``.
 
-Nothing here writes to the live HUD tree, Marcel's config, or the Mac beyond
+Nothing here writes to the live HUD tree, the operator's config, or the Mac beyond
 read-only probes.
 """
 
@@ -1047,7 +1047,7 @@ def self_check(args):
         # each one breaks exactly one collector line
         "no-cores": recorded.replace("@@CORES\n12\n", "@@CORES\n\n"),
         "no-power-source": recorded.replace("Now drawing from 'AC Power'\n", ""),
-        "pong-no-route": recorded.replace("via 192.168.0.112:41641 ", ""),
+        "pong-no-route": recorded.replace("via 192.0.2.12:41641 ", ""),
         "no-therm": recorded.replace(
             "Note: No thermal warning level has been recorded\n"
             "Note: No performance warning level has been recorded\n"
@@ -1241,7 +1241,7 @@ def self_check(args):
 
     # --- ping shapes --------------------------------------------------------
     direct_ipv6 = parse_ping(
-        "pong from omarchylink (100.104.64.3) via [fd7a:115c:a1e0::1]:41641 in 7ms",
+        "pong from omarchylink (100.64.12.3) via [fd7a:115c:a1e0::1]:41641 in 7ms",
         "omarchylink",
         {},
     )
@@ -1251,8 +1251,8 @@ def self_check(args):
         str(direct_ipv6),
     )
     two_lines = parse_ping(
-        "pong from omarchylink (100.104.64.3) via DERP(ams) in 92ms\n"
-        "pong from omarchylink (100.104.64.3) via 192.168.0.112:41641 in 4ms",
+        "pong from omarchylink (100.64.12.3) via DERP(ams) in 92ms\n"
+        "pong from omarchylink (100.64.12.3) via 192.0.2.12:41641 in 4ms",
         "omarchylink",
         {},
     )
@@ -1455,7 +1455,7 @@ def self_check(args):
     runner_calls = []
 
     class _Completed(object):
-        stdout = "pong from omarchylink via 192.168.0.112:41641 in 10ms\n"
+        stdout = "pong from omarchylink via 192.0.2.12:41641 in 10ms\n"
         stderr = ""
         returncode = 0
 

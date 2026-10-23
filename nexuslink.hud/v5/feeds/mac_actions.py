@@ -19,7 +19,7 @@ Rules this file enforces:
     ``~/.local/state/nexuslink/bots/<profile>.pid``, asks ``ps`` for that PID's
     command line, and refuses unless the line carries that profile's
     ``-p/--profile``. Only then does it run ``kill -TERM <pid>``.
-  * Nothing here writes to Marcel's config or the live HUD tree. The only
+  * Nothing here writes to the operator's config or the live HUD tree. The only
     files written are PID files under ``~/.local/state/nexuslink/`` (and the
     screenshot the caller asked for).
   * ``--self-check`` never executes an unsafe action. It plans, refuses and
@@ -799,7 +799,7 @@ def self_check(args):
     # --- stop-bot verification: only the recorded PID, only its own profile -
     pid_path = os.path.join(state, "bots", "kakashi.pid")
     write_pid_file(pid_path, 4242, "start-bot", "hermes -p kakashi gateway run", profile="kakashi")
-    match_rt = RecordingRuntime(ps_text="/Users/marcelspatz/.local/bin/hermes -p kakashi gateway run")
+    match_rt = RecordingRuntime(ps_text="/Users/operator/.local/bin/hermes -p kakashi gateway run")
     match_rt.alive_map[4242] = True
     local = types.SimpleNamespace(**vars(base))
     local.action = "stop-bot"

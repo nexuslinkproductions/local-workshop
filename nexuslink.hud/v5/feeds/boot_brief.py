@@ -104,7 +104,7 @@ Facts, and what is honest about each one
   has its own, so the field came back ``null`` (checked 2026-10-23). The live
   path therefore reports ``available`` false with that fixed finding as its
   reason and never touches the network; a live probe needs a contract change
-  from Marcel first. A ``slack.json`` fixture still supplies the block.
+  from the operator first. A ``slack.json`` fixture still supplies the block.
 
 Phrasing rule
 -------------
@@ -192,12 +192,12 @@ PHRASING = (
 )
 
 # Fixed, not measured: the 2026-10-23 finding on this Mac. A live probe needs a
-# contract change from Marcel before it comes back.
+# contract change from the operator before it comes back.
 LIVE_SLACK_REASON = (
     "no read-only Slack unread count on this host (checked 2026-10-23: Slack "
     "returns unread_count only for the calling user's own membership and a bot "
     "token has its own, so the field is null; the live probe was removed and a "
-    "contract change from Marcel is needed before one returns)"
+    "contract change from the operator is needed before one returns)"
 )
 
 # The phrasing an unreadable board gets: no counts to name, only the reason.

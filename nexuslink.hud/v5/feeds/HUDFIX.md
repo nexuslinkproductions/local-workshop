@@ -117,7 +117,7 @@ before discovery).
 One manifest per day, one row per item, header first:
 
     iso_utc	action	original_path	bytes	destination
-    2026-10-23T00:21:35Z	cache-npm	/Users/marcel/.npm/_cacache	4096	/Users/.../cache-npm/_cacache
+    2026-10-23T00:21:35Z	cache-npm	/Users/operator/.npm/_cacache	4096	/Users/.../cache-npm/_cacache
 
 The original path is absolute so a restore is `mv` back. Directory names use the
 local date (what a human sees in Finder); timestamps are UTC ISO-8601. The helper

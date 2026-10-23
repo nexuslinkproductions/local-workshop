@@ -170,7 +170,7 @@ never ranked — Arc Raiders has a fixed slot at the end of the arc.
 
 **Chromium is denylisted.** Its launch counter on this box is dominated by
 headless agent runs (recon/03-feeds.md: about 6.7k `app-*.scope` instances,
-mostly automation), so the count says nothing about what Marcel uses. A
+mostly automation), so the count says nothing about what the operator uses. A
 denylisted app keeps its arc slot and its tile, gets `rank: null` and an
 `excluded` reason, and rejoins the ranking only when the payload marks the count
 user-driven (`"user_driven": true`). The rule and the reason are also emitted in

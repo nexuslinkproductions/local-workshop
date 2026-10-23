@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Call-capture bridge: report whether a call is being recorded, start, stop.
 
-Thin wrapper around Marcel's ``callcap`` on the Linux box
+Thin wrapper around the operator's ``callcap`` on the Linux box
 (``~/.local/bin/callcap``, canonical copy ``scripts/callcap``; see the
 ``linux-microphone-processing`` skill, ``references/call-capture.md``):
 

@@ -9,7 +9,7 @@ Two stdlib-only Python 3 tools behind the Mac Link Explorer on the v5 deck.
 | `../fixtures/mac_link.txt` | a recorded collector output, used by `mac_link.py --self-check` |
 
 Both run on this Mac with no arguments and no third-party packages. Neither
-writes to Marcel's config or the live HUD tree.
+writes to the operator's config or the live HUD tree.
 
 ## mac_link.py
 
@@ -177,7 +177,7 @@ or a caller error.
 
 `start-bot` decision: a bot runtime on this Mac is the profile's Hermes gateway
 (`hermes -p <profile> gateway run`), the long-lived process that receives work
-and hosts the dispatcher. If Marcel wants a different runtime, it is the one
+and hosts the dispatcher. If the operator wants a different runtime, it is the one
 line in `build_plan` plus this table.
 
 ## Self-checks
