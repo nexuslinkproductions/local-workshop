@@ -142,8 +142,9 @@ in the same directory then `os.replace`, so a reader never sees half a payload.
   It also resolves a `~` in a path named on the command line — including the
   `--fixture` path itself, only so that file can be opened. A fixture file's
   `~` is its own `home`, never `HOME`, and a fixture path is printed exactly as
-  it was given, so no `HOME` value reaches a fixture read's output. Nothing
-  else reads the environment.
+  it was given, so no `HOME` value reaches a fixture file's output (`--fixture
+  DIR` is the host-reading exception described under Fixtures). Nothing else
+  reads the environment.
 
 ## Fixtures
 
@@ -171,9 +172,9 @@ held:
   user's. Every `~` in its config expands to that value, so `path` stays
   absolute and the output is byte-identical on any machine. A fixture without
   `home` keeps the `~` form instead (also machine-independent). Either way no
-  host `HOME` value reaches the output, and the fixture path itself is printed
-  exactly as it was given. `home` must be an absolute path; any other value is
-  `ok: false`, `kind: malformed`.
+  host `HOME` value reaches a fixture file's output, and the fixture path
+  itself is printed exactly as it was given. `home` must be an absolute path;
+  any other value is `ok: false`, `kind: malformed`.
 * A relative root in a fixture file is kept as written: there is no host
   directory to resolve it against. `--fixture DIR` still resolves relatives
   inside `DIR`.
