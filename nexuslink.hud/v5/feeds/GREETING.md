@@ -14,9 +14,15 @@ The budget rule under "Rules for chief" can shorten it.
 
 ## Placeholders (resolve with F4's own resolver)
 
-F4 resolves placeholders with `lookup()` in `feeds/boot_brief.py:236-265`: dotted
-paths into `brief.json`, `[n]` for list indices, and a `#` segment for a list's
-length. Every placeholder below resolves through that function unchanged.
+F4 resolves placeholders with `lookup()` in `feeds/boot_brief.py`: dotted paths
+into `brief.json`, `[n]` for list indices, and a `#` segment for a list's length.
+Every placeholder below resolves through that function unchanged. No line numbers
+here on purpose, because F4 is still moving: checked against F4 head `86160a9` on
+`v5/f4-bootbrief` (PR #26), where `lookup()` and `placeholders()` sit next to each
+other in that file, and against that head's own payload,
+`feeds/golden/boot-brief.json`. All three placeholders in the table below resolve
+with nothing left unresolved there, and so do the four spoken lines built from
+them; the counts are `fleet.finished` 3, `fleet.blocked` 2 and `needs_me.#` 3.
 
 | placeholder | `brief.json` key path | renders as |
 |---|---|---|
@@ -46,18 +52,46 @@ paths that actually resolve.
   substitute or round a number.
 - If `slack.available` is false, never mention Slack. F4 sets it false on this host.
 - No filler: no "welcome back", no "master", no "sir", no time-of-day greeting.
-- Budget: the whole startup sequence is capped at 5 s (MAIN-SCREEN-BUILD.md
-  Phase 2 item 10). The wake animation and `startup.wav` (1.75 s) come out of
-  that first, so the spoken line has roughly 2 s, not 5. That is about 5 words
-  at 150 words per minute, and the 8-word default line comes to about 3.2 s at
-  that rate, so it does not fit: measure the rendered file (`ffprobe
-  -show_entries format=duration`) and shorten until it does, dropping the
+- Budget: MAIN-SCREEN-BUILD.md Phase 2 item 10 caps the startup sequence at
+  5 s, greeting included, and the startup card reads it the same way. The ruling
+  at the end of these rules narrows that cap to the visual wake; the spoken line
+  is measured against the window the wake leaves.
+- Window: the cap minus chief's cue time in the startup card, so 5.00 s minus
+  that cue. Current value, read off
+  `hud-candidates/comp-r1/s4/startup-sequence/README.md` (timing table row F8 and
+  its "Why the speech window is 1.72 s" paragraph, D2 repair of 2026-10-23): the
+  cue is at 3.280 s, so the window is 5.00 - 3.280 = 1.72 s. That README is the
+  source of the number, not the ruling below, which still quotes an older 4.30 s
+  cue. Re-read the README whenever the startup card re-times; never round the
+  number and never carry an old one over.
+- What fits: at 150 words per minute the 8-word default line is about 3.2 s and
+  the 4-word shortened line about 1.6 s, so the default does not fit the current
+  window and is not spoken as written. A line longer than the window is not
+  spoken inside the wake: measure the rendered file (`ffprobe
+  -show_entries format=duration`) and shorten until it fits, dropping the
   finished clause first and the blocked clause second. The needs-me count goes
   last because it is the only clause Marcel has to act on. Never raise the
   speaking rate to make a longer line fit.
 - Shortened all the way the line is `{needs_me.#} waiting on you.`: 4 words,
-  about 1.6 s at that rate, which fits the 2 s. If the voice cannot render even
-  that, skip speech for that boot. The brief is on screen either way.
+  about 1.6 s at that rate, which fits the current 1.72 s window with 0.12 s to
+  spare. This is the line spoken on a normal boot. If the voice cannot render it
+  inside the window, the ruling below decides the overrun; if it cannot render at
+  all, skip speech for that boot. The brief is on screen either way.
+- Ruling on the open decision (Mac head executive, 2026-10-23). It overrides
+  item 10's plain scope instead of reading it: the 5.00 s cap bounds the visual
+  wake, not the voice, so the spoken line may run past 5.00 s, with the ruling's
+  own ceiling at about 6 s. At the current cue that is 6.00 - 3.280 = 2.72 s of
+  speech, 1.00 s more than the window. The headroom does not rescue the 8-word
+  default, which would run to 3.280 + 3.20 = 6.48 s, 0.48 s past that ceiling. It
+  is headroom for a slow render of the shortened line and never a reason to put a
+  cut clause back. The wake itself still ends at 5.00 s: the audio never extends
+  the picture and never holds the screen, and any key stops the voice at any
+  point, including mid-sentence.
+- Open cross-artifact note, out of this file's scope: item 10 and the startup
+  card both still say the whole sequence stops at 5.00 s
+  (`startup-sequence/README.md`: "The sequence never runs past 5.00 s"). Under
+  the ruling that sentence describes the visuals only, so the startup card needs
+  to say so on its next re-time.
 
 ## Speech options on Linux (what each needs)
 

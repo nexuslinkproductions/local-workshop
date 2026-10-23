@@ -477,7 +477,7 @@ def self_check() -> int:
             ),
         )
 
-        # 2 - exact duration
+        # 2 - duration within bounds
         measured_duration = data["frames"] / float(data["rate"])
         check.check(
             "duration",
