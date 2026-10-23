@@ -1294,6 +1294,22 @@ def reports_source(ctx):
     return directory, tilde(directory)
 
 
+def within_root(path, root):
+    """True when ``path`` resolves inside ``root``, both through realpath.
+
+    A report entry is untrusted input: a symlink under the reports directory can
+    point at ``../outside/secret.ips``, at an absolute path elsewhere, or at
+    ``/etc/hosts``. The resolved path has to stay under the resolved reports
+    root, or the entry is refused before it is sized, hashed or moved.
+    """
+    try:
+        target = os.path.realpath(path)
+        boundary = os.path.realpath(root)
+        return os.path.commonpath([target, boundary]) == boundary
+    except (OSError, ValueError):
+        return False
+
+
 def crash_report(path, ctx):
     name = os.path.basename(path)
     try:
@@ -1345,6 +1361,8 @@ def crash_reports(ctx, fresh=False):
         if cached:
             return cached
     directory, display = reports_source(ctx)
+    reasons = {}
+    refused = []
     names = []
     if ctx.mode == "fixture" and not ctx.fixture_source().is_dir:
         single = os.path.basename(ctx.fixture_source().path)
@@ -1354,12 +1372,22 @@ def crash_reports(ctx, fresh=False):
     else:
         try:
             for entry in os.listdir(directory):
-                if entry.lower().endswith(".ips") and os.path.isfile(os.path.join(directory, entry)):
-                    names.append(entry)
+                if not entry.lower().endswith(".ips"):
+                    continue
+                full = os.path.join(directory, entry)
+                if not os.path.isfile(full):
+                    continue
+                if not within_root(full, directory):
+                    reason = "entry resolves outside %s; refused" % display
+                    reasons["reports.%s.scope" % entry] = reason
+                    refused.append({"name": entry, "reason": reason})
+                    continue
+                names.append(entry)
         except OSError as exc:
             raise Missing("cannot list %s: %s" % (display, exc.strerror or exc))
     if not names:
-        reasons = {"reports": "no .ips files in %s" % display}
+        if not reasons:
+            reasons["reports"] = "no .ips files in %s" % display
         payload = {
             "ok": True,
             "source": SOURCE,
@@ -1369,6 +1397,7 @@ def crash_reports(ctx, fresh=False):
             "dir": display,
             "count": 0,
             "reports": [],
+            "refused": refused,
             "total_bytes": 0,
             "reasons": reasons,
         }
@@ -1376,7 +1405,6 @@ def crash_reports(ctx, fresh=False):
             cache_store(ctx, "system.crash-reports", payload, now)
         return payload
     reports = []
-    reasons = {}
     for name in names:
         report = crash_report(os.path.join(directory, name), ctx)
         if report["date"] is None:
@@ -1392,6 +1420,7 @@ def crash_reports(ctx, fresh=False):
         "dir": display,
         "count": len(reports),
         "reports": reports[:LIMITS["reports"]],
+        "refused": refused,
         "total_bytes": sum(item["bytes"] or 0 for item in reports),
         "truncated": len(reports) > LIMITS["reports"],
         "reasons": reasons,
@@ -1413,14 +1442,26 @@ def uptime_read(ctx):
     if ctx.mode == "fixture":
         data = fixture_object(ctx.fixture_source(), "uptime.json")
         boot = parse_boottime(data.get("kern_boottime"))
+        cold_start = mode_now(ctx)
         source = "kern.boottime" if boot else None
-        cold_start = mode_now(ctx) or 0.0
-        uptime_s = int(cold_start - boot) if boot else parse_uptime_text(data.get("uptime_text"))
-        if not boot:
-            source = "uptime" if uptime_s is not None else None
         boot_at = iso(boot)
         mode = "fixture"
         generated = ctx.fixture_source().generated_at()
+        if cold_start is None:
+            # No fixture clock: uptime is clock-derived, and fixture mode reads
+            # no wall clock. The uptime text would be a second-hand reading of
+            # the recorder's clock, so it stays null too. Same rule as F1.
+            reasons["uptime_s"] = (
+                "the fixture carries no clock (meta.json now); uptime is clock-derived "
+                "and fixture mode reads no wall clock")
+        elif boot is not None and cold_start < boot:
+            reasons["uptime_s"] = (
+                "the fixture clock is earlier than kern.boottime; no uptime can be derived")
+        elif boot is not None:
+            uptime_s = int(cold_start - boot)
+        else:
+            uptime_s = parse_uptime_text(data.get("uptime_text"))
+            source = "uptime" if uptime_s is not None else None
     else:
         mode = "live"
         generated = iso_now()
@@ -1450,7 +1491,7 @@ def uptime_read(ctx):
         else:
             boot_at = iso(time.time() - uptime_s) if uptime_s is not None else None
     if uptime_s is None:
-        reasons["uptime_s"] = "no boot time or uptime text on this host"
+        reasons.setdefault("uptime_s", "no boot time or uptime text on this host")
     payload = {
         "ok": True,
         "source": SOURCE,
@@ -1982,6 +2023,7 @@ def quarantine_plan(ctx):
     root = os.path.expanduser(ctx.state_dir or DEFAULT_STATE_ROOT)
     destination = os.path.join(root, "quarantine", "crash-reports", stamp)
     total = sum(report.get("bytes") or 0 for report in eligible)
+    refused = listing.get("refused") or []
     return {
         "ok": True,
         "source": SOURCE,
@@ -1990,6 +2032,8 @@ def quarantine_plan(ctx):
         "action": "system.crash-quarantine",
         "class": "reversible",
         "linux_only": False,
+        "refused": refused,
+        "reasons": listing.get("reasons") or {},
         "plan": {
             "changes": True,
             "confirm_required": True,
@@ -1999,6 +2043,7 @@ def quarantine_plan(ctx):
             "older_than_days": ctx.older_than_days,
             "items": eligible,
             "count": len(eligible),
+            "refused": refused,
             "bytes": total,
             "effect": "moves %d report(s), %d bytes, out of the live crash directory; "
                       "each move writes a MANIFEST row and can be moved back"
@@ -2006,6 +2051,7 @@ def quarantine_plan(ctx):
             "undo": "every row in MANIFEST.jsonl carries src and dst; move dst back to src to undo",
             "notes": [
                 "a report with no readable date is never moved",
+                "an entry that resolves outside the reports directory is refused and never moved",
                 "the live directory is read first; nothing is deleted",
             ],
         },
@@ -2034,6 +2080,8 @@ def quarantine_run(ctx):
             "applied": False,
             "moved": 0,
             "bytes": 0,
+            "refused": plan.get("refused") or [],
+            "reasons": planned.get("reasons") or {},
             "reason": "no crash report older than %d days" % ctx.older_than_days,
             "destination": plan["destination"],
         }
@@ -2049,6 +2097,13 @@ def quarantine_run(ctx):
         src = os.path.join(directory, report["name"])
         dst = os.path.join(destination, report["name"])
         size = report.get("bytes")
+        # The plan already dropped entries that resolve outside the reports
+        # root; check again here so a target swapped in after the plan is
+        # still refused before it is hashed or moved.
+        if not within_root(src, directory):
+            rows.append({"name": report["name"], "moved": False,
+                         "reason": "resolves outside the reports directory; refused"})
+            continue
         digest = sha256_file(src)
         row = {
             "ts": iso_now(),
@@ -2124,6 +2179,8 @@ def quarantine_run(ctx):
         "failed": len(rows) - len(moved),
         "manifest_errors": manifest_errors,
         "bytes": moved_bytes,
+        "refused": plan.get("refused") or [],
+        "reasons": planned.get("reasons") or {},
         "destination": tilde(destination),
         "manifest": tilde(manifest),
         "rows": rows,
@@ -2533,6 +2590,28 @@ def self_check():
         check.ok(payload.get("ok") is True and isinstance(payload.get("uptime_s"), int),
                  "uptime fixture parses to whole seconds", payload.get("uptime_s"))
         check.ok(payload.get("uptime_human"), "uptime has the human form")
+        # the uptime fixture has to agree with itself (R2-3): one boot epoch, one
+        # ctime text, one uptime text and one fixture clock
+        with open(os.path.join(fixture, "uptime.json"), "r", encoding="utf-8") as handle:
+            uptime_fixture = json.load(handle)
+        with open(os.path.join(fixture, "meta.json"), "r", encoding="utf-8") as handle:
+            fixture_meta = json.load(handle)
+        fixture_boot = parse_boottime(uptime_fixture.get("kern_boottime"))
+        fixture_text_s = parse_uptime_text(uptime_fixture.get("uptime_text"))
+        fixture_now = epoch_from_iso(fixture_meta.get("now"))
+        check.ok(fixture_boot is not None and fixture_text_s is not None
+                 and fixture_now == fixture_boot + fixture_text_s,
+                 "the uptime fixture text agrees with its boot epoch and meta.now",
+                 "%r + %r != %r" % (fixture_boot, fixture_text_s, fixture_now))
+        if fixture_boot is not None:
+            boot_moment = datetime.datetime.fromtimestamp(fixture_boot, datetime.timezone.utc)
+            months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+            boot_words = "%s %02d %02d:%02d:%02d %04d" % (
+                months[boot_moment.month - 1], boot_moment.day, boot_moment.hour,
+                boot_moment.minute, boot_moment.second, boot_moment.year)
+            check.ok(boot_words in (uptime_fixture.get("kern_boottime") or ""),
+                     "the kern_boottime ctime text names its own epoch", boot_words)
 
         payload, code, _ = _run_json(["--action", "system.load",
                                       "--fixture", fixture, "--json"])
@@ -2639,6 +2718,38 @@ def self_check():
                  "units with an object-shaped systemctl-failed.json says malformed",
                  payload.get("kind"))
 
+        # 4d. a fixture with no clock has no uptime: no epoch-0 fallback, no
+        # negative seconds, ok false with a reason (R2-2)
+        print("-- no-clock uptime")
+        no_clock = os.path.join(temp_root, "no-clock")
+        shutil.copytree(fixture, no_clock)
+        with open(os.path.join(no_clock, "meta.json"), "r", encoding="utf-8") as handle:
+            no_clock_meta = json.load(handle)
+        no_clock_meta.pop("now", None)
+        with open(os.path.join(no_clock, "meta.json"), "w", encoding="utf-8") as handle:
+            json.dump(no_clock_meta, handle, indent=2)
+        payload, code = _cli(["--action", "system.uptime", "--fixture", no_clock, "--json"])
+        payload = payload or {}
+        check.equal(code, 0, "a fixture with no clock exits 0")
+        check.ok(payload.get("ok") is False, "a fixture with no clock says ok false",
+                 repr(payload.get("ok")))
+        check.ok(payload.get("uptime_s") is None,
+                 "a fixture with no clock reports no uptime_s", repr(payload.get("uptime_s")))
+        check.ok(payload.get("uptime_human") is None,
+                 "a fixture with no clock reports no uptime_human")
+        check.ok("no clock" in (payload.get("reason") or ""),
+                 "a fixture with no clock gives a reason", str(payload.get("reason")))
+        corrupt_meta = os.path.join(temp_root, "corrupt-meta")
+        shutil.copytree(fixture, corrupt_meta)
+        with open(os.path.join(corrupt_meta, "meta.json"), "w", encoding="utf-8") as handle:
+            handle.write('{"generated_at": ')
+        payload, code = _cli(["--action", "system.uptime", "--fixture", corrupt_meta, "--json"])
+        payload = payload or {}
+        check.equal(code, 0, "a corrupt meta.json exits 0")
+        check.ok(payload.get("ok") is False and payload.get("uptime_s") is None,
+                 "a corrupt meta.json answers ok false with no uptime",
+                 str(payload.get("reason")))
+
         # 5. quarantine: fake report -> MANIFEST row, original gone
         print("-- quarantine")
         reports_dir = os.path.join(temp_root, "reports")
@@ -2742,6 +2853,93 @@ def self_check():
         for fail_dir, _dirs, files in os.walk(os.path.join(fail_state, "quarantine")):
             failed_manifests.extend(name for name in files if name == "MANIFEST.jsonl")
         check.equal(len(failed_manifests), 0, "no MANIFEST file was left behind")
+
+        # 5c. an entry that resolves outside the reports root is refused before
+        # it is sized, hashed or moved, and no row claims it (R2-1)
+        print("-- quarantine scope")
+        scope_root = os.path.join(temp_root, "scope")
+        scope_reports = os.path.join(scope_root, "reports")
+        scope_state = os.path.join(scope_root, "state")
+        scope_outside = os.path.join(scope_root, "outside")
+        for path in (scope_reports, scope_state, scope_outside):
+            os.makedirs(path)
+        secret_path = os.path.join(scope_outside, "secret.ips")
+        with open(secret_path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"app_name": "secret",
+                                     "timestamp": "2020-01-01 00:00:00.00 +0000"}) + "\n")
+            handle.write("outside body that must never be read\n")
+        scope_name = "ScopeCrash-2020-01-01-000000.ips"
+        scope_path = os.path.join(scope_reports, scope_name)
+        with open(scope_path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"app_name": "real",
+                                     "timestamp": "2020-01-01 00:00:00.00 +0000"}) + "\n")
+            handle.write("real body\n")
+        escape_links = {
+            "RelOut-2020-01-01-000000.ips": os.path.join(os.pardir, "outside", "secret.ips"),
+            "AbsOut-2020-01-01-000000.ips": secret_path,
+            "SysOut-2020-01-01-000000.ips": "/etc/hosts",
+        }
+        for link_name, target in escape_links.items():
+            os.symlink(target, os.path.join(scope_reports, link_name))
+        scope_listing, scope_list_code, _ = _run_json([
+            "--action", "system.crash-reports", "--reports-dir", scope_reports,
+            "--state-dir", scope_state, "--json"])
+        check.equal(scope_list_code, 0, "a listing with an escaping entry exits 0")
+        check.equal(scope_listing.get("count"), 1,
+                    "only the contained report is listed")
+        check.equal([item.get("name") for item in scope_listing.get("reports") or []],
+                    [scope_name], "the escaping entries are not listed")
+        check.equal(scope_listing.get("total_bytes"), os.path.getsize(scope_path),
+                    "the escaping entries add no bytes")
+        scope_reasons = scope_listing.get("reasons") or {}
+        check.equal(sorted(name for name in escape_links
+                           if ("reports.%s.scope" % name) in scope_reasons),
+                    sorted(escape_links), "every escaping entry carries a scope reason")
+        scope_plan, scope_plan_code, _ = _run_json([
+            "--action", "system.crash-quarantine", "--plan", "--older-than-days", "30",
+            "--reports-dir", scope_reports, "--state-dir", scope_state, "--json"])
+        check.equal(scope_plan_code, 0, "the quarantine plan with an escaping entry exits 0")
+        check.equal(scope_plan.get("plan", {}).get("count"), 1,
+                    "the quarantine plan selects only the contained report")
+        check.equal(scope_plan.get("plan", {}).get("bytes"), os.path.getsize(scope_path),
+                    "the quarantine plan counts only the contained bytes")
+        check.equal(len(scope_plan.get("refused") or []), 3,
+                    "the quarantine plan carries the three refusals")
+        real_sha256_file = globals()["sha256_file"]
+        hashed = []
+
+        def recording_sha256_file(path):
+            hashed.append(os.path.basename(path))
+            return real_sha256_file(path)
+
+        globals()["sha256_file"] = recording_sha256_file
+        try:
+            scope_run, scope_run_code, _ = _run_json([
+                "--action", "system.crash-quarantine", "--confirm", "--older-than-days", "30",
+                "--reports-dir", scope_reports, "--state-dir", scope_state, "--json"])
+        finally:
+            globals()["sha256_file"] = real_sha256_file
+        check.equal(scope_run_code, 0, "the quarantine run with an escaping entry exits 0")
+        check.equal(scope_run.get("moved"), 1, "only the contained report moves")
+        check.equal(len(scope_run.get("refused") or []), 3,
+                    "the quarantine run carries the three refusals")
+        check.ok(not any(name in hashed for name in escape_links),
+                 "no escaping entry is hashed", ", ".join(hashed) or "nothing hashed")
+        check.ok(all(os.path.islink(os.path.join(scope_reports, name)) for name in escape_links),
+                 "the escaping entries are still in the reports directory")
+        check.ok(os.path.isfile(secret_path) and os.path.getsize(secret_path) > 0,
+                 "the outside file is untouched")
+        scope_rows = []
+        for scope_dir, _dirs, files in os.walk(os.path.join(scope_state, "quarantine")):
+            for name in files:
+                if name != "MANIFEST.jsonl":
+                    continue
+                with open(os.path.join(scope_dir, name), "r", encoding="utf-8") as handle:
+                    scope_rows.extend(json.loads(line) for line in handle if line.strip())
+        check.equal([row.get("name") for row in scope_rows], [scope_name],
+                    "the MANIFEST holds one row for the contained report only")
+        check.ok(scope_rows and scope_rows[0].get("sha256") != real_sha256_file(secret_path),
+                 "the MANIFEST row carries no hash of the outside file")
 
         # 6. restart-shell: no confirm -> exit 2; protected pid -> refusal
         print("-- restart guards")
