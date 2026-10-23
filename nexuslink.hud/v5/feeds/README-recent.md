@@ -6,8 +6,10 @@ Python 3, standard library only, no network, no daemon, no watcher. The HUD
 polls the script; a 10 s cache keeps two live ticks from walking the tree twice.
 A fixture read is never cached and never reads the host: a fixture file carries
 the tree as data, so its output is the same on every machine, and `--fixture
-DIR` stands in for the whole machine, where `~` is that directory and a root
-outside it is refused rather than read (see Fixtures).
+DIR` stands in for the whole machine, where `~` is that directory, a root
+outside it is refused rather than read, and every root and pin is judged on its
+resolved target so a symlink cannot carry the read back onto the host (see
+Fixtures).
 
     nexuslink.hud/v5/feeds/recent.py --json
     nexuslink.hud/v5/feeds/recent.py --config ~/NEXUS_AI_CENTER/my_paths.json --limit 4 --json
@@ -85,10 +87,13 @@ is reported as `ok: false`, not a crash.
 * `pinned` is not deduplicated against the file lists: a pin is a deliberate
   shortcut, not a recent item. `kind` is `"dir"`, `"file"`, or `null` when the
   path is gone. Pins are never subject to `--limit`. A pin row carries a
-  `reason` only when one of its boolean fields was not a boolean (see Fixtures).
+  `reason` only when one of its boolean fields was not a boolean (see Fixtures),
+  or when `--fixture DIR` refused it because its resolved target leaves `DIR`.
 * `broken` counts symlinks under the scanned roots whose target is gone.
   `outside` counts symlinks resolving outside every configured root (they are
-  never followed). Both are totals; `roots[]` carries the per-root split.
+  never followed), plus every root and every pin whose resolved path leaves the
+  `--fixture DIR` directory. Both are totals; `roots[]` carries the per-root
+  split.
 * A missing, unreadable or non-directory root contributes nothing, records a
   `reason` on its `roots[]` row, and leaves `ok: true`. The rest of the feed
   is still real data. A root whose `exists`, or a file row whose `broken`, was
@@ -213,6 +218,17 @@ held:
   cache file and no state directory are used. Useful for a bigger, real-shaped
   check: copy a tree into a directory, point the feed at it, get that tree.
 
+  **The rule is resolution, not spelling.** Every root and every pin is
+  resolved with `os.path.realpath` before it is used, and both sides of the
+  comparison — the path and `DIR` — are resolved, so a macos `/var` → `/private/var`
+  difference cannot make an inside path look outside. A path is kept only when
+  its resolved target is still inside the resolved `DIR`. A symlink that sits
+  inside `DIR` but points at the host therefore leaves `DIR`: the root is
+  refused with `"root is outside the fixture directory"`, the pin is reported
+  `exists: false` with `"pin is outside the fixture directory"`, and a pin is
+  never `stat`ed through a link. Each of those refusals also increments the
+  top-level `outside` count, and the target's files never reach a list.
+
 ## Exit codes
 
 | Code | When |
@@ -256,7 +272,10 @@ for `true`, `"true"`, `false`, `"false"`, `""`, `0` and `"0"`, and `null`, `[]`,
 reason. Fixture-directory purity is proven on a directory holding its own tree:
 `~` resolves to the directory, a root outside it is refused, the output is
 identical under two `HOME` values, a host mtime change leaves it unchanged, and
-no state directory appears.
+no state directory appears. A second directory proves the resolution rule: a
+symlinked root that points at the host leaks no file and is counted `outside`,
+and a symlinked pin is refused without being `stat`ed. The run prints its check
+count.
 Error paths run through the real CLI (named missing config → 2, malformed
 config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
 2, absent default config → 0). It never reads `~/Downloads` or any real root,

@@ -561,15 +561,26 @@ def scan_root(root, depth, allowed_roots, confined=None, home_dir=HOST_HOME):
     return entries, stats
 
 
-def pin_rows(pins, home_dir=HOST_HOME, confined=None):
+def pin_rows(pins, home_dir=HOST_HOME, confined=None, stats=None):
+    """Pinned rows. In a fixture directory every pin is judged on its target.
+
+    `confined` is the fixture directory standing in for the machine. Both sides
+    are resolved with ``os.path.realpath``: a pin that is a symlink inside the
+    directory but points at the host has left it, so it is refused and counted
+    instead of stat'ed. `stats["outside"]` accumulates those refusals.
+    """
+    confined_root = os.path.realpath(confined) if confined is not None else None
     rows = []
     for pin in pins:
         path = pin["path"]
         name = pin["name"] or os.path.basename(path.rstrip(os.sep)) or tilde(path, home_dir)
-        if confined is not None and not within(os.path.abspath(path), [confined]):
+        if confined_root is not None and not within(os.path.realpath(path), [confined_root]):
             # Same rule as a root: a pin outside the fixture directory is
             # reported missing, never stat'ed on the host.
-            rows.append({"name": name, "path": path, "exists": False, "kind": None})
+            if stats is not None:
+                stats["outside"] = stats.get("outside", 0) + 1
+            rows.append({"name": name, "path": path, "exists": False, "kind": None,
+                         "reason": "pin is outside the fixture directory"})
             continue
         exists = os.path.isdir(path)
         kind = "dir" if exists else None
@@ -747,8 +758,16 @@ def build_live(config, limit, mode="live", home_dir=HOST_HOME, confined=None):
     broken = 0
     outside = 0
 
+    # A fixture directory stands in for the whole machine. Every root and every
+    # pin is judged on its resolved target, so a symlink that lives inside DIR
+    # but points at the host has left DIR: it is refused (and counted) before
+    # any stat, instead of being read through the link.
+    confined_root = os.path.realpath(confined) if confined is not None else None
+
     def inside(path):
-        return confined is None or within(os.path.abspath(path), [confined])
+        if confined_root is None:
+            return True
+        return within(os.path.realpath(path), [confined_root])
 
     allowed = []
     for key in LISTS:
@@ -761,20 +780,22 @@ def build_live(config, limit, mode="live", home_dir=HOST_HOME, confined=None):
 
     for key in LISTS:
         for root in config["roots"][key]:
+            admitted = inside(root["path"])
             row = {
                 "list": key,
                 "path": tilde(root["path"], home_dir),
                 "depth": root["depth"],
-                "exists": os.path.isdir(root["path"]) if inside(root["path"]) else False,
+                "exists": os.path.isdir(root["path"]) if admitted else False,
                 "files": 0,
                 "broken": 0,
                 "outside": 0,
                 "reason": None,
             }
-            if not inside(root["path"]):
+            if not admitted:
                 # A fixture directory is the whole machine: outside it there is
                 # no data to read, only the host this mode must not touch.
                 row["reason"] = "root is outside the fixture directory"
+                outside += 1
                 roots.append(row)
                 continue
             try:
@@ -791,7 +812,9 @@ def build_live(config, limit, mode="live", home_dir=HOST_HOME, confined=None):
             lists[key].extend(entries)
             roots.append(row)
 
-    pinned = pin_rows(config["pinned"], home_dir, confined)
+    pin_stats = {"outside": 0}
+    pinned = pin_rows(config["pinned"], home_dir, confined, pin_stats)
+    outside += pin_stats["outside"]
     claimed = set()
     selected = {}
     for key in LISTS:
@@ -1153,8 +1176,10 @@ def _names(payload, key):
 
 def self_check():
     failures = []
+    counted = {"checks": 0}
 
     def check(label, condition, detail=None):
+        counted["checks"] += 1
         if not condition:
             failures.append("%s%s" % (label, (": " + str(detail)) if detail is not None else ""))
 
@@ -1357,6 +1382,49 @@ def self_check():
         stable_touched = dict(dir_touched) if isinstance(dir_touched, dict) else {}
         stable_touched.pop("generated_at", None)
         check("dir fixture ignores a host mtime change", stable_touched == stable_dir_a, stable_touched)
+
+        # --- a link inside DIR that points at the host has left DIR --------
+        link_fixture = os.path.join(tmp, "dir-link-fixture")
+        _write(
+            os.path.join(link_fixture, "hud_paths.json"),
+            '{"limit": 8, "downloads": ["~/real", "~/linked-root"],'
+            ' "pinned": [{"name": "LinkedRoot", "path": "~/real"},'
+            ' {"name": "LinkedPin", "path": "~/linked-pin"}]}',
+        )
+        _touch(os.path.join(link_fixture, "real", "kept.png"), 800)
+        os.symlink(os.path.join(tmp, "dir-home-a", "Downloads"),
+                   os.path.join(link_fixture, "linked-root"))
+        os.symlink(os.path.join(tmp, "dir-home-a", "Downloads"),
+                   os.path.join(link_fixture, "linked-pin"))
+        linked = as_json(run_cli(["--fixture", link_fixture, "--json"],
+                                 home=os.path.join(tmp, "dir-home-a"),
+                                 state_path=os.path.join(tmp, "dir-state-d")))
+        linked_rows = (linked or {}).get("roots") or []
+        check(
+            "symlinked root outside DIR refused",
+            [row.get("reason") for row in linked_rows]
+            == [None, "root is outside the fixture directory"],
+            linked_rows,
+        )
+        check(
+            "symlinked root leaks no host file",
+            _names(linked or {}, "downloads") == ["kept.png"],
+            _names(linked or {}, "downloads"),
+        )
+        linked_pins = (linked or {}).get("pinned") or []
+        check(
+            "symlinked pin is refused, not stat'ed",
+            len(linked_pins) == 2
+            and linked_pins[0].get("exists") is True
+            and linked_pins[1].get("exists") is False
+            and linked_pins[1].get("reason") == "pin is outside the fixture directory",
+            linked_pins,
+        )
+        check(
+            "refused root and pin are counted outside",
+            (linked or {}).get("outside") == 2,
+            (linked or {}).get("outside"),
+        )
 
         # --- the shipped fixture file ---
         shipped = os.path.join(os.path.dirname(os.path.dirname(script)), "fixtures", "recent.json")
@@ -1691,11 +1759,12 @@ def self_check():
         shutil.rmtree(tmp, ignore_errors=True)
 
     if failures:
-        sys.stderr.write("self-check FAILED (%d)\n" % len(failures))
+        sys.stderr.write("self-check FAILED: %d of %d checks\n"
+                         % (len(failures), counted["checks"]))
         for line in failures:
             sys.stderr.write("  - %s\n" % line)
         return 1
-    sys.stdout.write("recent.py self-check OK\n")
+    sys.stdout.write("recent.py self-check OK: %d checks, 0 failures\n" % counted["checks"])
     return EXIT_OK
 
 
