@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-10-23T00:00:00Z",
+  "now": "2026-10-23T00:00:00Z",
+  "captured_by": "F8f on the Mac, 2026-10-23",
+  "notes": {
+    "launchctl-list.txt": "sanitised capture of launchctl list on NexusBook; header plus 14 rows",
+    "log-show.ndjson": "8 real Error rows from log show -1h, trimmed to 8 keys, plus 2 synthetic Fault rows from nexuslink-hud",
+    "journalctl-errors.ndjson": "shaped from journald JSON output; Linux branch has no live host here",
+    "systemctl-failed.json": "shaped from systemd 255 systemctl --output=json; Linux branch has no live host here",
+    "ps.txt": "recorded shape of ps -Ao pid=,ppid=,args= on the Linux HUD host"
+  }
+}
