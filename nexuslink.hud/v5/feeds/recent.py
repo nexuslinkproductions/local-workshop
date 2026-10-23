@@ -3,9 +3,9 @@
 
 Emits the latest downloads, screenshots and recent files, the pinned folders,
 and a type census, from a paths config. Stdlib only, no network, no daemon:
-the HUD polls this script and a live read is cached for 10 s. A fixture read
-is never cached and keeps no host state, so its output is the same on every
-machine.
+the HUD polls this script and a live read is cached for 10 s. A fixture file
+is never cached and reads no host state, so its output is the same on every
+machine; --fixture DIR is the one fixture mode that reads the host.
 
     recent.py --json
     recent.py --config ./hud_paths.json --limit 4 --json
@@ -114,7 +114,7 @@ def iso(epoch):
         return None
     try:
         value = float(epoch)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if value != value or value in (float("inf"), float("-inf")):
         return None
@@ -138,6 +138,24 @@ def parse_iso(text):
     except ValueError:
         return None
     return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def finite(value):
+    """True for a real, finite int or float. Bools are not numbers here."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return value == value and value not in (float("inf"), float("-inf"))
+
+
+def finite_float(value):
+    """A number we can print as a float, or None. Huge ints and NaN -> None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
 
 
 def home():
@@ -241,9 +259,11 @@ def cache_file():
 def _int_or(value, default, low, high):
     if isinstance(value, bool):
         return default
+    if isinstance(value, float) and not finite(value):
+        return default
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if number < low or number > high:
         return default
@@ -323,18 +343,54 @@ def parse_config(raw, shown, base, home_dir=HOST_HOME):
     return config
 
 
-def read_json_file(path, what):
+class _NonFinite(ValueError):
+    """A JSON number that is NaN or out of float range. Bad content, not a bug."""
+
+    def __init__(self, text):
+        ValueError.__init__(self, text)
+        self.text = str(text)
+
+
+def _json_float(text):
+    """json.loads parse_float hook: reject NaN and overflowed literals."""
+    value = float(text)
+    if not finite(value):
+        raise _NonFinite(text)
+    return value
+
+
+def _json_constant(text):
+    """json.loads parse_constant hook: NaN, Infinity and -Infinity."""
+    raise _NonFinite(text)
+
+
+def read_json_file(path, what, shown=None):
+    """Read one JSON file. Bad bytes and bad content are answers, not crashes.
+
+    `shown` is the path as it should appear in a reason. Live mode leaves it
+    out and gets the host `~` form; fixture mode passes the path exactly as the
+    caller gave it, so the bytes never depend on the host HOME.
+    """
+    display = tilde(path) if shown is None else shown
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            raw = handle.read()
+        with open(path, "rb") as handle:
+            body = handle.read()
     except OSError as exc:
-        raise Missing("cannot read %s at %s: %s" % (what, tilde(path), exc.strerror or exc))
-    if not raw.strip():
-        raise Missing("%s at %s is empty" % (what, tilde(path)))
+        raise Missing("cannot read %s at %s: %s" % (what, display, exc.strerror or exc))
     try:
-        return json.loads(raw)
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Malformed("%s at %s is not valid UTF-8: %s" % (what, display, exc))
+    if not text.strip():
+        raise Missing("%s at %s is empty" % (what, display))
+    try:
+        return json.loads(text, parse_float=_json_float, parse_constant=_json_constant)
+    except _NonFinite as exc:
+        raise Malformed("%s at %s has a non-finite number: %s" % (what, display, exc.text))
+    except RecursionError:
+        raise Malformed("%s at %s nests deeper than this reader allows" % (what, display))
     except ValueError as exc:
-        raise Malformed("%s at %s is not valid JSON: %s" % (what, tilde(path), exc))
+        raise Malformed("%s at %s is not valid JSON: %s" % (what, display, exc))
 
 
 # --------------------------------------------------------------------------
@@ -442,14 +498,32 @@ def pin_rows(pins):
 # fixture scan
 
 
+def fixture_name(name):
+    """A fixture file row's name -> the bare name to print, or None to skip.
+
+    A name is one file inside the root. `.`, `..` and anything holding a path
+    separator could climb out of that root (or reach another directory on a
+    different machine), so those rows are skipped, not resolved.
+    """
+    text = name.strip()
+    if not text or text in (".", ".."):
+        return None
+    for sep in (os.sep, os.altsep, "/", "\\"):
+        if sep and sep in text:
+            return None
+    return text
+
+
 def _fixture_entry(raw, root, allowed_roots, stats, home_dir):
     """One fixture file row -> entry or None (mirrors the live rules)."""
     if not isinstance(raw, dict):
         return None
     name = raw.get("name")
-    if not isinstance(name, str) or not name.strip():
+    if not isinstance(name, str):
         return None
-    name = name.strip()
+    name = fixture_name(name)
+    if name is None:
+        return None
     path = os.path.join(root, name)
     link = raw.get("link")
     if isinstance(link, str) and link.strip():
@@ -470,13 +544,13 @@ def _fixture_entry(raw, root, allowed_roots, stats, home_dir):
     if mtime is None:
         mtime = parse_iso(raw.get("mtime_iso"))
     size = raw.get("size")
-    if isinstance(size, bool) or not isinstance(size, (int, float)):
+    if not finite(size):
         size = None
     return {
         "name": name,
         "path": path,
         "size": int(size) if size is not None else None,
-        "mtime": float(mtime) if isinstance(mtime, (int, float)) else None,
+        "mtime": finite_float(mtime),
         "type": classify(name),
         "_key": key,
     }
@@ -781,26 +855,31 @@ def cache_write(key, payload, built_at):
 
 
 def run(args):
-    if args.fixture:
-        target = abs_path(args.fixture)
+    if args.fixture is not None:
+        given = args.fixture
+        if not given.strip():
+            raise CallerError("--fixture needs a path")
+        target = abs_path(given)
+        # Fixture reasons print the path exactly as given: expanding a host ~
+        # here would put this machine's home into otherwise pure output.
+        shown = given
         if not os.path.exists(target):
-            raise CallerError("no fixture at %s" % tilde(target))
+            raise CallerError("no fixture at %s" % shown)
         if os.path.isdir(target):
             config_path = os.path.join(target, "hud_paths.json")
+            shown_config = os.path.join(shown, "hud_paths.json")
             if not os.path.isfile(config_path):
-                raise CallerError("fixture dir %s has no hud_paths.json" % tilde(target))
-            raw = read_json_file(config_path, "fixture config")
-            shown = tilde(config_path)
+                raise CallerError("fixture dir %s has no hud_paths.json" % shown)
+            raw = read_json_file(config_path, "fixture config", shown_config)
             limit = args.limit
             if limit is None:
                 limit = DEFAULT_LIMIT
                 if isinstance(raw, dict):
                     limit = _int_or(raw.get("limit"), DEFAULT_LIMIT, 1, MAX_LIMIT)
-            config = parse_config(raw, shown, target)
+            config = parse_config(raw, shown_config, target)
             payload = build_live(config, limit, mode="fixture")
         else:
-            raw = read_json_file(target, "fixture")
-            shown = tilde(target)
+            raw = read_json_file(target, "fixture", shown)
             limit = args.limit
             if limit is None:
                 limit = DEFAULT_LIMIT
@@ -811,7 +890,9 @@ def run(args):
         # runs give the same bytes apart from generated_at, cached false.
         return payload
     else:
-        explicit = bool(args.config)
+        explicit = args.config is not None
+        if explicit and not args.config.strip():
+            raise CallerError("--config needs a path")
         config_path = abs_path(args.config) if explicit else abs_path(DEFAULT_CONFIG)
         if explicit:
             if not os.path.exists(config_path):
@@ -871,7 +952,7 @@ def main(argv=None):
     if args.limit is not None and not (0 <= args.limit <= MAX_LIMIT):
         parser.error("--limit must be between 0 and %d" % MAX_LIMIT)
 
-    mode = "fixture" if args.fixture else "live"
+    mode = "fixture" if args.fixture is not None else "live"
     try:
         payload = run(args)
     except CallerError as exc:
@@ -1089,6 +1170,12 @@ def self_check():
             )
             check("shipped broken", shipped_payload.get("broken") == 1, shipped_payload.get("broken"))
             check("shipped outside", shipped_payload.get("outside") == 1, shipped_payload.get("outside"))
+            shipped_missing = [row for row in shipped_payload.get("roots") or [] if row.get("exists") is False]
+            check(
+                "shipped missing root keeps ok true with the documented reason",
+                [row.get("reason") for row in shipped_missing] == ["no such directory"],
+                shipped_missing,
+            )
             shipped_names = _names(shipped_payload, "downloads") + _names(shipped_payload, "screenshots") + _names(shipped_payload, "recent_files")
             check("shipped dedupe", "hud-review.mp4" not in _names(shipped_payload, "recent_files"), _names(shipped_payload, "recent_files"))
             check("shipped pin missing", any(p["exists"] is False for p in shipped_payload.get("pinned") or []), shipped_payload.get("pinned"))
@@ -1185,6 +1272,97 @@ def self_check():
                 isinstance(scalar_payload, dict) and scalar_payload.get("ok") is False and scalar_payload.get("kind") == "malformed",
                 scalar_payload,
             )
+
+        # --- malformed bytes and numbers are answers, never a crash ---
+        bad_bytes = os.path.join(tmp, "bad-bytes.json")
+        with open(bad_bytes, "wb") as handle:
+            handle.write(b"\xff\xfe\x00{")
+        proc = run_cli(["--fixture", bad_bytes, "--json"])
+        answer = as_json(proc)
+        check("non-UTF-8 fixture exits 0", proc.returncode == 0, proc.returncode)
+        check(
+            "non-UTF-8 fixture is malformed",
+            isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "malformed",
+            answer,
+        )
+
+        deep = os.path.join(tmp, "deep.json")
+        _write(deep, "[" * 200000 + "]" * 200000)
+        proc = run_cli(["--fixture", deep, "--json"])
+        answer = as_json(proc)
+        check("deep fixture exits 0", proc.returncode == 0, proc.returncode)
+        check(
+            "deep fixture is malformed",
+            isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "malformed",
+            answer,
+        )
+
+        nonfinite_fixture = (
+            '{"home": "/Users/x", "config": {"downloads": ["~/Downloads"]},'
+            ' "roots": {"~/Downloads": {"exists": true, "files":'
+            ' [{"name": "a.png", "size": %s, "mtime": 1792703000}]}}}'
+        )
+        for label, literal in (("NaN", "NaN"), ("Infinity", "Infinity"), ("1e400", "1e400")):
+            path = os.path.join(tmp, "size-%s.json" % label.lower())
+            _write(path, nonfinite_fixture % literal)
+            proc = run_cli(["--fixture", path, "--json"])
+            answer = as_json(proc)
+            check("size %s exits 0" % label, proc.returncode == 0, proc.returncode)
+            check(
+                "size %s is malformed" % label,
+                isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "malformed",
+                answer,
+            )
+
+        for label, body in (
+            ("limit 1e400", '{"limit": 1e400, "downloads": ["~/Downloads"]}'),
+            ("root depth 1e400", '{"downloads": [{"path": "~/Downloads", "depth": 1e400}]}'),
+        ):
+            path = os.path.join(tmp, "number-%s.json" % label.replace(" ", "-"))
+            _write(path, body)
+            proc = run_cli(["--config", path, "--json"])
+            answer = as_json(proc)
+            check("config %s exits 0" % label, proc.returncode == 0, proc.returncode)
+            check(
+                "config %s is malformed" % label,
+                isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "malformed",
+                answer,
+            )
+
+        # --- an empty path is a caller error, never a silent live read ---
+        for flag in ("--fixture", "--config"):
+            proc = run_cli([flag, "", "--json"])
+            answer = as_json(proc)
+            check("%s empty exits 2" % flag, proc.returncode == 2, proc.returncode)
+            check(
+                "%s empty is caller" % flag,
+                isinstance(answer, dict) and answer.get("ok") is False and answer.get("kind") == "caller",
+                answer,
+            )
+
+        # --- a fixture name may not climb out of its root ---
+        escape = os.path.join(tmp, "escape.json")
+        _write(
+            escape,
+            '{"home": "/Users/x", "config": {"downloads": ["~/Downloads"]},'
+            ' "roots": {"~/Downloads": {"exists": true, "files": ['
+            '{"name": "../escape.png", "size": 1, "mtime": 1792703000},'
+            '{"name": ".", "size": 1, "mtime": 1792703000},'
+            '{"name": "..", "size": 1, "mtime": 1792703000},'
+            '{"name": "sub/nested.png", "size": 1, "mtime": 1792703000},'
+            '{"name": "kept.png", "size": 1, "mtime": 1792703000}]}}}',
+        )
+        proc = run_cli(["--fixture", escape, "--json"])
+        answer = as_json(proc)
+        check("escape fixture exits 0", proc.returncode == 0, proc.returncode)
+        check("escape names skipped", _names(answer or {}, "downloads") == ["kept.png"], _names(answer or {}, "downloads"))
+        check(
+            "escape path stays inside the root",
+            isinstance(answer, dict)
+            and answer["downloads"][0]["path"] == "/Users/x/Downloads/kept.png"
+            and answer["roots"][0]["files"] == 1,
+            (answer or {}).get("downloads"),
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

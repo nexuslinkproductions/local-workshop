@@ -4,7 +4,9 @@ One JSON object for the deck's Recent and Pinned widget: the newest downloads,
 screenshots and recent files, the pinned folders, and a census by file type.
 Python 3, standard library only, no network, no daemon, no watcher. The HUD
 polls the script; a 10 s cache keeps two live ticks from walking the tree twice.
-A fixture read is never cached and keeps no host state.
+A fixture file read is never cached and reads no host state, so its output is
+the same on every machine; `--fixture DIR` is the one fixture mode that reads
+the host (see Fixtures).
 
     nexuslink.hud/v5/feeds/recent.py --json
     nexuslink.hud/v5/feeds/recent.py --config ~/NEXUS_AI_CENTER/my_paths.json --limit 4 --json
@@ -135,10 +137,13 @@ in the same directory then `os.replace`, so a reader never sees half a payload.
 * A cache directory that cannot be written makes the feed slower, not broken:
   the write is skipped and the fresh payload is still printed.
 * Environment hooks: `NEXUSLINK_STATE_DIR` moves the cache directory,
-  `NEXUSLINK_NO_CACHE=1` turns the cache off. `HOME` is read too: to expand `~`
-  in a live config and in the paths named on the command line, and to shorten a
-  live path to its `~` display form. A fixture file's `~` is its own `home`,
-  never `HOME`. Nothing else reads the environment.
+  `NEXUSLINK_NO_CACHE=1` turns the cache off. `HOME` is read for live reads: to
+  expand `~` in the config and to shorten a live path to its `~` display form.
+  It also resolves a `~` in a path named on the command line — including the
+  `--fixture` path itself, only so that file can be opened. A fixture file's
+  `~` is its own `home`, never `HOME`, and a fixture path is printed exactly as
+  it was given, so no `HOME` value reaches a fixture read's output. Nothing
+  else reads the environment.
 
 ## Fixtures
 
@@ -165,16 +170,22 @@ held:
 * `home` is the `~` the fixture stands in for, deliberately not the running
   user's. Every `~` in its config expands to that value, so `path` stays
   absolute and the output is byte-identical on any machine. A fixture without
-  `home` keeps the `~` form instead (also machine-independent). Either way the
-  host `HOME` is never consulted. `home` itself must be an absolute path; any
-  other value is `ok: false`, `kind: malformed`.
+  `home` keeps the `~` form instead (also machine-independent). Either way no
+  host `HOME` value reaches the output, and the fixture path itself is printed
+  exactly as it was given. `home` must be an absolute path; any other value is
+  `ok: false`, `kind: malformed`.
 * A relative root in a fixture file is kept as written: there is no host
   directory to resolve it against. `--fixture DIR` still resolves relatives
   inside `DIR`.
 * A `roots` key is the display form of the configured root (the `~` form for a
-  home path); entries are the files it held. A root absent from `roots`, or
-  `exists: false`, gives the same `reason` on the `roots[]` row as a live
-  missing directory.
+  home path); entries are the files it held. A root absent from `roots` gives
+  `"root not present in fixture"` on its `roots[]` row, and `exists: false`
+  gives the row's own `reason` or `"no such directory"` when it has none. A
+  live missing root gives `"no such directory: <path>"` instead (and a live
+  path that is not a directory gives `"not a directory: <path>"`).
+* A file row's `name` is one bare file name. A row whose name is `.`, `..` or
+  holds a path separator is skipped, so no fixture row can point outside its
+  root.
 * `mtime` is epoch seconds; `mtime_iso` is the same value for humans and is
   the fallback when `mtime` is absent.
 * `"link": "<target>"` marks a symlink, `"broken": true` marks one whose
@@ -192,10 +203,12 @@ held:
 | Code | When |
 |---|---|
 | `0` | data, and honest absence: `{"ok": false, "reason": "...", "kind": "missing"|"malformed"}` |
-| `2` | caller error (`--limit` out of range, unknown flag, a `--config` or `--fixture` path named on the command line that does not exist, a `--config` path that is not a file, a `--fixture` directory with no `hud_paths.json`) and unexpected bugs (`"kind": "programming"`) |
+| `2` | caller error (`--limit` out of range, unknown flag, an empty `--config` or `--fixture` value, a `--config` or `--fixture` path named on the command line that does not exist, a `--config` path that is not a file, a `--fixture` directory with no `hud_paths.json`) and unexpected bugs (`"kind": "programming"`) |
 
 Missing or malformed *content* never raises and never takes the process down:
-a HUD tick sees a JSON object with a reason, not a traceback.
+a HUD tick sees a JSON object with a reason, not a traceback. Non-UTF-8 bytes,
+JSON nested beyond the reader's limit, and non-finite numbers (`NaN`,
+`Infinity`, `1e400`) are all `kind: malformed`, exit 0.
 
 ## Self-check
 
@@ -214,6 +227,12 @@ the shipped fixture run twice in a row stays `cached: false`, `age_s: 0` and
 creates no state directory; the same fixture under two different `HOME` values
 gives identical output apart from `generated_at`; and a fixture holding `null`,
 `5`, `true`, `1.5` or `[]` answers `ok: false`, `kind: malformed`, exit 0.
+Malformed content has its own group: a non-UTF-8 fixture, a 200k-deep array, a
+`NaN`, `Infinity` or `1e400` size, and a config with `limit: 1e400` or
+`depth: 1e400` all answer exit 0, `ok: false`, `kind: malformed`; an empty
+`--fixture` or `--config` value exits 2 with `kind: caller`; and a fixture row
+named `../escape.png`, `.`, `..` or `sub/nested.png` is skipped, so only the
+bare `kept.png` row survives under its root.
 Error paths run through the real CLI (named missing config → 2, malformed
 config → 0 with `ok: false`, empty config → 0, missing fixture → 2, bad flag →
 2, absent default config → 0). It never reads `~/Downloads` or any real root,

@@ -6,7 +6,7 @@
     "limit": 8,
     "downloads": ["~/Downloads"],
     "screenshots": ["~/Pictures/Screenshots"],
-    "recent_files": ["~/Desktop", { "path": "~/Documents", "depth": 2 }],
+    "recent_files": ["~/Desktop", { "path": "~/Documents", "depth": 2 }, "~/Documents/Quarterly"],
     "pinned": [
       { "name": "HUD project", "path": "~/NEXUS_AI_CENTER/04_PROJECTS/HUD" },
       { "name": "Worktrees", "path": "~/NEXUS_AI_CENTER/04_PROJECTS/HUD/plugins/.worktrees" },
