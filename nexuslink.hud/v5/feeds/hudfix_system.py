@@ -96,6 +96,10 @@ LIMITS = {"senders": 10, "units": 20, "jobs": 200, "reports": 200}
 SAMPLE_CHARS = 160
 COMMAND_TIMEOUT_S = 30.0
 LOG_TIMEOUT_S = 120.0
+# A capture nested deeper than this is refused, not walked: JSON nesting is a
+# recursion hazard (json itself raises RecursionError past the interpreter's
+# stack), and no honest log line, journal row or .ips header is 64 deep.
+MAX_JSON_DEPTH = 64
 
 ALLOWED_EXECUTABLES = frozenset(
     {"systemctl", "journalctl", "launchctl", "log", "ps", "sysctl", "uptime"}
@@ -146,6 +150,9 @@ class Missing(DataProblem):
 
 class Malformed(DataProblem):
     kind = "malformed"
+    # Set on an instance when the value was refused for nesting, so a caller
+    # that skips bad rows can still say why none survived.
+    deep = False
 
 
 class CallerError(Exception):
@@ -309,6 +316,45 @@ def emit(payload, compact):
     sys.stdout.flush()
 
 
+def _json_depth_ok(value, limit):
+    """True when `value` nests no deeper than `limit`. Iterative, not recursive."""
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > limit:
+            return False
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+    return True
+
+
+def loads_bounded(raw, what, limit=MAX_JSON_DEPTH):
+    """json.loads with a depth cap. Hostile nesting is an answer, not a raise.
+
+    ``json`` raises ``RecursionError`` on a capture nested past the C scanner's
+    stack (1200 levels is enough), and that is not a ``ValueError``: it would
+    escape every ``except ValueError`` in this file and surface as a
+    programming error. Both paths become ``Malformed``, and the depth cap is
+    checked on the parsed value too, so the answer does not depend on the
+    interpreter's recursion limit.
+    """
+    try:
+        value = json.loads(raw)
+    except RecursionError:
+        problem = Malformed("%s is nested too deeply to read" % what)
+        problem.deep = True
+        raise problem
+    except ValueError as exc:
+        raise Malformed("%s is not valid JSON: %s" % (what, exc))
+    if not _json_depth_ok(value, limit):
+        problem = Malformed("%s is nested deeper than %d levels" % (what, limit))
+        problem.deep = True
+        raise problem
+    return value
+
+
 def read_json_file(path, what):
     shown = tilde(path)
     target = os.path.expanduser(str(path))
@@ -323,10 +369,7 @@ def read_json_file(path, what):
         raise Missing("cannot read %s at %s: %s" % (what, shown, exc.strerror or exc))
     if not raw.strip():
         raise Missing("%s at %s is empty" % (what, shown))
-    try:
-        return json.loads(raw)
-    except ValueError as exc:
-        raise Malformed("%s at %s is not valid JSON: %s" % (what, shown, exc))
+    return loads_bounded(raw, "%s at %s" % (what, shown))
 
 
 def write_json_atomic(path, payload):
@@ -373,8 +416,23 @@ def write_manifest(path, rows):
         raise
 
 
+def _lossy(*texts):
+    """How many bytes the decoder had to replace. Zero means the capture is exact."""
+    return sum((piece or "").count("\ufffd") for piece in texts)
+
+
 def run_cmd(argv, timeout=COMMAND_TIMEOUT_S):
-    """Run an argv list with no shell. Returns rc/out/err/timed_out, never raises."""
+    """Run an argv list with no shell. Returns rc/out/err/timed_out, never raises.
+
+    The child's output is decoded as UTF-8 with ``errors="replace"``. A
+    ``launchctl`` or ``log`` child can write a byte that is not part of a UTF-8
+    character, and this module's own timeout kills the child mid-character: a
+    strict decode would raise ``UnicodeDecodeError`` out of ``communicate`` and
+    turn a hostile capture into exit 2 ``programming_error`` instead of
+    ``kind: malformed``. ``lossy`` counts the bytes the decoder had to replace,
+    so a caller whose answer depends on exact text can refuse the capture
+    instead of reading a silently altered one.
+    """
     if not argv or argv[0] not in ALLOWED_EXECUTABLES:
         raise CallerError("command_not_allowed", "refusing to run %r" % (argv,))
     try:
@@ -385,21 +443,24 @@ def run_cmd(argv, timeout=COMMAND_TIMEOUT_S):
             stdin=subprocess.DEVNULL,
             shell=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except FileNotFoundError:
         return {"rc": None, "out": "", "err": "%s not found" % argv[0], "timed_out": False,
-                "missing": True}
+                "missing": True, "lossy": 0}
     except OSError as exc:
-        return {"rc": None, "out": "", "err": str(exc), "timed_out": False, "missing": False}
+        return {"rc": None, "out": "", "err": str(exc), "timed_out": False, "missing": False,
+                "lossy": 0}
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         out, err = proc.communicate()
         return {"rc": None, "out": out or "", "err": err or "", "timed_out": True,
-                "missing": False}
+                "missing": False, "lossy": _lossy(out, err)}
     return {"rc": proc.returncode, "out": out or "", "err": err or "", "timed_out": False,
-            "missing": False}
+            "missing": False, "lossy": _lossy(out, err)}
 
 
 def sha256_file(path):
@@ -527,10 +588,7 @@ class Fixture(object):
         raw = self.text(name, required=required)
         if raw is None:
             return None
-        try:
-            return json.loads(raw)
-        except ValueError as exc:
-            raise Malformed("fixture %s is not valid JSON: %s" % (name, exc))
+        return loads_bounded(raw, "fixture %s" % name)
 
     def meta(self):
         if not self.is_dir:
@@ -539,8 +597,8 @@ class Fixture(object):
         if not raw:
             return {}
         try:
-            data = json.loads(raw)
-        except ValueError:
+            data = loads_bounded(raw, "fixture meta.json")
+        except Malformed:
             return {}
         return data if isinstance(data, dict) else {}
 
@@ -805,23 +863,25 @@ def rows_from_text(raw):
     if not body:
         raise Missing("log capture is empty")
     if body.startswith("["):
-        try:
-            data = json.loads(body)
-        except ValueError as exc:
-            raise Malformed("log capture is not valid JSON: %s" % exc)
+        data = loads_bounded(body, "log capture")
         if not isinstance(data, list):
             raise Malformed("log capture is not a JSON array")
         return [row for row in data if isinstance(row, dict)], 0
     rows = []
     skipped = 0
+    too_deep = 0
     for line in body.splitlines():
         line = line.strip().rstrip(",")
         if not line or line in ("[", "]"):
             skipped += 1
             continue
         try:
-            row = json.loads(line)
-        except ValueError:
+            row = loads_bounded(line, "log capture row")
+        except Malformed as problem:
+            # One unreadable line is skipped and counted; a nesting bomb in one
+            # row must not take the whole capture down.
+            if getattr(problem, "deep", False):
+                too_deep += 1
             skipped += 1
             continue
         if isinstance(row, dict):
@@ -829,6 +889,11 @@ def rows_from_text(raw):
         else:
             skipped += 1
     if not rows:
+        if too_deep:
+            raise Malformed(
+                "log capture rows are nested deeper than %d levels (%d row(s))"
+                % (MAX_JSON_DEPTH, too_deep)
+            )
         raise Malformed("no JSON rows in the log capture")
     return rows, skipped
 
@@ -844,8 +909,8 @@ def iter_json_rows(lines, stats):
         if line.endswith(","):
             line = line[:-1]
         try:
-            row = json.loads(line)
-        except ValueError:
+            row = loads_bounded(line, "log row")
+        except Malformed:
             stats["skipped"] += 1
             continue
         if not isinstance(row, dict):
@@ -992,8 +1057,8 @@ def parse_ips_header(raw):
     if not line.startswith("{"):
         return None
     try:
-        header = json.loads(line)
-    except ValueError:
+        header = loads_bounded(line, ".ips header")
+    except Malformed:
         return None
     return header if isinstance(header, dict) else None
 
@@ -1059,6 +1124,10 @@ def launchctl_jobs(ctx):
         raise Missing("launchctl list timed out after 15 s")
     if result["rc"] not in (0, None):
         raise Malformed("launchctl list exited %s: %s" % (result["rc"], first_line(result["err"], 160)))
+    if result.get("lossy"):
+        raise Malformed(
+            "launchctl list output is not valid UTF-8 (%d byte(s) replaced); "
+            "refusing to read a lossy capture" % result["lossy"])
     jobs, reasons = parse_launchctl_list(result["out"])
     failed = [job for job in jobs if job["last_exit_status"] not in (0, None)]
     failed.sort(key=lambda job: (job["last_exit_status"] if job["last_exit_status"] is not None else 0,
@@ -1105,10 +1174,11 @@ def systemctl_units(ctx):
         if result["rc"] not in (0, None):
             raise Malformed("systemctl --user --failed exited %s: %s"
                             % (result["rc"], first_line(result["err"], 160)))
-        try:
-            data = json.loads(result["out"] or "[]")
-        except ValueError as exc:
-            raise Malformed("systemctl --output=json is not JSON: %s" % exc)
+        if result.get("lossy"):
+            raise Malformed(
+                "systemctl --output=json is not valid UTF-8 (%d byte(s) replaced); "
+                "refusing to read a lossy capture" % result["lossy"])
+        data = loads_bounded(result["out"] or "[]", "systemctl --output=json")
         units = parse_systemctl_units(data)
         last_log = {}
         reasons = {}
@@ -1152,7 +1222,7 @@ def log_lines_from_cmd(argv, timeout):
     try:
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 stdin=subprocess.DEVNULL, shell=False, text=True,
-                                errors="replace")
+                                encoding="utf-8", errors="replace")
     except FileNotFoundError:
         raise Missing("%s not found on this host" % argv[0])
     except OSError as exc:
@@ -2749,6 +2819,48 @@ def self_check():
         check.ok(payload.get("ok") is False and payload.get("uptime_s") is None,
                  "a corrupt meta.json answers ok false with no uptime",
                  str(payload.get("reason")))
+
+        # 4e. hostile output: bytes that are not UTF-8 out of launchctl (the
+        # module's own timeout can cut a character in half), and a capture
+        # nested past the reader's depth cap. Both answer, neither raises.
+        print("-- hostile output")
+        stub_dir = os.path.join(temp_root, "bin")
+        os.makedirs(stub_dir)
+        launchctl_stub = os.path.join(stub_dir, "launchctl")
+        with open(launchctl_stub, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nprintf 'PID\\tStatus\\tLabel\\n'; "
+                         "printf -- '-\\t0\\tcom.example.hud.\\377\\n'\n")
+        os.chmod(launchctl_stub, 0o755)
+        saved_path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = stub_dir + os.pathsep + saved_path
+            payload, code = _cli(["--action", "system.failed-jobs", "--json",
+                                  "--state-dir", os.path.join(temp_root, "hostile-state-a")])
+        finally:
+            os.environ["PATH"] = saved_path
+        payload = payload or {}
+        check.equal(code, 0, "non-UTF-8 launchctl output exits 0")
+        check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                 "non-UTF-8 launchctl output says ok false and malformed",
+                 str(payload.get("reason")))
+        check.ok("not valid UTF-8" in (payload.get("reason") or ""),
+                 "the lossy launchctl refusal names the encoding",
+                 str(payload.get("reason")))
+
+        deep_capture = os.path.join(temp_root, "deep.ndjson")
+        depth = 1200
+        with open(deep_capture, "w", encoding="utf-8") as handle:
+            handle.write("{" + '"a":{' * depth + "}" + "}" * depth + "\n")
+        payload, code = _cli(["--action", "system.recent-errors", "--json",
+                              "--fixture", deep_capture,
+                              "--state-dir", os.path.join(temp_root, "hostile-state-b")])
+        payload = payload or {}
+        check.equal(code, 0, "a log capture nested 1200 deep exits 0")
+        check.ok(payload.get("ok") is False and payload.get("kind") == "malformed",
+                 "a log capture nested 1200 deep says ok false and malformed",
+                 str(payload.get("reason")))
+        check.ok("nested" in (payload.get("reason") or ""),
+                 "the nesting refusal names the depth", str(payload.get("reason")))
 
         # 5. quarantine: fake report -> MANIFEST row, original gone
         print("-- quarantine")
