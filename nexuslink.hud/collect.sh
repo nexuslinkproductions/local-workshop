@@ -24,10 +24,15 @@ mode="${1:-poll}"
 gpu_kind="${2:-auto}"
 
 # bash fallback for `stream`: poll on a loop with a batch sentinel.
+# The sentinel carries a running count, like hud-collect's `batch\t<n>`: the
+# HUD parses it as an integer, and a non-numeric value leaves its frame
+# counter (status, selftest) pinned at 0.
 if [[ $mode == "stream" ]]; then
+  _batch=0
   while :; do
     bash "$_self/collect.sh" poll "$gpu_kind"
-    printf 'batch\t-\n'
+    _batch=$((_batch + 1))
+    printf 'batch\t%d\n' "$_batch"
     sleep 1.5
   done
 fi
