@@ -1,35 +1,58 @@
 # NEXUS System HUD (`nexuslink.hud`)
 
-Persistent cyberpunk system dashboard for omarchy-shell, rendered on the
-desktop's `bottom` layer — above the wallpaper, below your windows. One
-instance per monitor, all fed by a single lightweight poller.
+Persistent cyberpunk system dashboard for omarchy-shell. One transparent
+panel per monitor on the wlr `background` layer (the same layer as the stock
+wallpaper plugin), fed by a single persistent collector process. Only the
+drawn deck takes pointer input; every other pixel of the screen-sized surface
+passes clicks through to the desktop.
 
 ## Files
 
 | File | Role |
 |---|---|
 | `manifest.json` | plugin manifest (`kinds: ["service"]`, entry `Hud.qml`) |
-| `Hud.qml` | service entry point: polling, Variants + PanelWindow per screen, IPC |
-| `HudSection.qml` | collapsible section (header chevron + animated body) |
-| `HudRow.qml` | stat row: label, optional gauge, value |
-| `collect.sh` | stats collector; `probe` (host/kernel/gpu kind) + `poll` (dynamic stats) |
+| `Hud.qml` | thin entry point: a `Loader` for `v4/HudV4.qml`, so load errors are logged instead of fatal |
+| `v4/HudV4.qml` | the shell: stats stream, token ledger, IPC, and a `Variants` of one `PanelWindow` per output |
+| `v4/Navigator.qml` | modal overlay browser (own `PanelWindow` on the `overlay` layer, own IPC target) |
+| `v4/*.qml` | the screens and chrome (`CommandHub`, `BoardView`, `Workbench`, `DeviceBay`, ...), registered in `v4/qmldir` |
+| `collect.sh` | collector front end: `probe`, `poll <gpu_kind>`, `stream <gpu_kind>` |
+| `hud-collect` | prebuilt Rust collector (source in `../collector`); `collect.sh` hands over to it when it sits next to the script |
+| `tokens/ledger.py` | token ledger, run every 60 s, writes `~/.local/state/nexuslink/tokens.json` |
 
-## Sections
+## Screens
 
-- Header: `◢◤ NEXUS//hostname`, kernel, uptime, date/clock, output + active workspace
-- `SYSTEM` — cpu % gauge, load avg, cores, cpu temp, uptime
-- `MEMORY` — ram + swap gauges
-- `GPU` — util/vram/temp (nvidia-smi or amdgpu sysfs; hidden if neither)
-- `STORAGE` — df gauges for `/` and `$HOME` (dedupes when same mount)
-- `NETWORK` — rx/tx rates from `/proc/net/dev` deltas
-- `AGENTS` — tmux session count + running agent processes
+Each output gets one deck, picked by its name (`HudV4.qml`):
 
-## Interactions
+| Output | Deck |
+|---|---|
+| `DP-1` | `CommandHub` |
+| `DP-2` | `BoardView` |
+| `HDMI-A-3` | `Workbench` |
+| any other | `CommandHub`, so no output renders empty |
 
-- Click a section header to collapse/expand it (animated).
-- Click the NEXUS header block to collapse/expand everything.
-- IPC: `omarchy-shell nexuslink.hud toggleAll` / `refresh` / `status` —
-  bind `omarchy-shell nexuslink.hud toggleAll` to a keybind in Hyprland.
+Decks can be dragged and resized. Their position and size are saved to
+`~/.config/omarchy/nexuslink/hud-state-v4.json`.
+
+## Navigator
+
+A modal browser drawn over everything: FILES, PROCESSES, DEVICES, AGENTS,
+REPOS, USAGE. It is opened over IPC (bind a key to it), takes exclusive
+keyboard focus while open, and `F1`..`F6` switch between its sections.
+
+```sh
+omarchy-shell nexuslink.nav open files    # open(section[, path])
+omarchy-shell nexuslink.nav back | close | state
+```
+
+## IPC
+
+Target `nexuslink.hud`: `version`, `status`, `panels`, `say <text>`,
+`focus <id>`, `move <id> <fx> <fy>`, `resize <id> <fw>`, `show <id>`,
+`hide <id>`, `layout <name>`, `selftest`, `framesAlive`, `reload`.
+
+`status` returns JSON (cpu, memory, gpu kind, network rates, frame counter,
+stats age, monitor count). `reload` restarts the collector processes if they
+have stopped.
 
 ## Manage
 
@@ -43,9 +66,11 @@ Saving any file in this directory hot-reloads the plugin automatically.
 
 ## Notes
 
-- Polls every 1.5 s; one `bash collect.sh poll` per tick, ~zero cost.
+- Telemetry is one persistent `collect.sh stream auto` process for all
+  windows, about one batch per second from `hud-collect`, or every 1.5 s from
+  the bash fallback when `hud-collect` is not installed. Batches end with a
+  `batch<TAB><n>` line, where `n` is the running batch count.
 - GPU telemetry needs `nvidia-smi` (NVIDIA) or amdgpu sysfs
   (`/sys/class/drm/card*/device/gpu_busy_percent`, `mem_info_vram_*`, hwmon).
-  Intel iGPUs typically expose no util/vram counters — the section shows
-  "telemetry n/a" there (temp only if a hwmon node exists).
-- Collapse state is per shell session; nothing is persisted.
+  Intel iGPUs typically expose no util/vram counters, so only temperature
+  shows there (and only if a hwmon node exists).
